@@ -26,6 +26,12 @@ Two edges are deliberately closed:
 - `sumie-render` → `sumie-font`: the font crate produces CPU-side glyph atlas data. The binary passes that data to the renderer, which accepts only atlas data and draw lists.
 - `sumie-core` → `sumie-config`: core defines plain-data options. The binary translates parsed TOML settings into those options, so headless core tests and the future daemon do not require TOML.
 
+## Terminal core (`sumie-vt`)
+
+`Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. The wrapper registers no callbacks. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. No handles or borrowed native data escape the crate.
+
+`build.rs` fetches the Ghostty archive by commit and checks its SHA-256 before extracting it under Cargo's `OUT_DIR`. Zig uses its package cache on repeat builds. For a clean offline build, set `SUMIE_GHOSTTY_ARCHIVE` to the prefetched archive and `GHOSTTY_ZIG_SYSTEM_DIR` to the directory of unpacked, hash-named Zig packages. The private FFI module vendors the declarations it uses from the libghostty-rs revision for vt-1.0.1, without taking on its separate native build.
+
 ## Gates
 
 Run `scripts/check-all.sh` from the repository root. It runs the read-only checks, then the negative controls. Use `--fast` to run only the read-only checks. Negative controls temporarily edit files and restore their bytes. They also compare Git porcelain status before and after. Do not edit the worktree while they run. Cargo uses `$CARGO_TARGET_DIR` if set, otherwise a `sumie/target` directory under the user's cache.
@@ -39,4 +45,4 @@ Run `scripts/check-all.sh` from the repository root. It runs the read-only check
 
 A gate exits `1` for a violation and `2` if it cannot check its inputs. `scripts/install-hooks.sh` sets `core.hooksPath` to `scripts/hooks`. Undo that setting with `git config --local --unset core.hooksPath`; `git commit --no-verify` skips the hook for one commit.
 
-Cloud CI runs the P0 merge gate on Linux x86_64, Linux arm64, and macOS arm64. The crate-dependency check covers the only design-book invariant that applies to this skeleton. Wire each of the other twelve checks alongside the feature it covers. The skeleton has no window, input, terminal, GPU, or IPC behavior to exercise.
+Cloud CI runs the P0 merge gate on Linux x86_64, Linux arm64, and macOS arm64. The terminal snapshot test checks the wide-cell invariant at the VT boundary; the negative control changes a wide cell's width from two to one. Extend coverage when selection, editing, and rendering start consuming snapshots. Wire the remaining invariant checks alongside their features.
