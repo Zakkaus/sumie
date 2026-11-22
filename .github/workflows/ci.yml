@@ -21,7 +21,7 @@ jobs:
             zig-platform: aarch64-macos
             zig-sha256: 75f1bc7a1e9852f17ec9a0c1895f767c4ec56d46bc8a834920eece1d0359dd8d
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -39,6 +39,15 @@ jobs:
           printf '%s  %s\n' "$ZIG_SHA256" "$archive" | shasum -a 256 -c -
           tar -xJf "$archive" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+      # libghostty-vt's Zig build takes most of a cold run; reuse it and Cargo's output.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/zig-cache
+            ${{ runner.temp }}/sumie-target
+          key: build-${{ matrix.runner }}-${{ hashFiles('Cargo.lock', 'crates/sumie-vt/build.rs') }}
+          restore-keys: build-${{ matrix.runner }}-
       - run: scripts/check-all.sh
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
