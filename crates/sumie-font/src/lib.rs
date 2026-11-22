@@ -22,6 +22,8 @@ pub use atlas::{Atlas, AtlasGlyph, Rect};
 pub use layout::{ShapedGlyph, ShapedRun};
 pub use metrics::CellMetrics;
 
+const MAX_PPEM: f32 = 4096.0;
+
 /// Identifies a face, including its font collection index and variation instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FaceId(usize);
@@ -120,7 +122,7 @@ impl FontSystem {
     /// Returns an error for an invalid size, failed discovery or load, or missing grid metrics.
     pub fn new(family: &str, logical_px: f32, scale: f32) -> Result<Self, FontError> {
         let ppem = logical_px * scale;
-        if logical_px <= 0.0 || scale <= 0.0 || !(0.0 < ppem && ppem <= 4096.0) {
+        if logical_px <= 0.0 || scale <= 0.0 || !(0.0 < ppem && ppem <= MAX_PPEM) {
             return Err(FontError::InvalidSize);
         }
         let discovery = Discovery::new(family)?;

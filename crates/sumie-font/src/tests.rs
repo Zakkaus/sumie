@@ -63,9 +63,12 @@ mod linux {
                 .scaled_f32(face.ppem)
                 .h_advance(water);
             let slot = f32::from(u16::try_from(2 * metrics.width).unwrap());
+            let max_ppem = crate::MAX_PPEM.min(2.0 * fonts.faces[0].ppem);
+            let ic_width = face.font.glyph_metrics().scaled_f32(1.0).h_advance(water);
+            let expected = slot.min(ic_width * max_ppem);
             assert!(
-                (advance - slot).abs() < 0.001,
-                "water advance: {advance}, slot: {slot}"
+                (advance - expected).abs() < 0.001,
+                "water advance: {advance}, expected: {expected}"
             );
         }
         let left = glyph.x + mask.left - metrics.width.cast_signed();
@@ -89,6 +92,47 @@ mod linux {
             2 * metrics.width,
             metrics.height
         );
+    }
+
+    #[test]
+    fn continuations_keep_the_base_cell() {
+        let Some(mut fonts) = jetbrains() else { return };
+        let cases = [
+            ("a\u{e0001}b", [1, 0, 1], &[(0, 0, 1), (5, 1, 1)][..]),
+            ("a\u{fe0f}b", [1, 0, 1], &[(0, 0, 1), (4, 1, 1)][..]),
+            ("a\u{200b}b", [1, 0, 1], &[(0, 0, 1), (4, 1, 1)][..]),
+            (
+                "中\u{0301}a",
+                [2, 0, 1],
+                &[(0, 0, 2), (0, 0, 2), (5, 2, 1)][..],
+            ),
+        ];
+        for (text, widths, expected) in cases {
+            let run = match fonts.shape(text, &widths) {
+                Err(FontError::MissingGlyph(0x4e2d)) => {
+                    eprintln!("skipped: no CJK fallback font covers U+4E2D");
+                    continue;
+                }
+                result => result.unwrap_or_else(|error| panic!("{text:?}: {error}")),
+            };
+            assert!(
+                run.glyphs
+                    .iter()
+                    .map(|glyph| (glyph.cluster, glyph.column, glyph.cells))
+                    .eq(expected.iter().copied()),
+                "{text:?}: {:?}",
+                run.glyphs
+            );
+            if widths[0] == 2 {
+                let glyph = run.glyphs[1];
+                let mask = fonts.rasterize(glyph.key).unwrap();
+                let left = glyph.x + mask.left;
+                let right = left + mask.rect.width.cast_signed();
+                assert!(
+                    0 <= left && left < right && right <= (2 * fonts.metrics().width).cast_signed()
+                );
+            }
+        }
     }
 
     #[test]

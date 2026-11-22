@@ -1,6 +1,6 @@
 use skrifa::Font;
 
-use crate::FontError;
+use crate::{FontError, MAX_PPEM};
 
 /// Grid geometry in physical pixels. The baseline is measured down from the cell top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,8 +31,11 @@ impl CellMetrics {
     }
 
     #[allow(clippy::cast_precision_loss)]
-    pub(crate) fn fallback_ppem(self, font: &Font, ppem: f32) -> f32 {
-        advance(font, '水', 1.0).map_or(ppem, |ic_width| 2.0 * self.width as f32 / ic_width)
+    pub(crate) fn fallback_ppem(self, font: &Font, primary_ppem: f32) -> f32 {
+        advance(font, '水', 1.0)
+            .map_or(primary_ppem, |ic_width| 2.0 * self.width as f32 / ic_width)
+            .min(2.0 * primary_ppem)
+            .min(MAX_PPEM)
     }
 }
 
