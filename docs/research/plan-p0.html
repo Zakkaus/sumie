@@ -1,0 +1,960 @@
+<title>sumie P0 計畫</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* Layout: one reading column (prose ~72ch); diagrams, tables and code scroll inside their own boxes. Dark-first, terminal blue. */
+:root {
+  --bg: #0f1e2b;
+  --surface: #15293a;
+  --code-bg: #0a1620;
+  --fg: #e4ecf3;
+  --muted: #9db2c6;
+  --border: #25425c;
+  --accent: #ffc600;
+  --good: #4cc38a;
+  --warn: #ffb86b;
+  --bad: #ff7a9c;
+  --font-body: "Noto Sans TC", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --step--1: 0.8125rem;
+  --step-0: 0.96875rem;
+  --step-1: 1.125rem;
+  --step-2: 1.375rem;
+  --step-3: 1.875rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2.25rem;
+  --space-7: 3.25rem;
+  --radius: 6px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f5f7fa; --surface: #ffffff; --code-bg: #edf1f6; --fg: #102233; --muted: #4b5f72;
+    --border: #d3dde8; --accent: #8a6400; --good: #1b7a4a; --warn: #955700; --bad: #b8264b;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f5f7fa; --surface: #ffffff; --code-bg: #edf1f6; --fg: #102233; --muted: #4b5f72;
+  --border: #d3dde8; --accent: #8a6400; --good: #1b7a4a; --warn: #955700; --bad: #b8264b;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  line-height: 1.75;
+}
+.page {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: var(--space-6) var(--space-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+header { display: flex; flex-direction: column; gap: var(--space-3); }
+.eyebrow { font-family: var(--font-mono); font-size: var(--step--1); color: var(--accent); letter-spacing: 0.04em; }
+h1 { font-size: var(--step-3); line-height: 1.25; margin: 0; text-wrap: balance; }
+h2 { font-size: var(--step-2); line-height: 1.35; margin: 0; text-wrap: balance; display: flex; gap: var(--space-3); align-items: baseline; }
+h2 .num { font-family: var(--font-mono); color: var(--accent); font-size: var(--step-1); }
+h3 { font-size: var(--step-1); margin: 0; }
+p { margin: 0; max-width: 72ch; }
+section { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.sub { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-4); font-size: var(--step--1); color: var(--muted); }
+.meta dt { font-weight: 700; color: var(--fg); }
+.meta dd { margin: 0; min-width: 0; }
+.lede { border-left: 3px solid var(--accent); padding-left: var(--space-4); font-size: var(--step-1); max-width: 72ch; }
+nav.toc ol { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+nav.toc a { display: inline-block; font-size: var(--step--1); color: var(--fg); text-decoration: none; border: 1px solid var(--border); border-radius: 999px; padding: var(--space-1) var(--space-3); }
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--accent); color: var(--accent); }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+:not(pre) > code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3em; overflow-wrap: anywhere; }
+pre { margin: 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); overflow-x: auto; font-family: var(--font-mono); font-size: var(--step--1); line-height: 1.6; color: var(--fg); }
+pre .hl { color: var(--accent); font-weight: 600; }
+pre .ok { color: var(--good); }
+pre .no { color: var(--bad); }
+pre .dim { color: var(--muted); }
+.why { color: var(--muted); font-size: var(--step--1); max-width: 72ch; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+table { border-collapse: collapse; width: 100%; font-size: var(--step--1); min-width: 40rem; }
+th, td { text-align: left; vertical-align: top; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
+th { background: var(--surface); font-weight: 700; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pill { display: inline-block; font-size: 0.75rem; font-weight: 700; border-radius: 999px; padding: 0 var(--space-2); border: 1px solid currentColor; white-space: nowrap; }
+.pill.must { color: var(--good); }
+.pill.may { color: var(--warn); }
+.pill.not { color: var(--bad); }
+.pill.status { color: var(--accent); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--space-4); }
+.box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+ul.tight, ol.tight { margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: var(--space-1); max-width: 72ch; }
+.gate { border-color: var(--accent); }
+.gate h3 { color: var(--accent); }
+footer { color: var(--muted); font-size: var(--step--1); border-top: 1px solid var(--border); padding-top: var(--space-4); }
+</style>
+
+<div class="page">
+
+<header>
+  <div class="eyebrow">~/code/sumie · lab/plan-p0.html · v12（流程圖版）</div>
+  <h1>sumie P0 計畫：先驗證字型清晰度、CJK 和輸入法，再決定要不要往下做</h1>
+  <dl class="meta">
+    <dt>對象</dt><dd>新儲存庫 <code>~/code/sumie</code>（尚未 <code>git init</code>）；本頁是計畫檔 <code>lab/plan-p0.html</code></dd>
+    <dt>檔位</dt><dd>大：新專案、架構與選型決定</dd>
+    <dt>狀態</dt><dd><span class="pill status">已由設計書取代</span> 定案內容以 <a href="https://claude.ai/artifact/A3KR8SWWJouwinJsSZUje8">sumie 設計書</a> 為準；本頁保留調查證據</dd>
+    <dt>日期</dt><dd>2026-11-22；版本與出處都是當天查的</dd>
+    <dt>定位</dt><dd>通用的開源 Wayland 終端機；你的偏好寫在你的設定檔，不寫成程式預設</dd>
+    <dt>優先序</dt><dd>你定的：字型清晰度、CJK、輸入法最重要，其次是 UX 與易用性；MacBook（Asahi Gentoo arm64）與桌機同等</dd>
+  </dl>
+  <p class="lede">P0 只做一個單視窗、單窗格的原型。它要在 1.25 縮放下把英文和繁體中文都畫得不輸 Ghostty，並讓 fcitx5 正常組字，桌機和 MacBook 都要過。任一關卡不過就停，損失只有 P0 這幾天。</p>
+  <nav class="toc" aria-label="目錄">
+    <ol>
+      <li><a href="#evidence">觸發證據</a></li>
+      <li><a href="#goals">目標與定位</a></li>
+      <li><a href="#options">備選方案</a></li>
+      <li><a href="#arch">架構</a></li>
+      <li><a href="#sharp">清晰度</a></li>
+      <li><a href="#cjk">CJK</a></li>
+      <li><a href="#ime">輸入法</a></li>
+      <li><a href="#ux">UX、外觀、設定與上手</a></li>
+      <li><a href="#p0">P0 流程</a></li>
+      <li><a href="#perf">效能</a></li>
+      <li><a href="#ua">終端機身分</a></li>
+      <li><a href="#agents">AI 終端機與 agent</a></li>
+      <li><a href="#code">程式碼要求</a></li>
+      <li><a href="#phases">之後的階段</a></li>
+      <li><a href="#stack">選型與出處</a></li>
+      <li><a href="#review">分工與文件</a></li>
+      <li><a href="#questions">待你決定</a></li>
+    </ol>
+  </nav>
+</header>
+
+<section id="evidence" aria-labelledby="h-evidence">
+  <h2 id="h-evidence"><span class="num">一</span>觸發證據</h2>
+  <p>每一列都是你實際遇到或本機記錄過的事件，對應 sumie 的一條規則。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>終端機</th><th>輸入或情境</th><th>實際行為</th><th>sumie 要求</th><th>日期</th></tr></thead>
+      <tbody>
+        <tr><td>Ghostty 1.4.0</td><td>Claude Code 裡按 Ctrl+Shift+V</td><td>螢幕出現 <code>18;6u</code>：貼上快捷鍵沒對上，按鍵被編碼成 <code>ESC[118;6u</code> 送給程式</td><td>終端機快捷鍵先處理，先比實體鍵位，命中就不送出</td><td class="nowrap">11-21</td></tr>
+        <tr><td>Ghostty 1.4.0</td><td>Claude Code 全螢幕下拖曳</td><td>選不了，要按住 Shift</td><td>直接拖曳一律由終端機選取並複製</td><td class="nowrap">11-21</td></tr>
+        <tr><td>Ghostty 1.4.0</td><td>Claude Code 全螢幕下 Ctrl+點擊連結</td><td>打不開，要 Ctrl+Shift+點擊</td><td>Ctrl+點擊一律由終端機處理</td><td class="nowrap">11-21</td></tr>
+        <tr><td>Claude Code</td><td>上面三項的結果</td><td>你移除了 <code>"tui": "fullscreen"</code></td><td>全螢幕加回來後，以上都不用按 Shift</td><td class="nowrap">11-21</td></tr>
+        <tr><td>Ghostty 1.4.0</td><td>Ctrl+點擊 <code>path:line</code></td><td>自訂連結規則未實作，帶行號開編輯器的功能沒了</td><td>內建路徑辨識，分流規則可設定</td><td class="nowrap">11-20</td></tr>
+        <tr><td>WezTerm nightly</td><td>WebGpu（Vulkan）前端</td><td>KWin 6.8 停止出幀，最長約一分鐘；換 OpenGL 後一天沒再發生</td><td>不用 Vulkan；浸泡測試驗 KWin 不停幀</td><td class="nowrap">10-22</td></tr>
+        <tr><td>WezTerm nightly</td><td>關閉 WebGpu 視窗（OOM）</td><td>Wayland 後端從不移除關閉的視窗，每個視窗留著 wgpu instance 與 device：約 17 個 <code>/dev/nvidia0</code> fd、270 MB；開 7 小時後 507 個 fd、8.1 GB。你的修正 PR #8206 自 09-25 開著，其他使用者回報有效，維護者沒有回應</td><td>每個行程一個 EGL display；關窗依序釋放；開關 200 次 fd 與記憶體持平</td><td class="nowrap">09-25</td></tr>
+        <tr><td>WezTerm nightly</td><td>每秒執行一次 <code>wezterm cli list</code>（OOM）</td><td>每個 cli 連線的通道在閲置時永不釋放：6 分鐘內 37 → 87 MB；#7363 的 heaptrack 峰值 7.34 GB。你的修正 PR #8209 自 09-26 開著</td><td>cli 連線結束即釋放；每秒呼叫的浸泡門禁</td><td class="nowrap">09-26</td></tr>
+        <tr><td>WezTerm</td><td>aarch64 發布</td><td>Cirrus 自 3 月起無法上傳，nightly 的 arm64 deb 停在 1 月，從來沒有 aarch64 tarball；你在 Gentoo aarch64 自己編。你的 issue #8268 沒有回應，PR #8269 已關閉</td><td>每次合併都在兩個架構建置與測試，兩個架構都出發布檔</td><td class="nowrap">10-16</td></tr>
+        <tr><td>WezTerm nightly</td><td>OpenGL 前端</td><td>字糊</td><td>清晰度關卡</td><td class="nowrap">09-19</td></tr>
+        <tr><td>WezTerm</td><td>發布狀態</td><td>最後穩定版 2024-02-03，之後只有 nightly</td><td>—</td><td class="nowrap">—</td></tr>
+        <tr><td>Konsole 26.08</td><td>KDE 預設終端機</td><td>沒有 GPU 加速，字糊</td><td>清晰度關卡</td><td class="nowrap">11-22</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="goals" aria-labelledby="h-goals">
+  <h2 id="h-goals"><span class="num">二</span>目標與定位</h2>
+  <div class="grid2">
+    <div class="box">
+      <h3>目標（依優先序）</h3>
+      <ol class="tight">
+        <li>字型清晰度：分數縮放下不輸 Ghostty</li>
+        <li>CJK：寬度、字形、對齊都正確，中文和英文一樣清楚</li>
+        <li>輸入法：fcitx5 與 IBus 組字、選字、候選字視窗位置都正確，組字時快捷鍵照常生效</li>
+        <li>UX 與易用性：不改設定就能用，快捷鍵沿用主流，所有操作找得到</li>
+        <li>多 agent 工作流：多視窗、分頁、分割、agent 狀態總覽</li>
+        <li>通用：任何實作標準協定的 Wayland 合成器，NVIDIA、AMD、Intel、Apple GPU 都能跑</li>
+      </ol>
+    </div>
+    <div class="box">
+      <h3>非目標</h3>
+      <ul class="tight">
+        <li><strong>X11：永遠不做</strong>，程式裡不留 X11 路徑</li>
+        <li>第一版不做、但架構留後路：macOS、Windows、sixel、Lua、外掛</li>
+        <li>macOS、Windows：綁平台的只有視窗與輸入法、字型、GPU、PTY 四個 crate，核心不碰平台 API；不先替沒有的平台寫抽象介面</li>
+        <li>Lua 和外掛：所有操作走同一層有名字的指令，用 <code>sumie cli</code> 經 Unix socket 呼叫；日後的外掛呼叫同一層</li>
+        <li>sixel：libghostty-vt 1.0.1 沒有 sixel 解析，只有裝置屬性回報用的代碼（<code>device.h:40</code>）；圖片先支援 kitty graphics</li>
+      </ul>
+    </div>
+  </div>
+  <div class="box">
+    <h3>通用，不是只為自己</h3>
+    <ul class="tight">
+      <li>只用標準 Wayland 協定，不呼叫 KWin 專屬介面。缺協定就退回：沒有 fractional-scale 用整數縮放；沒有 xdg-decoration（GNOME）就自己畫標題列（P4）。</li>
+      <li>輸入法只走 text-input-v3，同一份程式涵蓋 KWin 加 fcitx5、GNOME 加 IBus、wlroots 加 fcitx5。</li>
+      <li>預設值給一般使用者：系統 <code>monospace</code> 字型、跟隨系統深淺色、介面有英文、繁中、簡中。你的 JetBrains 字型、Cobalt2 配色、VSCode 分流寫在你的 <code>~/.config/sumie/sumie.toml</code>。</li>
+      <li>連結分流做成設定規則，預設交給 <code>xdg-open</code>；<code>path:line</code> 預設用 <code>$VISUAL</code> 或 <code>$EDITOR</code>。</li>
+      <li>agent 狀態只讀標準訊號，不為 Claude Code 寫特例。</li>
+      <li>建置對發行版友善：系統有 libghostty-vt 就用 pkg-config，沒有就用 vendored 選項。</li>
+      <li>驗證範圍：P0 到 P3 在 KWin 上做；P4 加測 GNOME、Sway 或 Hyprland、IBus。GPU 有三家可測：桌機的 NVIDIA 與 AMD 610M、MacBook 的 Apple GPU。</li>
+    </ul>
+  </div>
+</section>
+
+<section id="options" aria-labelledby="h-options">
+  <h2 id="h-options"><span class="num">三</span>備選方案</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>方案</th><th>現況</th><th>缺的</th><th>結論</th></tr></thead>
+      <tbody>
+        <tr><td>Kwi（KDE）</td><td>Qt Quick 場景圖繪製加 libghostty-vt；2026-10-29 建立，最近每天都有提交；需要 Qt 6.11、KF 6.29，桌機是 Qt 6.11.3、KF 6.32</td><td>字型用 Qt 的 <code>QFontMetricsF</code>，1.25 縮放下的清晰度未知；分頁、連結、滑鼠行為未驗證；綁 KDE</td><td>值得先試，當清晰度的對照組；要你同意才安裝</td></tr>
+        <tr><td>herdr</td><td>Rust 加 Ghostty 核心，常駐服務 herdr-core 保存工作階段，agent 用 OSC 7501 回報狀態</td><td>你說畫面難看；agent 不送 OSC 7501 就沒有狀態</td><td>參考結構，不抄畫面</td></tr>
+        <tr><td>Ghostty 1.4.0</td><td>終端協定最完整；Linux 繪製是 EGL 加 OpenGL 4.3</td><td>Linux 只有 GTK4/libadwaita 前端；繞過滑鼠攔截只能用 Shift；沒有自訂連結規則</td><td>清晰度做法照抄，前端不用</td></tr>
+        <tr><td>WezTerm</td><td>功能好用：QuickSelect、Copy mode、連結規則、命令面板、內建多工；但只有 nightly</td><td>見觸發證據；Wayland 後端沒有分數縮放；你的 PR #8206、#8209 開了近兩個月，維護者沒有回應</td><td>不 fork：要重寫的正是它的繪製與視窗層。功能清單照抄（見 8.5）</td></tr>
+        <tr><td>自己寫 sumie</td><td>libghostty-vt 1.0 已穩定，終端協定層可以直接用</td><td>視窗、輸入法、字型、GPU、分頁、agent 功能要自己寫，MVP 粗估約一萬行 Rust</td><td>做，但 P0 先過關卡</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="arch" aria-labelledby="h-arch">
+  <h2 id="h-arch"><span class="num">四</span>架構</h2>
+  <p>P0 開始時把這一節抽成正式的架構文件 <code>docs/architecture.html</code>，這裡先定結構。</p>
+
+  <div class="sub">
+    <h3>4.1 系統情境</h3>
+<pre>使用者 ──鍵盤、滑鼠──▶ <span class="hl">sumie</span>（GUI 行程）
+ ├─ Wayland 合成器（KWin、Mutter、wlroots）
+ │    視窗 · 分數縮放 · 焦點 · 剪貼簿 · 輸入法轉送（text-input-v3）
+ │    └─ 輸入法框架：fcitx5、IBus
+ ├─ GPU 驅動：NVIDIA EGL · Mesa radeonsi · Mesa asahi ──▶ EGL + GLES 3
+ ├─ fontconfig · HarfBuzz · FreeType：找字、塑形、光柵化
+ ├─ 子行程（shell、tmux、claude、vim）◀──PTY 雙向──▶ sumie
+ ├─ D-Bus：桌面通知（org.freedesktop.Notifications）· 深淺色（xdg-desktop-portal Settings）
+ └─ 外部程式：xdg-open、$EDITOR（開連結與路徑）</pre>
+  </div>
+
+  <div class="sub">
+    <h3>4.2 容器與 crate</h3>
+<pre>Cargo workspace（target-dir = /scratch/ssd/sumie/target）
+ ├─ <span class="hl">sumie</span>          執行檔：組裝、命令列、設定載入
+ ├─ <span class="hl">sumie-core</span>     窗格 · 分頁 · 選取 · 連結 · 快捷鍵 · agent 狀態 · 指令層
+ │                  <span class="dim">不依賴任何平台 crate</span>
+ ├─ <span class="hl">sumie-config</span>   設定 schema · 載入與驗證 · 熱重載 · 寫回 TOML · 產生 JSON Schema 與說明文件
+ ├─ <span class="hl">sumie-vt</span>       libghostty-vt 的安全包裝，唯一碰 C ABI 的地方
+ ├─ <span class="hl">sumie-font</span>     fontconfig · HarfBuzz · FreeType · 字形圖集
+ ├─ <span class="hl">sumie-render</span>   EGL + GLES 3 繪製
+ ├─ <span class="hl">sumie-ui</span>       自繪介面：分頁列 · 側欄 · 命令面板 · 選單 · 提示
+ │                  <span class="dim">只做這幾種元件，不做通用 UI 框架；字走 sumie-font，不用 GTK、Qt</span>
+ ├─ <span class="hl">sumie-wayland</span>  連線 · 視窗 · 鍵盤滑鼠 · 輸入法 · 剪貼簿 · 縮放
+ │    sctk 0.21：xdg-shell · xdg-decoration · cursor-shape-v1 · primary-selection
+ │    wayland-protocols 0.32：text-input-v3 · fractional-scale-v1 · viewporter
+ └─ <span class="hl">sumie-pty</span>      openpty · 子行程 · 讀取執行緒
+P3 起
+ ├─ <span class="hl">sumie-ipc</span>      socket 協定與客戶端，sumie cli 與設定 TUI 共用
+ ├─ <span class="hl">sumie cli</span>      經 $XDG_RUNTIME_DIR/sumie/sumie.sock 呼叫指令層
+ ├─ <span class="hl">sumie-settings</span> 設定 TUI（sumie config）：ratatui + crossterm，讀寫一律經 sumie-config
+ └─ <span class="hl">sumie-mux</span>      待定：常駐工作階段，GUI 重開後接回</pre>
+    <p class="why">「核心不碰平台」由 crate 依賴強制：門禁檢查 <code>cargo tree -p sumie-core</code> 不得出現 wayland、glutin、freetype，新增時先驅紅一次。</p>
+  </div>
+
+  <div class="sub">
+    <h3>4.3 部署</h3>
+<pre>桌機     Gentoo x86_64 · KWin 6.8.3 · NVIDIA 620.73.04（RTX 4080 SUPER 接螢幕）
+         AMD Radeon 610M 沒接螢幕，當 AMD GPU 的測試機
+MacBook  Gentoo Asahi aarch64 · KWin · Mesa asahi（版本待開機後查）
+安裝     localrepo：dev-libs/libghostty-vt、x11-terms/sumie；上游只要 cargo + pkg-config
+檔案     設定 ~/.config/sumie/sumie.toml · 狀態 ~/.local/state/sumie/ · socket $XDG_RUNTIME_DIR/sumie/</pre>
+  </div>
+
+  <div class="sub">
+    <h3>4.4 執行緒與資料流</h3>
+<pre>主執行緒（calloop 事件迴圈）
+ ├─ Wayland 事件：鍵盤、滑鼠、輸入法、縮放、焦點
+ ├─ 按鍵 ──▶ 比對快捷鍵 ──▶ 沒命中才經 sumie-vt 編碼 ──▶ 寫 PTY（非阻塞，寫不下就排隊）
+ └─ frame callback ──▶ 有變化的窗格：鎖 terminal → render state begin_update → 解鎖 → 畫
+每個窗格一條 PTY 讀取執行緒
+ └─ read ──▶ 鎖 terminal ──▶ 餵 vt ──▶ 解鎖 ──▶ eventfd 通知主執行緒</pre>
+    <p class="why">libghostty-vt 的 render state 分兩段：<code>begin_update</code> 要持有 terminal 的鎖，<code>end_update</code> 不用（<code>render.h:673-704</code>），所以鎖只在複製狀態那一刻持有。P0 在主執行緒繪製；觸發條件：多窗格時延遲或幀節奏的門禁不過，再把繪製移到每個視窗自己的執行緒（Ghostty 的做法）。</p>
+  </div>
+
+  <div class="sub">
+    <h3>4.5 不變量（每條都有一個會變紅的檢查）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>不變量</th><th>檢查</th></tr></thead>
+        <tbody>
+          <tr><td>命中的快捷鍵不送給程式</td><td>fcitx5 開、關兩種狀態下按 Ctrl+Shift+C/V，PTY 收到 0 個位元組</td></tr>
+          <tr><td>組字中的 preedit 不寫進 PTY</td><td>組字過程中 PTY 收到 0 個位元組，送出後才收到 UTF-8</td></tr>
+          <tr><td><code>buffer_scale</code> 恆為 1；緩衝區 = round(邏輯 × 縮放)；字形落在整數實體像素</td><td>單元測試加截圖比對</td></tr>
+          <tr><td>沒有變化就不畫</td><td>閒置 60 秒，GPU 提交次數為 0</td></tr>
+          <tr><td>關閉視窗或窗格後，fd、GL 物件、執行緒在同一輪事件內釋放</td><td>開關 200 次的洩漏門禁</td></tr>
+          <tr><td>寬字元不被切成半個</td><td>游標、選取、刪除、標題截斷都以字元格群為單位的測試</td></tr>
+          <tr><td>設定檔有錯時沿用上一份有效設定，在視窗內提示，不閃退</td><td>寫入壞設定的測試</td></tr>
+          <tr><td>每個行程只有一個 EGLDisplay 與共享 context；關窗依序釋放 EGLSurface、wl_egl_window、wl_surface</td><td>NVIDIA 上開關 200 次不當掉，fd 持平</td></tr>
+          <tr><td>cli 連線結束就釋放它的全部狀態</td><td>每秒一次 cli 呼叫的浸泡門禁</td></tr>
+          <tr><td>sumie-core 不依賴平台 crate</td><td><code>cargo tree</code> 門禁</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>4.6 生命週期</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>事件</th><th>處理</th></tr></thead>
+        <tbody>
+          <tr><td>子行程結束</td><td>窗格顯示結束碼，依設定關閉或保留</td></tr>
+          <tr><td>縮放改變（視窗移到另一個螢幕）</td><td>重新光柵化、重建圖集、重配緩衝區</td></tr>
+          <tr><td>螢幕拔插（HDMI 重連）</td><td>處理 <code>wl_output</code> 移除，更新縮放；視窗搬移交給合成器</td></tr>
+          <tr><td>GPU context 遺失（休眠喚醒、驅動重置）</td><td>重建 EGL context 與圖集，視窗不關</td></tr>
+          <tr><td>合成器重啟</td><td>Wayland 連線中斷，GUI 結束；要保住子行程得靠 P3 的常駐工作階段</td></tr>
+          <tr><td>設定檔變更</td><td>熱重載；錯誤時見不變量</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>4.7 設定分層</h3>
+<pre>內建預設 ──▶ ~/.config/sumie/sumie.toml（只寫要改的項目）──▶ include 的每機檔案 ──▶ 命令列參數
+ └─ 熱重載；設定 TUI 寫回同一份 TOML，不另存一份（見 8.2）</pre>
+  </div>
+
+  <div class="sub">
+    <h3>4.8 長時間執行與 ARM</h3>
+<pre>你的用法：20 個以上的窗格、連開數天、agent 頻繁呼叫 cli
+ ├─ GPU 資源
+ │    ├─ 每個行程一個 EGLDisplay 與一個共享 context；每個視窗只有自己的 EGLSurface
+ │    └─ 關窗順序：EGLSurface → wl_egl_window → wl_surface，同一輪事件內完成
+ │         <span class="dim">WezTerm #8206：釋放其中一個視窗的 instance，其他視窗在 libnvidia-eglcore 當掉</span>
+ ├─ cli 連線：連線結束就釋放它的通道與訂閱，不等下一個事件
+ │    <span class="dim">WezTerm #8209：訂閱持有通道的傳送端，閲置時永不釋放</span>
+ ├─ 捲動緩衝：每個窗格有上限，量測滿載時每窗格的記憶體
+ └─ ARM
+      ├─ 每次合併都在 x86_64 與 aarch64 建置與測試（GitHub 的 arm64 runner）
+      ├─ 兩個架構都出發布檔，不依賴會默默壞掉的第三方 CI
+      ├─ 不假設 4K 分頁：Asahi 核心通常用 16K 分頁，P0 用 getconf PAGESIZE 確認
+      │    <span class="dim">jemalloc 的分頁大小在建置時決定，4K 機器上建的版本在 16K 核心會出錯；sumie 用系統配置器</span>
+      └─ MacBook 實機跑 P0 關卡與浸泡測試</pre>
+  </div>
+
+  <div class="sub">
+    <h3>4.9 介面框架比較：自繪、GTK、Qt、Rust 原生 UI</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>選項</th><th>GPU 與視窗</th><th>文字與輸入法</th><th>結論</th></tr></thead>
+        <tbody>
+          <tr><td>GPUI 0.2.2（Zed）</td><td>自寫 Wayland；2026-02 起 Linux 繪製改用 wgpu</td><td>cosmic-text、swash；Zed 在 KDE 分數縮放下字糊（#33464，已關）；NVIDIA 580 驅動卡死（#35948）；fcitx5 第一個鍵丟 Shift（#65650，未修）</td><td>不合：必須用 wgpu，也沒有承諾支援 Zed 以外的使用</td></tr>
+          <tr><td>iced 0.14</td><td>winit、wgpu</td><td>cosmic-text；0.14 才加入輸入法</td><td>不合：只有 wgpu。COSMIC Terminal 證明能做終端機，但用的正是我們避開的堆疊</td></tr>
+          <tr><td>Slint 1.19</td><td>winit；有 OpenGL 繪製器</td><td>parley；1.19 起字形不再對齊像素（#15000）；縮放改變會 panic（#15092，未修）</td><td>部分適合，但授權有條件（GPL 或附條件的免權利金），文字有退化</td></tr>
+          <tr><td>egui 0.37</td><td>glow 路徑可插入自己的 GL</td><td>即時模式的 epaint；中文支援的 issue 還開著（#8720）</td><td>部分適合，清晰度與輸入法達不到要求</td></tr>
+          <tr><td>Xilem 0.4、Blitz、Freya</td><td>wgpu 加 Vello，或 Skia</td><td>parley 或 Skia；輸入法沒有說明</td><td>不合：太早期或只有 wgpu</td></tr>
+          <tr><td>GTK4、Qt Quick</td><td>各自的繪製</td><td>介面字走工具包的文字繪製；Konsole（Qt）在 1.25 縮放下字糊</td><td>不合：見 4.10</td></tr>
+          <tr><td><strong>自繪（sumie-ui）</strong></td><td>同一個 GLES 繪製器</td><td>同一條 FreeType 管線與同一套 text-input-v3</td><td><strong>採用</strong>：元件、輸入框、AccessKit 要自己接；設定改用 TUI（見 8.2），自繪元件只剩分頁列、側欄、命令面板、選單、提示</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="why">版本與 issue 取自 crates.io 與各專案 GitHub（2026-11-22）。可選的驗證：若想保留 Slint，可在 P2 前花一天，用它的 OpenGL 路徑跑關卡 A 與 B。</p>
+  </div>
+
+  <div class="sub">
+    <h3>4.10 決策表</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>問題</th><th>選項</th><th>決定</th><th>代價</th><th>什麼變了要重來</th></tr></thead>
+        <tbody>
+          <tr><td>終端協定核心</td><td>libghostty-vt、alacritty_terminal、自寫</td><td>libghostty-vt 1.0.1</td><td>建置要 Zig 0.17</td><td>它的 ABI 不再穩定或停止維護</td></tr>
+          <tr><td>視窗層</td><td>sctk 加 wayland-protocols、winit</td><td>sctk</td><td>輸入法與縮放要自己接</td><td>winit 的 Wayland 輸入法經實測可靠</td></tr>
+          <tr><td>GPU API</td><td>GLES 3 加 EGL、wgpu/Vulkan</td><td>GLES 3</td><td>不是最新的 API</td><td>GL 量到瓶頸，或確認 NVIDIA 加 KWin 的 Vulkan 停幀已修好</td></tr>
+          <tr><td>介面</td><td>自繪、GTK、Qt Quick、Rust UI 框架</td><td>自繪</td><td>元件、輸入框、無障礙自己做</td><td>某個框架通過關卡 A、B，而且不強制 wgpu</td></tr>
+          <tr><td>字型堆疊</td><td>FreeType 加 HarfBuzz、skrifa 加 harfrust</td><td>P0 截圖對比後決定</td><td>—</td><td>—</td></tr>
+          <tr><td>tmux</td><td>保留、內建常駐工作階段</td><td>P3 前由你決定</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>4.11 語言與依賴：不是純 Rust</h3>
+    <p>sumie 自己的程式碼全部是 Rust。底層的驅動、視窗系統與字型設定本來就是 C，任何終端機都一樣；unsafe 只出現在包裝這些函式庫的 crate（見 13.4）。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>層</th><th>用什麼</th><th>語言</th><th>純 Rust 替代</th><th>決定</th></tr></thead>
+        <tbody>
+          <tr><td>sumie 各 crate</td><td>—</td><td>Rust</td><td>—</td><td>—</td></tr>
+          <tr><td>終端協定</td><td>libghostty-vt 1.0.1</td><td>Zig，C ABI</td><td>alacritty_terminal 0.26.0（Zed、COSMIC Terminal 在用）</td><td>用 libghostty-vt：ABI 已穩定，有 kitty 圖片協定（Alacritty 不支援圖片）。代價是建置要 Zig 0.17；::gentoo 有 zig-0.17.1，arm64 是 ~arm64。它停止維護或 ABI 不再穩定就換</td></tr>
+          <tr><td>找字與後備</td><td>fontconfig 2.18.4</td><td>C</td><td>未評估</td><td>保留：系統與使用者的後備規則（例如 <code>lang=zh-tw</code> 優先 Noto Sans CJK TC）都寫在 fontconfig 設定裡</td></tr>
+          <tr><td>字型解析與光柵化</td><td>FreeType 2.15.0</td><td>C</td><td>skrifa 0.50</td><td>P0 截圖對比；清晰度相同就選 skrifa，少一個 C 解析器</td></tr>
+          <tr><td>塑形</td><td>HarfBuzz 12.3.2</td><td>C++</td><td>harfrust 0.16.1</td><td>跟 skrifa 一起決定</td></tr>
+          <tr><td>視窗與鍵盤</td><td>libwayland-client、libwayland-egl、libxkbcommon</td><td>C</td><td>wayland-client 有純 Rust 後端</td><td>不能用：EGL 要拿 C 的 <code>wl_display</code>，glutin 0.32.3 透過 wayland-sys（egl、client、dlopen）載入這兩個函式庫</td></tr>
+          <tr><td>GPU</td><td>EGL + GLES 3（Mesa、NVIDIA）</td><td>C</td><td>wgpu 也是呼叫同一批驅動</td><td>驅動一定是 C；選 GL 的理由見 4.10</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="why">只用 KWin 所在的那張卡繪製，桌機上是接 HDMI 的 RTX 4080 SUPER。不用 wgpu/Vulkan，因為 WezTerm 的 Vulkan 前端在這台機器上讓 KWin 停幀，換回 OpenGL 後就停了；Ghostty 1.4 在 Linux 上也用 EGL 加 OpenGL。GLES 3 在 NVIDIA、Mesa 各驅動與 Asahi 上都能跑同一份程式。之後若 GL 量到問題再重評。</p>
+</section>
+
+<section id="sharp" aria-labelledby="h-sharp">
+  <h2 id="h-sharp"><span class="num">五</span>清晰度怎麼做</h2>
+<pre>合成器送 preferred_scale = <span class="hl">150</span>（單位 1/120，即 1.25）
+ ├─ wl_surface.set_buffer_scale(1)；viewport.set_destination(邏輯寬, 邏輯高)
+ ├─ 緩衝區 = round(邏輯尺寸 × 1.25)；視窗尺寸對齊實體像素的字元格
+ ├─ FreeType setCharSize(11 pt, dpi = 96 × 1.25 = <span class="hl">120</span>)：直接在實體像素大小光柵化
+ │    └─ hinting：Ghostty 預設 light；你在 WezTerm 偏好 normal ──▶ P0 兩種都截圖，由你選預設
+ ├─ 字元格寬高取整數實體像素；每個字形四邊形落在整數像素上
+ ├─ 圖集取樣 1:1，等同 nearest，不做插值
+ └─ 混色 linear-corrected（Ghostty 1.4 在 Linux 的預設）
+     <span class="dim">依前景與背景亮度修正覆蓋率，粗細接近傳統混色，又沒有色邊</span></pre>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>照抄程度</th><th>做法</th><th>出處</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill must">必抄</span></td><td>用分數縮放算實體像素大小，dpi = 96 × 縮放</td><td><code>ghostty-1.4.0/src/Surface.zig:511-524</code>；kitty <code>glfw/wl_window.c</code></td></tr>
+        <tr><td><span class="pill must">必抄</span></td><td>fractional-scale 加 viewporter，buffer scale 1，緩衝區 round(邏輯 × 縮放)</td><td>kitty <code>glfw/wl_window.c</code></td></tr>
+        <tr><td><span class="pill must">必抄</span></td><td>整數字元格、字形對齊整數像素、1:1 取樣</td><td><code>src/font/Metrics.zig:265-301</code>、<code>shaders/glsl/cell_text.v.glsl:95-110</code></td></tr>
+        <tr><td><span class="pill must">必抄</span></td><td>R8 灰階圖集與彩色圖集分開</td><td><code>shaders/glsl/cell_text.f.glsl:3-4</code></td></tr>
+        <tr><td><span class="pill must">必抄</span></td><td>linear-corrected 混色當預設，可切換</td><td><code>cell_text.f.glsl:45-66</code>；<code>src/config/Config.zig:408-411</code></td></tr>
+        <tr><td><span class="pill must">必抄</span></td><td>hinting 可設定</td><td><code>src/font/face/freetype.zig:356-390</code></td></tr>
+        <tr><td><span class="pill may">可抄</span></td><td>kitty 式 gamma 與對比微調</td><td>kitty <code>text_composition_strategy</code>（Linux 預設 gamma 1.0、contrast 0）</td></tr>
+        <tr><td><span class="pill not">不抄</span></td><td>WezTerm：Wayland 後端沒有分數縮放，用整數 buffer scale 2 繪製後由合成器縮到 1.25</td><td><code>window/src/os/wayland/window.rs:644-713</code></td></tr>
+        <tr><td><span class="pill not">不抄</span></td><td>WezTerm OpenGL：在 shader 末端轉 sRGB，混色在 gamma 空間（推測是 GL 比 WebGpu 糊的原因，未證實）</td><td><code>glyph-frag.glsl:153</code>、<code>renderstate.rs:684</code></td></tr>
+        <tr><td><span class="pill not">不抄</span></td><td>Konsole：整數邏輯像素的字元格，乘 1.25 後字形起點落在非整數像素（推測是糊的原因，未證實）</td><td><code>TerminalFonts.cpp:232-239</code>、<code>TerminalPainter.cpp:1258</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="why">行號取自本機 Gentoo distfiles 的 ghostty-1.4.0、wezterm（80174f8）、konsole-26.08.3 原始碼。kitty 的行號是網頁讀取，約略值。</p>
+</section>
+
+<section id="cjk" aria-labelledby="h-cjk">
+  <h2 id="h-cjk"><span class="num">六</span>CJK</h2>
+<pre>一個字元進來
+ ├─ 寬度：libghostty-vt 的 Unicode 寬度與字素叢集（mode 2027）
+ │    ├─ CJK 表意文字、假名、全形標點 = 2 格
+ │    └─ 東亞歧義寬度（○ ※ ① ─）預設 1 格，與 glibc wcwidth 一致；可設定為 2 格
+ ├─ 字形：fontconfig 依語言標籤選後備字型
+ │    zh_TW → 繁體字形 · zh_CN → 簡體字形 · ja → 日文字形；設定可覆寫
+ │    <span class="dim">本機實測：JetBrainsMono Nerd Font + lang=zh-tw 的第二順位是 Noto Sans CJK TC</span>
+ ├─ 大小：塞進 2 格寬；原尺寸放得下就不縮放，保留 hinting
+ ├─ 垂直：依字元格置中，基線與英文字型對齊，不偏上、不被切
+ ├─ 粗細：英文與 CJK 字重分別可設（你現在兩者都是 Medium）
+ └─ 游標、選取、刪除、標題截斷：以整個寬字元為單位</pre>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>風險</th><th>處理</th></tr></thead>
+      <tbody>
+        <tr><td>Ghostty 對被縮放或限寬的字形關掉 hinting（<code>freetype.zig:361</code>），CJK 字形常走這條路，可能比英文軟</td><td>原尺寸放得下就不縮放；P0 關卡 A 專門放筆畫密的繁體字對比</td></tr>
+        <tr><td>終端機和程式算出的寬度不同，排版就會錯位（Claude Code 的框線、表格）</td><td>歧義寬度預設 1 格；P0 核對 Claude Code 用的寬度算法是否一致</td></tr>
+        <tr><td>同一個漢字在繁、簡、日字型裡寫法不同</td><td>依 locale 選字型，不寫死某一套 CJK 字型</td></tr>
+        <tr><td>CJK 字型的上下緣比英文字型高，行高被撐大或字被切</td><td>行高由主字型決定，CJK 在格內置中；P0 截圖檢查</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="why">P0 關卡 A 的測試文字固定一份：英文與程式碼、<code>體鬱龍讀繁</code> 這類筆畫密的字、全形標點 <code>，。「」『』</code>、歧義寬度 <code>○※①─</code>、假名、emoji 與 ZWJ 序列、Nerd Font 圖示、Claude Code 的框線字元。另外用一套非 Noto 的 CJK 字型（例如霞鶩文楷）再跑一次，確認後備邏輯沒有寫死字型。</p>
+</section>
+
+<section id="ime" aria-labelledby="h-ime">
+  <h2 id="h-ime"><span class="num">七</span>輸入法怎麼做</h2>
+  <p>照抄 foot 的 text-input-v3 做法。foot 是原生 Wayland 終端機，輸入法實作最完整；sctk 沒有 text-input-v3 的封裝，這一層自己寫。</p>
+<pre>取得鍵盤焦點（enter）
+ ├─ enable → set_content_type(purpose = terminal) → set_cursor_rectangle → commit；本地 serial +1
+ ├─ preedit_string、commit_string 先暫存，收到 done 才依協定順序處理
+ │    └─ done 的 serial 和本地不同 ──▶ 整批丟掉
+ ├─ preedit：在游標處就地畫，游標區以外加底線；一行放不下就往左移；<span class="hl">不寫進 PTY</span>
+ ├─ commit_string：UTF-8 寫進 PTY
+ ├─ 游標矩形 = 實體像素 ÷ 縮放的邏輯座標；組字中是 preedit 內的游標區
+ │    └─ 和上次送出的相同 ──▶ <span class="hl">不送、不 commit</span>
+ └─ 失去焦點（leave）→ disable → commit
+
+按鍵路徑
+ wl_keyboard 按鍵 ──▶ 比對終端機快捷鍵（先比實體鍵位，再比字元）
+   ├─ 命中 ──▶ 執行（複製、貼上、開分頁⋯），<span class="hl">不送給程式</span>
+   └─ 沒命中 ──▶ libghostty-vt 編碼 ──▶ 寫進 PTY</pre>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>已知問題</th><th>sumie 的處理</th><th>出處</th></tr></thead>
+      <tbody>
+        <tr><td>KWin 在 preedit 非空時，每收到一次 commit 就重送快取的 preedit；程式若回應後又 commit，就形成無限迴圈</td><td>游標矩形與狀態沒變就不送、不 commit</td><td>Zed PR #61079（2026-07-17）；KWin <code>src/wayland/textinput_v3.cpp:444-504</code></td></tr>
+        <tr><td>fcitx5 5.1.23 每次 done 後強制刷新 preedit；程式每次 done 都重送相同狀態時，送出的字會被丟掉</td><td>同上；桌機正是 5.1.23</td><td>schnelle-umlaute issue #168（2026-10）</td></tr>
+        <tr><td>合成器與 fcitx5 每個按鍵可能送出多個內容相同的 done</td><td>內容沒變就不重畫</td><td>warpdotdev/winit PR #17</td></tr>
+        <tr><td>輸入法抓住鍵盤時，長按重複靠 fcitx5 送假的放開事件模擬，fcitx5 作者自己說不可靠</td><td>P0 實測長按刪除、長按方向鍵</td><td>csslayer 文章（2023-08-12）</td></tr>
+        <tr><td>Ghostty：按鍵先過輸入法過濾（<code>surface.zig:1330</code>），預設 Ctrl+Shift+C/V 依字元比對（<code>Config.zig:6699-6715</code>）；你改成實體鍵位才正常</td><td>先比實體鍵位；<code>18;6u</code> 的確切路徑未證實，P0 用 fcitx5 中英文模式各測一次</td><td>ghostty-1.4.0 原始碼</td></tr>
+        <tr><td>分數縮放下候選字視窗的位置</td><td>找不到 text-input-v3 的資料，P0 實測</td><td>—</td></tr>
+        <tr><td>GNOME 的 IBus 走同一個協定，但沒有實測</td><td>P4 在 GNOME 上驗</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="why">foot 出處：<code>ime.c:56-100</code>（焦點）、<code>ime.c:428-478</code>（enable、disable）、<code>ime.c:166-170</code>（serial）、<code>ime.c:406-419</code>（矩形去重與換算）、<code>render.c:1730-1892</code>（preedit 繪製），取自 codeberg master。</p>
+</section>
+
+<section id="ux" aria-labelledby="h-ux">
+  <h2 id="h-ux"><span class="num">八</span>UX、外觀、設定與上手</h2>
+  <ul class="tight">
+    <li>不改設定就能用：沒有設定檔也是完整可用的終端機。</li>
+    <li>快捷鍵與行為照主流終端機，不自創；和主流不同的地方寫明理由。</li>
+    <li>所有操作都能在命令面板搜到，旁邊顯示快捷鍵，不必背。</li>
+    <li>每個動作都有回饋：複製後短暫提示字數，設定有錯在視窗內說明錯在哪一行。</li>
+    <li>介面元件全鍵盤可操作、焦點可見；兩種主題的文字與元件對比都達 WCAG AA。</li>
+    <li>介面文字放 locale 檔（en、zh-TW、zh-CN），不寫死在程式裡。</li>
+  </ul>
+  <div class="sub">
+    <h3>8.1 外觀怎麼做到好看</h3>
+<pre>選一個真實畫面當參考（待你選，建議 Windows Terminal）
+ ├─ 1:1 照抄：結構、字級、顏色、圓角、間距、圖示、狀態色；參考裡沒有的元素不畫
+ ├─ 取值全部放進 token 檔：顏色 · 字級 · 間距 · 圓角 · 動畫時長；程式裡不寫字面值
+ │    └─ 設計語言文件用同一份 token 繪製，token 壞了文件先壞
+ ├─ 淺色、深色兩套都照參考做，對比達 WCAG AA
+ ├─ 像素對齊：介面的線、邊框、圓角在 1.25 縮放下也落在整數實體像素
+ │    <span class="dim">1 px 的線畫成 1 個實體像素，不是 1.25 個，否則邊緣會糊</span>
+ ├─ 介面字用系統 UI 字型（Noto Sans、Noto Sans CJK），走同一條 FreeType 管線
+ ├─ 圖示用參考的同一套；Windows Terminal 對應 Fluent UI System Icons（MIT，Linux 可用）
+ └─ 迭代：做出真畫面 ──▶ 在你的螢幕上截圖 ──▶ 和參考的同寬截圖並排 ──▶ 修 ──▶ 才給你看</pre>
+    <p class="why">終端區的細節也影響觀感：多出的空間平均分到四邊，讓字元格置中（Ghostty 的 <code>window-padding-balance</code>）；預設不透明，因為你的記錄顯示透明度會讓字變軟；改視窗大小時先畫好新尺寸再送出，不閃爍；只有一個分頁時隱藏分頁列；內附一組整理過的配色，淺色、深色預設各一套，對應參考畫面。</p>
+  </div>
+  <div class="sub">
+    <h3>8.2 設定</h3>
+<pre>三種改法，同一份檔案
+ ├─ 不改：沒有設定檔也完整可用
+ ├─ 設定 TUI（P3）：<span class="hl">sumie config</span>，或按 Ctrl+, 在新分頁開啟；版面與按鍵照 btop 的選項選單
+ │    上方：分類分頁，Tab 或數字鍵切換：1 外觀 · 2 字型 · 3 配色 · 4 行為 · 5 快捷鍵 · 6 連結規則 · 7 輸入法
+ │    左欄：選項名稱與目前的值，改過的項目加標記
+ │    右欄：選中選項的說明、預設值、可選值；中文說明按顯示寬度換行
+ │    底部：按鍵提示；一頁放不下時顯示頁碼
+ │    改值依型別
+ │    ├─ 開關與列舉（含配色）：← → 循環切換，立即套用
+ │    ├─ 數字：← → 加減一級，Enter 直接輸入
+ │    ├─ 文字（字型名稱、路徑）：Enter 進入編輯，再按 Enter 驗證並套用，Esc 放棄
+ │    └─ 快捷鍵：Enter 後按下按鍵就錄製，列出衝突
+ │    sumie 另加：/ 搜尋（可打中文）· r 還原此項預設 · 說明依語系顯示中文或英文
+ │    套用：配色用 OSC 4/10/11 在自己的窗格試色；字型與其他項目經 sumie-ipc 套用到正在用的視窗
+ │    └─ 關閉（Esc、q）時寫回 ~/.config/sumie/sumie.toml：只改動過的鍵，你的註解與順序不動（toml_edit）
+ └─ 直接編輯 TOML
+      ├─ 檔案開頭的 #:schema 讓 VSCode 自動補全與檢查（Taplo 讀 JSON Schema）
+      ├─ 存檔即熱重載；寫錯就沿用上一份有效設定，視窗內指出錯在哪一行
+      ├─ sumie config show --defaults：列出全部選項、預設值與說明
+      └─ include 另一個檔案：放每台機器不同的設定（桌機、MacBook）</pre>
+    <ul class="tight">
+      <li>為什麼用 TUI：設定畫面本身就由 sumie 的字型管線繪製，清晰度與中文輸入不必另做；在任何終端機都能開，sumie 設定壞到開不起來時，也能從 Konsole 修；工作量比自繪設定頁小很多。版面與操作照 btop 1.4.7 的選項選單（見下表）；你收藏的 ratatui、tui-realm、iocraft 都是候選，預設用 ratatui 0.30.2。</li>
+      <li>選項少而精：每加一個選項要寫出誰需要它；預設值好用比選項多重要。</li>
+      <li>設定的結構、說明、JSON Schema、設定 TUI 的欄位與說明都由同一份 Rust 定義產生，不會互相脫節。</li>
+      <li>快捷鍵與連結分流也在同一份檔案：<code>[keybinds]</code>、<code>[[links]]</code>（比對規則與開啟方式）；設定 TUI 列出互相衝突的快捷鍵。</li>
+      <li>從其他終端機搬家（P3）：<code>sumie config import ghostty</code> 讀取字型、配色、快捷鍵；WezTerm、kitty 之後再加。</li>
+      <li>你的設定：JetBrainsMono Nerd Font 與 Noto Sans CJK TC 的 Medium、11 pt、Cobalt2、VSCode 分流、關閉不確認，寫在你的 <code>sumie.toml</code>，兩台機器共用。</li>
+    </ul>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>btop 1.4.7 的做法</th><th>sumie</th><th>出處（src/）</th></tr></thead>
+        <tbody>
+          <tr><td>分類分頁在上方，Tab、Shift+Tab 或數字鍵切換</td><td>照抄</td><td class="nowrap"><code>btop_menu.cpp:1448-1462, 1578</code></td></tr>
+          <tr><td>左欄是選項與值，右欄是選中選項的多行說明</td><td>照抄</td><td class="nowrap"><code>btop_menu.cpp:220, 1612-1640</code></td></tr>
+          <tr><td>↑ ↓ 選擇並跨頁循環，PgUp、PgDn 翻頁，可選開 vim 鍵</td><td>照抄</td><td class="nowrap"><code>btop_menu.cpp:1423-1447</code></td></tr>
+          <tr><td>開關與列舉（含配色）用 ← → 循環，改完立即生效</td><td>照抄</td><td class="nowrap"><code>btop_menu.cpp:1464-1530</code></td></tr>
+          <tr><td>文字與數字按 Enter 編輯，送出時驗證，不合法就跳警告</td><td>照抄</td><td class="nowrap"><code>btop_menu.cpp:1368-1395, 1413-1418</code></td></tr>
+          <tr><td>滑鼠點選項選中，再點一次編輯；滾輪移動；點框外關閉</td><td>照抄</td><td class="nowrap"><code>btop_menu.cpp:1399-1412</code></td></tr>
+          <tr><td>寫設定檔時清空整份重寫，註解換成它自己的說明</td><td>不抄：你加的註解會消失。sumie 只改動過的鍵</td><td class="nowrap"><code>btop_config.cpp:808-817</code></td></tr>
+          <tr><td>選單說明與設定檔註解各寫一份</td><td>不抄：兩份會脫節。sumie 由 sumie-config 的 schema 產生兩者</td><td class="nowrap"><code>btop_menu.cpp:220</code>、<code>btop_config.cpp:57</code></td></tr>
+          <tr><td>固定 78 欄寬、置中的框</td><td>不抄：佔滿分頁，窄視窗時說明移到下方</td><td class="nowrap"><code>btop_menu.cpp:1348</code></td></tr>
+          <tr><td>選單裡沒有搜尋</td><td>sumie 加 / 搜尋</td><td class="nowrap"><code>btop_menu.cpp:1281-1545</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="why">原始碼：<a href="https://github.com/aristocratos/btop/tree/v1.4.7">btop v1.4.7</a>（<code>6e39144</code>，2026-05-01），和你本機裝的版本相同。v10 寫的「按儲存才寫回、取消就還原」改成 btop 的做法：改完立即套用，關閉時寫回；改錯的項目按 r 還原。</p>
+  </div>
+  <h3>8.3 快捷鍵</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>動作</th><th>預設</th><th>參考</th></tr></thead>
+      <tbody>
+        <tr><td>複製、貼上</td><td>Ctrl+Shift+C / V；直接拖曳即複製</td><td>Windows Terminal、Konsole、GNOME Console 相同</td></tr>
+        <tr><td>新分頁、關閉</td><td>Ctrl+Shift+T / W</td><td>Konsole、GNOME Console</td></tr>
+        <tr><td>分割、切換窗格</td><td>Ctrl+Shift+E / O；Ctrl+Shift+方向鍵</td><td>Terminator（也是你現在的習慣）</td></tr>
+        <tr><td>命令面板</td><td>Ctrl+Shift+P</td><td><a href="https://learn.microsoft.com/en-us/windows/terminal/command-palette">Windows Terminal</a>、VS Code</td></tr>
+        <tr><td>搜尋捲動緩衝</td><td>Ctrl+Shift+F</td><td>Konsole、Windows Terminal</td></tr>
+        <tr><td>字型縮放</td><td>Ctrl+= / Ctrl+- / Ctrl+0，視窗大小不變</td><td>主流瀏覽器與終端機</td></tr>
+        <tr><td>拖檔案進視窗</td><td>貼上加引號的路徑</td><td>GNOME Console、Konsole</td></tr>
+        <tr><td>關閉時確認</td><td>窗格裡還有程式在執行就確認；可在設定關掉（你在 Ghostty 關了）</td><td>Windows Terminal、Konsole</td></tr>
+        <tr><td>新視窗的目錄</td><td>新視窗從家目錄開，分頁與分割繼承目前目錄</td><td>你目前的 Ghostty 設定</td></tr>
+        <tr><td>深淺色</td><td>跟隨系統（xdg-desktop-portal）</td><td>GNOME、KDE</td></tr>
+        <tr><td>設定（P3）</td><td>Ctrl+, 在新分頁開 <code>sumie config</code> 設定 TUI</td><td>VS Code、<a href="https://learn.microsoft.com/en-us/windows/terminal/">Windows Terminal</a> 的 Ctrl+,；kitty 的 <code>kitten themes</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>8.4 滑鼠</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>動作</th><th>誰處理</th><th>說明</th></tr></thead>
+      <tbody>
+        <tr><td>滾輪</td><td>程式開了滑鼠追蹤就給程式，否則捲動緩衝</td><td>Claude Code 全螢幕的捲動照常</td></tr>
+        <tr><td>直接拖曳</td><td>終端機</td><td>選取，放開即複製到剪貼簿與 primary</td></tr>
+        <tr><td>Alt+拖曳</td><td>程式</td><td>給需要拖曳的程式，例如 tmux 拖窗格邊框、vim 滑鼠選取</td></tr>
+        <tr><td>單擊</td><td>程式</td><td>Claude Code 的點擊展開照常</td></tr>
+        <tr><td>Ctrl+點擊</td><td>終端機</td><td>OSC 8 連結、網址、<code>path:line</code>，依分流規則開啟；預設 <code>xdg-open</code> 與 <code>$EDITOR</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="why">「拖曳一律由終端機選取」和多數終端機相反（它們把拖曳交給抓滑鼠的程式），這是刻意的：選取文字比程式內拖曳常用得多，需要拖曳的程式改用 Alt。你目前的 tmux 是 4 個工作階段、每個 1 個窗格，所以終端機選取不會跨到別的 tmux 窗格。</p>
+  <div class="sub">
+    <h3>8.5 從 WezTerm 繼承的功能</h3>
+    <p>WezTerm 好用的是功能，問題出在繪製、視窗層和停滯的開發。sumie 照抄你在 WezTerm 用過的功能，不抄它的程式。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>WezTerm 功能</th><th>你的用法</th><th>sumie</th><th>階段</th></tr></thead>
+        <tbody>
+          <tr><td>QuickSelect</td><td>Ctrl+Shift+Space 用鍵盤選網址、路徑、git hash</td><td>同樣的快捷鍵，比對規則可設定</td><td class="nowrap">P1</td></tr>
+          <tr><td>搜尋</td><td>Ctrl+Shift+F，帶入目前選取</td><td>同樣</td><td class="nowrap">P1</td></tr>
+          <tr><td><code>hyperlink_rules</code> 加 <code>open-uri</code></td><td>路徑帶行號開編輯器，圖片開 Gwenview，資料夾開 Dolphin</td><td><code>[[links]]</code> 規則，不必寫 Lua</td><td class="nowrap">P1</td></tr>
+          <tr><td><code>bypass_mouse_reporting_modifiers = 'CTRL'</code></td><td>Ctrl+點擊在 TUI 裡開連結</td><td>預設行為（見 8.4）</td><td class="nowrap">P0</td></tr>
+          <tr><td><code>text_min_contrast_ratio</code></td><td>1.1，低對比文字微提亮</td><td>最低對比設定</td><td class="nowrap">P1</td></tr>
+          <tr><td>Copy mode</td><td>Ctrl+Shift+X，vim 鍵位選取</td><td>同樣</td><td class="nowrap">P2</td></tr>
+          <tr><td>kitty graphics</td><td>omp、Claude Code 的圖片</td><td>libghostty-vt 已實作解析</td><td class="nowrap">P2</td></tr>
+          <tr><td>內建多工（unix domain）</td><td>沒用，交給 tmux</td><td>決定常駐工作階段時參考</td><td class="nowrap">P3</td></tr>
+          <tr><td>Lua 設定</td><td>自繪分頁標題、事件處理</td><td>不做；常見需求改成設定項，其餘走指令層</td><td class="nowrap">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="sub">
+    <h3>8.6 上手難度</h3>
+<pre>第一次開啟（沒有設定檔）
+ ├─ 直接可用：系統 monospace 字型、跟隨系統深淺色、主流快捷鍵
+ ├─ 視窗底部一行提示「Ctrl+Shift+P 開啟命令面板」，用過一次就不再出現
+ ├─ 偵測到 Ghostty、WezTerm 或 kitty 的設定 ──▶ 問一次要不要匯入字型、配色、快捷鍵（P3）
+ └─ 偵測到 fcitx5 或 IBus 在執行、但合成器沒有提供 text-input-v3 ──▶ 提示怎麼設定
+日常
+ ├─ 不必背快捷鍵：命令面板列出每個動作與快捷鍵，中文英文都能搜
+ ├─ 右鍵選單：複製、貼上、開啟連結、分割、設定，只用滑鼠也找得到常用功能
+ └─ 錯誤訊息說明錯在哪、怎麼改：設定檔第幾行、正確的寫法
+文件
+ ├─ 一頁快速開始：安裝、設定檔位置、最常用的五個快捷鍵、怎麼開設定
+ └─ 每個設定項的說明與範例由 schema 產生，不會和程式脫節
+安裝
+ └─ Gentoo localrepo ebuild；x86_64 與 aarch64 的 tarball；其他發行版的套件之後再談</pre>
+    <p class="why">上手難度沒有可信的數字可量，所以用一份固定的任務清單驗收：在全新的家目錄啟動 sumie，不看文件完成複製貼上、開分頁、分割、調字型大小、打中文、換配色、開設定，記下每個卡住的地方。P1 驗前五項，P3 驗完整清單，由你判斷是否過關。</p>
+  </div>
+</section>
+
+<section id="p0" aria-labelledby="h-p0">
+  <h2 id="h-p0"><span class="num">九</span>P0 流程</h2>
+<pre>P0（分支 <span class="hl">p0-spike</span>，粗估 1–2 天）
+ ├─ 0 量基準：Ghostty 1.4.0、WezTerm nightly、Konsole 26.08（Kwi 等你同意再裝）
+ │    固定測試文字（見第六節）；11 pt；縮放 1.25；截同寬圖
+ │    效能：第十節標 P0 的項目；先驗證延遲量法的精度
+ ├─ 1 建置：官方 libghostty-vt-1.0.1 tarball + deps tarball，zig-bin 0.17.1 離線建置
+ │    -Doptimize=ReleaseFast -Dcpu=baseline，全新的空 ZIG_GLOBAL_CACHE_DIR
+ │    裝到 /scratch/ssd/sumie/prefix ──▶ Rust 經 pkg-config 連結（x86_64、aarch64）
+ ├─ 2 開窗：sctk + EGL，照第五、六節畫字
+ │    └─ <span class="hl">關卡 A 清晰度與 CJK</span>：和 Ghostty 截圖並排，你判斷英文與中文都不比 Ghostty 差
+ ├─ 3 輸入法：text-input-v3 接 fcitx5 5.1.23，用 fcitx5-rime 與 fcitx5-mcbopomofo 實測
+ │    └─ <span class="hl">關卡 B 輸入法</span>：組字、選字、送出、候選字視窗位置、長按
+ │         組字中 Ctrl+Shift+C / V 照常生效；程式收不到 ESC[118;6u
+ ├─ 4 跑 Claude Code（全螢幕開著）：拖曳複製、Ctrl+點擊、貼上、框線不錯位
+ ├─ 5 換 GPU：同一份程式在 AMD 610M 上跑一次
+ └─ 6 MacBook 重跑關卡 A、B
+      ├─ 都過 ──▶ <span class="ok">寫 P1 計畫</span>
+      └─ 任一不過 ──▶ <span class="no">停</span>，記下原因與截圖</pre>
+  <div class="grid2">
+    <div class="box gate">
+      <h3>關卡 A：清晰度與 CJK</h3>
+      <p>沒有可信的數字可量，所以用同字、同大小、同寬的截圖並排，由你在自己的螢幕上以 100% 判斷。英文和中文分開判。</p>
+    </div>
+    <div class="box gate">
+      <h3>關卡 B：輸入法</h3>
+      <p>用固定的一組操作逐項檢查，結果寫成表：每一步做了什麼、預期、實際、截圖路徑。</p>
+    </div>
+  </div>
+  <p class="why">建置產物放 <code>/scratch/ssd/sumie/</code>，Cargo 的 <code>target-dir</code> 也指過去，因為 <code>~/code</code> 在有快照的 <code>rpool/home</code> 上，反覆編譯會被快照釘住。P0 的範圍：單視窗、單窗格、沒有分頁、沒有設定檔；常數集中在一個模組。測試實例跑在巢狀 KWin，不開在主螢幕；清晰度截圖要在真螢幕上看，才另外在主螢幕截一次。</p>
+</section>
+
+<section id="perf" aria-labelledby="h-perf">
+  <h2 id="h-perf"><span class="num">十</span>效能</h2>
+  <p>規則照 <code>zakk-workflow/references/requirements.md</code>：先量基準，同一台機器、記下負載、重複量才算數，結果不能比基準差。基準是 Ghostty 1.4.0（你現在用的）、WezTerm nightly、Konsole 26.08，目標是每一項都不輸 Ghostty。唯一不靠基準定的數字是螢幕本身的幀預算：桌機 240 Hz，一幀 4.17 ms；MacBook 依它的更新率算。</p>
+  <div class="sub">
+    <h3>10.1 量什麼、怎麼量</h3>
+    <p>每種量法都要對任何 Wayland 終端機有效，才能和 Ghostty 公平比較。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>項目</th><th>量法</th><th>目標</th><th>階段</th></tr></thead>
+        <tbody>
+          <tr><td>按鍵到畫面延遲</td><td>uinput 注入按鍵並記下時間；從 KWin 螢幕錄製（PipeWire）的幀時間戳找出字元出現的那一幀。sumie 另外用 presentation-time 的回報自量</td><td>中位數與 p99 都不輸 Ghostty</td><td class="nowrap">P0 基準、P1 門禁</td></tr>
+          <tr><td>輸出吞吐</td><td>vtebench（Alacritty 的基準工具）的各項工作負載；cat 大檔計時</td><td>不輸 Ghostty</td><td class="nowrap">P0 基準、P1 門禁</td></tr>
+          <tr><td>閒置耗用</td><td>閒置 60 秒：CPU 時間（<code>/proc/PID/stat</code>）、喚醒次數（<code>perf stat -e sched:sched_wakeup</code>）、sumie 自己的 GPU 提交次數</td><td>游標停止閃爍後，喚醒與提交都是 0</td><td class="nowrap">P1</td></tr>
+          <tr><td>記憶體</td><td>填滿 5 萬行捲動緩衝後的 PSS（<code>smaps_rollup</code>），1 個與 20 個窗格；GPU 記憶體看 <code>/dev/nvidia*</code> 的映射大小（你在 #8206 用的方法）與 Mesa 的 DRM fdinfo</td><td>每窗格不輸 Ghostty</td><td class="nowrap">P0 基準、P1 門禁</td></tr>
+          <tr><td>啟動時間</td><td>從 exec 到第一個帶畫面的 <code>wl_surface.commit</code>，用 <code>WAYLAND_DEBUG</code> 的時間戳，任何終端機都適用</td><td>不輸 Ghostty</td><td class="nowrap">P0 基準、P1 門禁</td></tr>
+          <tr><td>幀時間</td><td>sumie 自量每幀的 CPU 與 GPU 時間；捲動、大量輸出、改視窗大小三種壓力</td><td>p99 低於 4.17 ms（桌機）</td><td class="nowrap">P1</td></tr>
+          <tr><td>多窗格</td><td>20 個窗格同時輸出：CPU、幀時間、記憶體</td><td>不輸 Ghostty</td><td class="nowrap">P2</td></tr>
+          <tr><td>執行檔大小與依賴數</td><td>檔案大小；<code>cargo tree</code> 的 crate 數</td><td>進棘輪檔</td><td class="nowrap">P1</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="sub">
+    <h3>10.2 怎麼做到快</h3>
+<pre>PTY 讀取執行緒：持續讀、持續解析（libghostty-vt 有 SIMD 路徑），不等畫面
+ └─ 只標記髒列 ──▶ 主執行緒在 frame callback 時才畫；大量輸出時每幀只畫最新狀態
+繪製
+ ├─ 每個窗格每一層（背景、文字、裝飾、圖片）一次 instanced draw call
+ ├─ 只上傳有變動的格子；緩衝區預先配置、重複使用，每幀不新建 GPU 物件
+ │    <span class="dim">WezTerm 的 WebGpu 洩漏就出在每幀配置的 buffer 沒有回收</span>
+ ├─ 遵守同步更新（mode 2026）：程式整屏重畫時不畫出半幀
+ └─ 視窗被遮住或最小化時合成器不送 frame callback，自然不畫
+字型
+ ├─ 字形圖集：每個字形只光柵化一次；滿了就擴大或淘汰最久沒用的，不整個重建
+ ├─ ASCII 快路徑：純 ASCII 的文字不經 HarfBuzz
+ └─ CJK 後備字型：第一次用到才載入；碼位對應字型的結果快取，不每次問 fontconfig
+閒置
+ └─ 只有游標閃爍需要計時器；閒置一段時間後停止閃爍（kitty 的做法），之後完全不喚醒</pre>
+  </div>
+  <div class="sub">
+    <h3>10.3 門禁</h3>
+  <ul class="tight">
+    <li>數字寫進棘輪檔，比檔案高或低都失敗；變好時同步調低檔案裡的數字。</li>
+    <li>洩漏門禁：在無頭巢狀 KWin 開關 200 個視窗與窗格，fd 數與記憶體持平。沿用 <code>~/om/lab/wezterm-window-leak/scripts/headless.sh</code> 的做法。</li>
+    <li>停幀門禁：多個窗格持續輸出、連續數小時，KWin 不停幀。</li>
+    <li>cli 浸泡（P3 起）：每秒呼叫一次 <code>sumie cli list</code>，6 分鐘內記憶體持平，對照 WezTerm 的 37 → 87 MB。</li>
+    <li>多日浸泡：20 個窗格持續輸出、定時開關視窗、跑 24 小時以上，fd、記憶體、GPU 映射持平；桌機與 MacBook 各跑一次。</li>
+    <li>測試時限和各層門禁的執行時機寫進 <code>REQUIREMENTS.md</code>；P0 只量基準，不設門禁。</li>
+  </ul>
+  </div>
+</section>
+
+<section id="ua" aria-labelledby="h-ua">
+  <h2 id="h-ua"><span class="num">十一</span>終端機身分（UA）</h2>
+  <p>程式靠這些資訊決定要不要開進階功能，作用類似瀏覽器的 User-Agent。做法照 Ghostty 1.4。</p>
+<pre>啟動子行程時設定
+ ├─ TERM=xterm-sumie，TERMINFO 指向內附的 terminfo；找不到就退回 xterm-256color
+ ├─ COLORTERM=truecolor · TERM_PROGRAM=sumie · TERM_PROGRAM_VERSION=&lt;版本&gt;
+ └─ terminfo 宣告 tmux 要的能力：RGB · Ms（OSC 52）· Sync · Hls（OSC 8）· Smulx · Setulc
+程式查詢時回應
+ ├─ XTVERSION ──▶ sumie &lt;版本&gt;（tmux 也用它辨識終端機）
+ ├─ DA1、DA2 ──▶ 照 Ghostty 的格式
+ └─ XTGETTCAP ──▶ 直接查內附的 terminfo
+SSH 到遠端
+ ├─ 預設：TERM 改成 xterm-256color，帶上 COLORTERM 與 TERM_PROGRAM（遠端 sshd 要設 AcceptEnv 才收得到）
+ └─ 可選：第一次連線時用 tic 在遠端安裝 terminfo，成功才用 xterm-sumie</pre>
+  <p class="why">出處：Ghostty <code>src/config/Config.zig:3935</code>（TERM）、<code>src/termio/Exec.zig:646-667, 755</code>（TERMINFO 與 TERM_PROGRAM）、<code>src/termio/stream_handler.zig:488, 826-840, 973-987</code>（XTGETTCAP、DA、XTVERSION）、<code>Config.zig:2960-2983</code>（ssh-env、ssh-terminfo）。kitty 的 <code>xterm-kitty</code> 在沒有 terminfo 的遠端會出現 unknown terminal type，所以 SSH 預設退回 <code>xterm-256color</code>。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Claude Code 功能</th><th>它的條件</th><th>sumie</th></tr></thead>
+      <tbody>
+        <tr><td>Shift+Enter 換行</td><td>支援 kitty 鍵盤協定即可（v2.1.269 起）</td><td>P1 實作後直接生效</td></tr>
+        <tr><td>工作階段狀態</td><td>終端機實作 OSC 7501 就回報執行中、等待、完成（v2.1.295 起）；在 tmux 裡改回報給 tmux</td><td>P3 實作；這也是要不要取代 tmux 的主要考量</td></tr>
+        <tr><td>桌面通知</td><td><code>preferredNotifChannel</code> 的 <code>auto</code> 只認 iTerm2、Ghostty、kitty</td><td>支援 OSC 9 與 777；P3 驗證手動設定 channel 後收得到，並請上游加入 sumie</td></tr>
+        <tr><td>進度條（OSC 9;4）</td><td>只送給 ConEmu、Ghostty 1.2+、iTerm2</td><td>已能解析；請上游加入 sumie</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="why">不把 <code>TERM_PROGRAM</code> 設成 ghostty 換取功能：偽裝會讓程式照 Ghostty 的行為對待 sumie，出錯時難查。用設定與上游請求解決。出處：<a href="https://code.claude.com/docs/en/terminal-config">terminal-config</a>、<a href="https://code.claude.com/docs/en/settings-reference">settings-reference</a>、<a href="https://code.claude.com/docs/en/hooks">hooks</a>。</p>
+</section>
+
+<section id="agents" aria-labelledby="h-agents">
+  <h2 id="h-agents"><span class="num">十二</span>AI 終端機參考與 agent 功能</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>專案</th><th>平台與堆疊</th><th>狀態從哪來</th><th>值得抄的</th></tr></thead>
+      <tbody>
+        <tr><td>herdr</td><td>macOS、Linux、Windows；Rust 加 herdr-core 背景服務；Apache-2.0</td><td>OSC 7501</td><td>背景服務持有 PTY、GUI 只是視圖；<code>hc run</code>／<code>send</code> 的 CLI；每個 repo 一個空間</td></tr>
+        <tr><td>cmux</td><td>只有 macOS；Swift、Ghostty；GPL-3.0</td><td>OSC 9/99/777 加 <code>cmux notify</code> 接 agent hook</td><td>需要處理的窗格亮藍環、側欄徽章、跳到最近未讀；側欄顯示 git 分支、PR、目錄、埠</td></tr>
+        <tr><td>Rex</td><td>macOS 為主；libghostty；專有，beta</td><td>OSC 7501（含 blocked 的細分）</td><td><code>rex run --wait</code>、<code>events --json</code> 這類可等待狀態的 CLI</td></tr>
+        <tr><td>Architect</td><td>只有 macOS；Zig、SDL3、ghostty-vt；MIT</td><td><code>architect hook claude</code> 安裝 hook</td><td>MCP server 暴露 agent 狀態並可等待；worktree 選單</td></tr>
+        <tr><td>taskers</td><td>Linux；Rust、GTK4、Ghostty；MIT</td><td>shell helper 回報</td><td>窗格已在畫面上時不發桌面通知；attention rail</td></tr>
+        <tr><td>Warp、Wave</td><td>跨平台；AGPL／Apache</td><td>Warp 用官方 Claude Code plugin</td><td>直式分頁的狀態與未讀徽章；不抄內建 AI 助手</td></tr>
+      </tbody>
+    </table>
+  </div>
+<pre>狀態來源（不掃描畫面）
+ ├─ OSC 7501：執行中 · 等待輸入 · 完成 · 錯誤（Claude Code、herdr、Rex 共用）
+ ├─ OSC 9 / 777 通知、OSC 9;4 進度、bell、標題
+ └─ Claude Code hooks（Notification、Stop）──▶ sumie cli notify
+呈現
+ ├─ 側欄：每個專案一組，每個 agent 一列，顯示狀態、目錄、git 分支
+ ├─ 等待你處理的窗格：邊框標示、分頁徽章、「跳到最近一個等待中的窗格」快捷鍵
+ └─ 桌面通知：該窗格正在畫面上時不發
+控制：sumie cli 經 Unix socket ──▶ 開窗格 · 送文字 · 讀畫面 · 等待狀態
+持久化（P3 決定）：背景服務持有 PTY，關掉或當掉 GUI 不影響 agent；重開機不保留行程</pre>
+  <p class="why">不抄：內建瀏覽器（cmux，範圍過大）、內建 AI 助手（Warp、Wave，和終端機的定位衝突）。風險：OSC 7501 的位元組格式還沒找到公開規格，P3 開始前要先找到。出處：<a href="https://github.com/manaflow-ai/cmux">cmux</a>、<a href="https://herdr.dev/">herdr</a>、<a href="https://github.com/forketyfork/architect">Architect</a>、<a href="https://github.com/OneNoted/taskers">taskers</a>、<a href="https://docs.warp.dev/agent-platform/cli-agents/claude-code/">Warp</a>。</p>
+</section>
+
+<section id="code" aria-labelledby="h-code">
+  <h2 id="h-code"><span class="num">十三</span>程式碼要求</h2>
+  <p>照你的 <code>zakk-architecture</code> 與 <code>zakk-workflow</code> 規則，落到 Rust。目標是一年後別人打開任何一個 crate，都能從架構文件知道它管什麼、不許做什麼。</p>
+  <div class="sub">
+    <h3>13.1 每個 crate 的職責與禁止事項</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>crate</th><th>管什麼</th><th>禁止</th></tr></thead>
+        <tbody>
+          <tr><td>sumie-core</td><td>窗格、分頁、選取、連結、快捷鍵比對、agent 狀態、指令層</td><td>平台 crate、GL、FFI、unsafe、阻塞 IO</td></tr>
+          <tr><td>sumie-config</td><td>設定 schema、載入、驗證、熱重載、寫回</td><td>碰視窗與繪製</td></tr>
+          <tr><td>sumie-vt</td><td>libghostty-vt 的安全包裝</td><td>繪製、平台、決定快捷鍵</td></tr>
+          <tr><td>sumie-font</td><td>找字、塑形、光柵化、字形圖集</td><td>GL 呼叫、讀寫終端狀態</td></tr>
+          <tr><td>sumie-render</td><td>GL 繪製</td><td>改終端狀態、找字型、每幀新建 GPU 物件、持有 terminal 鎖時發 GL 指令</td></tr>
+          <tr><td>sumie-ui</td><td>自繪元件與介面文字</td><td>業務決定（歸 core）、直接碰 Wayland</td></tr>
+          <tr><td>sumie-wayland</td><td>連線、視窗、輸入、輸入法、剪貼簿、縮放</td><td>業務決定（例如快捷鍵比對歸 core）、在主迴圈阻塞讀剪貼簿</td></tr>
+          <tr><td>sumie-pty</td><td>PTY、子行程、讀取執行緒</td><td>碰 Wayland 物件、繪製</td></tr>
+          <tr><td>sumie-ipc（P3）</td><td>socket 協定與客戶端</td><td>業務決定、繪製</td></tr>
+          <tr><td>sumie-settings（P3）</td><td>設定 TUI</td><td>自己解析或寫入 TOML（一律經 sumie-config）、直接碰 GUI 內部狀態（一律經 sumie-ipc）</td></tr>
+          <tr><td>sumie（執行檔）</td><td>組裝、命令列</td><td>業務邏輯</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="sub">
+    <h3>13.2 結構規則</h3>
+    <ul class="tight">
+      <li>介面定義在使用方：sumie-core 宣告它需要的能力，平台 crate 實作；用編譯期斷言把實作釘在介面上，介面一變就編譯失敗。core 因此能在沒有 Wayland、沒有 GPU 的環境下測試。</li>
+      <li>介面旁寫明不許做什麼：不許在哪個執行緒呼叫、最多阻塞多久、呼叫次序、不承擔哪些職責。</li>
+      <li>邊界的方法簽名不預先寫死：計畫只列每個邊界必須承載的行為與約束，簽名在呼叫點定案後寫回架構文件。</li>
+      <li>新增 crate 或模組之前先改架構文件，寫明它管什麼、允許什麼、禁止什麼。禁止名為 <code>util</code>、<code>common</code>、<code>helper</code>、<code>misc</code> 的模組。</li>
+      <li>不替沒有的平台、沒有的第二種實作寫抽象；不取的模式在決策表寫下觸發條件。</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>13.3 上限（觸發討論的門檻，不是可以逼近的目標）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>項目</th><th>上限</th><th>檢查</th></tr></thead>
+        <tbody>
+          <tr><td>單一檔案</td><td>600 行</td><td>行數腳本，接進 pre-commit</td></tr>
+          <tr><td>單一函式</td><td>80 行</td><td>clippy <code>too_many_lines</code>，門檻設 80</td></tr>
+          <tr><td>複雜度</td><td>15</td><td>clippy <code>cognitive_complexity</code>，門檻設 15（認知複雜度，近似你規則裡的圈複雜度）</td></tr>
+          <tr><td>一次提交</td><td>一個職責</td><td>審查；加功能與改結構分開提交</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="why">這些檢查在 P0 的第一個提交就接好，每個新檢查先故意違規一次確認會失敗，才算數。</p>
+  </div>
+  <div class="sub">
+    <h3>13.4 Rust 規範</h3>
+    <ul class="tight">
+      <li>edition 2024。<code>rust-version</code> 定 1.96（libghostty-rs 的下限），不超過 Gentoo 穩定版的 rust（目前 amd64 與 arm64 都是 1.98.1），發行版才能直接打包；提高下限要寫理由。本機 1.99，上游穩定版 1.100.0（2026-11-12）。</li>
+      <li><code>[workspace.lints]</code> 統一 lint：clippy 的 all 與 pedantic 設為 warn，CI 用 <code>-D warnings</code> 擋下。</li>
+      <li>unsafe 只允許在 sumie-vt、sumie-font、sumie-render（FFI 與 GL）；其他 crate 一律 <code>#![forbid(unsafe_code)]</code>。每個 unsafe 區塊寫 <code>// SAFETY:</code> 說明前提（<code>undocumented_unsafe_blocks</code>）。</li>
+      <li>FFI 優先用現成 crate（freetype-rs、HarfBuzz 綁定、fontconfig），沒有才用 bindgen；一律是 <code>-sys</code> 加安全包裝。</li>
+      <li>錯誤：函式庫 crate 用 thiserror 定義錯誤型別；不吞錯誤。外部輸入（設定檔、命令列、cli 請求）在邊界驗證一次，之後信任型別；不寫用不到的防禦、重試、旗標。</li>
+      <li>日誌用 tracing，等級照真實意義。<strong>絕不記錄使用者輸入、終端輸出、剪貼簿內容</strong>，因為終端機會經手密碼；只記事件與長度。</li>
+      <li>依賴：每加一個要寫理由；cargo-deny 檢查授權與安全公告；cargo-machete 找沒用到的依賴。</li>
+      <li>註解用英文，只寫程式看不出的約束、取捨與安全前提。</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>13.5 測試與 CI</h3>
+<pre>測試
+ ├─ 精簡，守關鍵路徑：每條不變量一個測試；修 bug 先寫會失敗的測試
+ ├─ 繪製：離屏 EGL（Mesa llvmpipe）出圖，insta 快照比對；真 GPU 上另做截圖比對
+ └─ cargo-nextest；測試時限寫進 REQUIREMENTS.md
+CI（照實際需要的比例，不過度設計）
+ ├─ pre-commit（秒級）：fmt · clippy · 行數檢查
+ ├─ 合併門禁：x86_64 與 aarch64 建置加測試 · cargo tree 邊界 · cargo-deny
+ ├─ 排程：洩漏 · 停幀 · 效能 · 多日浸泡
+ └─ 發布時：打包 · 兩個架構的發布檔</pre>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>工具</th><th>版本與日期</th></tr></thead>
+        <tbody>
+          <tr><td>cargo-deny</td><td class="nowrap">0.22.0，2026-11-19</td></tr>
+          <tr><td>cargo-nextest</td><td class="nowrap">0.9.152，2026-11-13</td></tr>
+          <tr><td>cargo-machete</td><td class="nowrap">0.10.1，2026-11-16</td></tr>
+          <tr><td>insta</td><td class="nowrap">1.49.0，2026-10-03</td></tr>
+          <tr><td>thiserror</td><td class="nowrap">2.0.21，2026-09-23</td></tr>
+          <tr><td>tracing</td><td class="nowrap">0.1.44，2025-12-18</td></tr>
+          <tr><td>calloop</td><td class="nowrap">0.14.5，2026-10-01</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="why">提交：一個提交一個職責、英文祈使句標題、GPG 簽名、沒有任何 AI 署名。行為改變時，同一個提交裡更新 README、架構文件與說明。</p>
+  </div>
+  <div class="sub">
+    <h3>13.6 現代化</h3>
+    <p>「現代」照你的規則定義：每個選型對照當天抓的來源並附連結（第十五節），開工當天再核一次版本。</p>
+    <ul class="tight">
+      <li>標準庫有的就不引套件：<code>std::sync::LazyLock</code> 取代 lazy_static 與 once_cell；用 edition 2024 的 let chains；錯誤用 thiserror 2；日誌用 tracing，不用 log。</li>
+      <li>不引入 async 執行環境（tokio）：終端機只有少數 fd，calloop 事件迴圈加每個窗格一條讀取執行緒就夠；async 會把取消與生命週期問題帶進每一層。觸發條件：sumie-mux 要同時服務多台機器的連線時再評估。</li>
+      <li>依賴：<code>[workspace.dependencies]</code> 統一版本；Cargo.lock 入庫；cargo-deny 擋重複版本、已知漏洞與授權衝突；大版本升級各自一個提交，過全部門禁才合併。</li>
+      <li>排程 CI 用 <code>rust-version</code>（1.96）與最新穩定版各建置一次，確認下限沒有被不知不覺拉高。</li>
+    </ul>
+  </div>
+</section>
+
+<section id="phases" aria-labelledby="h-phases">
+  <h2 id="h-phases"><span class="num">十四</span>之後的階段</h2>
+<pre>前一段合入才開始下一段
+ P1 單視窗日常可用：捲動緩衝、搜尋、選取、連結規則、設定檔與熱重載、
+    OSC 52、kitty 鍵盤協定、命令面板、介面文字 locale 檔、設定 schema 與檢查指令、QuickSelect、最低對比、x86_64 與 aarch64 CI、右鍵選單、快速開始文件、內附 terminfo 與 XTVERSION
+ P2 分頁、分割、多視窗、kitty graphics、Copy mode；UI 參考畫面定案後寫設計語言文件
+ P3 agent 總覽側欄（OSC 7501）、桌面通知、sumie cli、設定 TUI（sumie config）、從 Ghostty 匯入設定；決定是否做常駐工作階段
+ P4 通用驗證：GNOME（自畫標題列、IBus）、niri、Hyprland；打包；發布（要你說「發」）</pre>
+  <p class="why">agent 狀態只讀程式本來就會送的訊號：標題、bell、OSC 9／777 通知、OSC 9;4 進度，不掃描畫面。libghostty-vt 對這些都有回呼（<code>terminal.h:2382</code>、<code>2390</code>）。你在 Ghostty 關掉了 <code>progress-style</code>，表示有程式在送 OSC 9;4；是不是 Claude Code 送的，在 P0 確認。</p>
+</section>
+
+<section id="stack" aria-labelledby="h-stack">
+  <h2 id="h-stack"><span class="num">十五</span>選型與出處</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>項目</th><th>版本與日期</th><th>用法</th><th>出處</th></tr></thead>
+      <tbody>
+        <tr><td>libghostty-vt</td><td class="nowrap">1.0.0，2026-11-06；1.0.1，2026-11-11</td><td>終端協定核心，C ABI 標為穩定；tag <code>vt-1.0.1</code>；用官方 tarball，GitHub 自動產生的壓縮檔缺 <code>LIB_VERSION</code> 不能用</td><td><a href="https://mitchellh.com/writing/libghostty-1-0">mitchellh.com</a></td></tr>
+        <tr><td>Zig</td><td class="nowrap">需要 0.17.x</td><td><code>minimum_zig_version = "0.17.0"</code>，主次版本要相同；本機 zig-bin 0.17.1 符合，MacBook 待查</td><td>ghostty <code>build.zig.zon</code></td></tr>
+        <tr><td>libghostty-rs</td><td class="nowrap">master 2026-11-14；crates.io 0.2.2</td><td>master 已對上 1.0.1，crates.io 版沒有；用 git 依賴加 <code>pkg-config</code> feature，不用預設的 vendored（建置時會連網 clone ghostty）</td><td><a href="https://github.com/Uzaaft/libghostty-rs">GitHub</a></td></tr>
+        <tr><td>Ghostty</td><td class="nowrap">1.4.0，2026-10-27</td><td>清晰度做法的參考實作</td><td><a href="https://ghostty.org/docs/install/release-notes/1-4-0">發布說明</a></td></tr>
+        <tr><td>foot</td><td class="nowrap">master</td><td>text-input-v3 的參考實作</td><td><a href="https://codeberg.org/dnkl/foot">codeberg</a></td></tr>
+        <tr><td>smithay-client-toolkit</td><td class="nowrap">0.21.1，2026-07-23</td><td>視窗、裝飾、游標、primary selection；沒有 text-input-v3、fractional-scale、viewporter 的封裝</td><td><a href="https://github.com/Smithay/client-toolkit/blob/master/CHANGELOG.md">CHANGELOG</a></td></tr>
+        <tr><td>wayland-protocols</td><td class="nowrap">0.32.13，2026-06-19</td><td>text-input-v3（unstable）、fractional-scale-v1（staging）、viewporter</td><td><a href="https://crates.io/crates/wayland-protocols">crates.io</a></td></tr>
+        <tr><td>glutin · glow</td><td class="nowrap">0.32.3 · 0.18.0</td><td>EGL context 與 GL 函式載入</td><td><a href="https://crates.io/crates/glutin">crates.io</a></td></tr>
+        <tr><td>winit</td><td class="nowrap">0.30.13；0.31.0-beta.4</td><td>不用：0.31 仍是 beta，找不到 fcitx5 組字穩定的證據</td><td><a href="https://crates.io/crates/winit">crates.io</a></td></tr>
+        <tr><td>wgpu</td><td class="nowrap">30.0.2，2026-11-12</td><td>不用：本機 Vulkan 前端讓 KWin 停幀</td><td><a href="https://crates.io/crates/wgpu">crates.io</a></td></tr>
+        <tr><td>FreeType · HarfBuzz · fontconfig</td><td class="nowrap">2.15.0 · 12.3.2 · 2.18.4</td><td>系統已裝；和 Ghostty、kitty 在 Linux 上同一套</td><td>本機 <code>qlist</code></td></tr>
+        <tr><td>harfrust · skrifa</td><td class="nowrap">0.16.1 · 0.50.0</td><td>純 Rust 備案；P0 用截圖對比決定</td><td><a href="https://crates.io/crates/harfrust">crates.io</a></td></tr>
+        <tr><td>ratatui · crossterm · toml_edit</td><td class="nowrap">0.30.2（2026-06-19）· 0.29.0 · 0.25.20（2026-11-21）</td><td>設定 TUI；保留註解與順序的 TOML 寫回</td><td><a href="https://crates.io/crates/ratatui">crates.io</a></td></tr>
+        <tr><td>Rust</td><td class="nowrap">1.99.0</td><td>本機已裝；libghostty-rs 要求 1.96 以上</td><td>本機</td></tr>
+        <tr><td>KWin · Qt · KF</td><td class="nowrap">6.8.3 · 6.11.3 · 6.32.0</td><td>桌機環境</td><td>本機</td></tr>
+        <tr><td>NVIDIA 驅動</td><td class="nowrap">620.73.04</td><td>桌機</td><td>本機</td></tr>
+        <tr><td>Kwi</td><td class="nowrap">2026-10-29 建立</td><td>對照組</td><td><a href="https://invent.kde.org/utilities/kwi">invent.kde.org</a></td></tr>
+        <tr><td>herdr</td><td class="nowrap">—</td><td>agent 總覽的結構參考</td><td><a href="https://herdr.dev/">herdr.dev</a></td></tr>
+        <tr><td>Claude Code 全螢幕</td><td class="nowrap">—</td><td><code>CLAUDE_CODE_DISABLE_MOUSE=1</code> 可換回原生選取，但失去滾輪</td><td><a href="https://code.claude.com/docs/en/fullscreen.md">文件</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="why">語言選 Rust，因為你的 honk、zpaste、juicity-rs 都是 Rust，照架構 skill「先找自己的基準」。MacBook 目前離線（<code>No route to host</code>），它的 Mesa、fcitx5、Zig 版本等開機後補。</p>
+</section>
+
+<section id="review" aria-labelledby="h-review">
+  <h2 id="h-review"><span class="num">十六</span>分工、審查與文件</h2>
+  <ul class="tight">
+    <li>核心程式碼（繪製、字型、CJK、輸入法、vt 整合）由 Opus 5.5 寫；GPT-6.2 astra high 審計畫和程式碼，Haiku 5.5 交叉檢查。</li>
+    <li>計畫審查一個版本最多兩輪，之後的意見只進修正表。</li>
+    <li>文件：架構（本頁第四節抽出）與 <code>REQUIREMENTS.md</code> 在 P0 期間寫；設計語言等你選好 UI 參考畫面，P2 之前寫；工作流照 zakk-workflow；README 用英文，另附繁中版。</li>
+    <li>故意不動：Ghostty、WezTerm、tmux、Claude Code 的設定，KDE 預設終端機；P1 驗收前都不換。</li>
+    <li>記憶：記憶庫 <code>sumie</code> 已建立，今天存在 <code>general</code> 的兩筆已搬過去；MacBook 的 MCP 設定等它上線再加。</li>
+  </ul>
+</section>
+
+<section id="questions" aria-labelledby="h-questions">
+  <h2 id="h-questions"><span class="num">十七</span>待你決定</h2>
+  <ol class="tight">
+    <li>要不要先裝 Kwi 試用，當清晰度的對照組？P0 第 0 步用得到。</li>
+    <li>介面參考（自繪已定，見 4.9）：Windows Terminal（分頁、窗格、命令面板、設定頁都有，屬於同一套設計語言），或 Astryx（Meta 的設計系統，你收藏了，本機也有 skill，token 與元件規格完整），或你指定。Blackbox、Tabby 你也收藏了，但不是大公司產品，要當參考需你另外決定。P2 之前要定。</li>
+    <li>要不要向 Claude Code 上游開 issue，請它認得 sumie（桌面通知、進度條）？對外發文要你同意。</li>
+    <li>名稱已定為 sumie（2026-11-22），查名結果見設計書第十六章。</li>
+    <li>授權與公開位置：建議 MIT OR Apache-2.0（Rust 生態慣例，與 libghostty-vt 的 MIT 相容）；放在哪個 GitHub 帳號或組織？</li>
+    <li>長期要不要用內建常駐工作階段取代 tmux？P3 之前要定。</li>
+    <li>P0 第 6 步需要 MacBook 開機並連上網路。</li>
+  </ol>
+</section>
+
+<section aria-labelledby="h-fix">
+  <h2 id="h-fix"><span class="num">十八</span>修正表</h2>
+  <p class="why">尚未送審，沒有修正項目。</p>
+</section>
+
+<footer>sumie · lab/plan-p0.html · v4 · 2026-11-22 · v2 補輸入法與建置；v3 加 CJK、UX 與易用性、完整架構，改為通用定位；v4 加自繪介面、外觀做法與設定；v5 加 WezTerm 功能清單；v6 加 WezTerm 的 OOM 與 ARM 教訓；v7 加效能量法、做法與目標；v8 加上手難度；v9 加介面框架比較、決策表、終端機身分、AI 終端機參考、程式碼要求；v10 設定改用 TUI；v11 設定 TUI 照 btop 的選項選單；v12 加語言與依賴、現代化</footer>
+</div>
