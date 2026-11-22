@@ -26,10 +26,12 @@ rust-version = "1.96"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
 fontconfig = { version = "0.11.0", features = ["dlopen"] }
 harfrust = "0.16.1"
 nix = { version = "0.31.3", default-features = false, features = ["event"] }
 png = "0.18.1"
+pollster = "1.0.3"
 pty-process = { version = "0.5.4", default-features = false }
 raw-window-handle = "0.6.2"
 rustix = { version = "1.1.6", features = ["event", "fs", "pipe", "process", "termios"] }
@@ -42,6 +44,7 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt"] }
 wayland-backend = { version = "0.3.17", features = ["rwh_06"] }
 wayland-protocols = { version = "0.32.13", features = ["client", "staging", "unstable"] }
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "wgsl"] }
 zeno = "0.3.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -27,6 +27,21 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+      - name: Install Mesa software GPU drivers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libegl-mesa0 libgl1-mesa-dri libvulkan1 mesa-vulkan-drivers
+          lavapipe=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$lavapipe"
+          {
+            echo "VK_DRIVER_FILES=$lavapipe"
+            echo 'EGL_PLATFORM=surfaceless'
+            echo 'LIBGL_ALWAYS_SOFTWARE=1'
+            echo 'MESA_GL_VERSION_OVERRIDE=3.0'
+            echo 'MESA_GLES_VERSION_OVERRIDE=3.0'
+            echo 'SUMIE_REQUIRE_GPU=1'
+          } >> "$GITHUB_ENV"
       - name: Install Zig 0.17.1
         shell: bash
         env:

@@ -40,6 +40,18 @@ The caller supplies the grid widths for an already ordered, left-to-right run, i
 
 Skrifa draws unhinted outlines into Zeno's 8-bit coverage rasterizer. Glyph origins and cell metrics use integer device pixels. Atlas entries retain their pixel rectangles when the shelf packer grows; growth marks the full atlas dirty. At a new scale or font size, replace the `FontSystem` and its atlas together. The binary reads the atlas dimensions, bytes, and dirty rectangles, then clears the dirty regions after consuming them. The font crate does not call the GPU.
 
+## GPU renderer (`sumie-render`)
+
+The caller owns the process-wide wgpu instance, adapter, and device and passes device and queue handles to the renderer. `backends()` selects `PRIMARY` (Vulkan on Linux, Metal on macOS); on Linux set `SUMIE_GPU_BACKEND=gl` to select the GLES backend instead. Pass that selection and the caller's instance descriptor to `instance_descriptor()`. It preserves the display handle required by GLES on Wayland and disables only indirect command validation on GL, where wgpu's internal compute pipeline can fail device creation. The renderer issues no indirect commands. `sumie-render` does not create native windows or depend on `sumie-font`.
+
+`AtlasUpload` borrows a tightly packed R8 coverage atlas and dirty rectangles. Upload the full atlas on the first call or when its dimensions change; otherwise upload only dirty regions. `DrawList` borrows row-major cell backgrounds and glyph quads. Input colors are straight sRGB RGBA8. Geometry uses integer device pixels, and each glyph's atlas and destination rectangles have the same size. A glyph names its owning cell for contrast and coverage correction, including when its ink overhangs that cell.
+
+The renderer uploads instances through a reusable staging belt and draws backgrounds, glyphs, and the optional cursor in that order in one render pass. The shader raises glyph contrast to at least 1.1 by moving its RGB toward black or white. Following Ghostty, it corrects grayscale coverage so the resulting luminance matches an sRGB interpolation, then blends premultiplied colors in linear light into an sRGB attachment. wgpu supplies the transient command encoder and acquired surface image each frame. The pipeline persists, and draw buffers and bindings change only when capacity or atlas dimensions change.
+
+On the render thread, call `upload_atlas` and `draw` only after releasing the terminal lock. The caller schedules frames; the renderer never draws or presents on its own. `Renderer` draws to a reusable offscreen target. `SurfaceRenderer` owns a caller-created surface, configures it at nonzero device-pixel sizes, and presents once per successful draw. `resize` may wait for swapchain GPU work. Drop `SurfaceRenderer` on the render thread before destroying the native window; its renderer resources drop before its surface.
+
+The workspace tests use the same pixel checks on the selected backend and on Linux GLES. Set `SUMIE_REQUIRE_GPU=1` to fail instead of skipping when an adapter is unavailable. Set `SUMIE_RENDER_ARTIFACT_DIR` to an existing directory to save `grid.png` from the selected backend test.
+
 ## Unix PTY (`sumie-pty`)
 
 `Pty` owns the Unix master, child process group, and one reader thread. It does not own terminal state, windows, rendering, or an event loop. `SpawnOptions` supplies the command or login shell, the complete child environment (including `TERM` and `COLORTERM`), the initial cell and pixel dimensions, and a close grace period. The default grace period is three seconds, with a five-second maximum. Spawn can wait for exec; the live-pane methods do not wait for PTY I/O or child exit.
