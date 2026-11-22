@@ -26,6 +26,12 @@ rust-version = "1.96"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
+fontconfig = { version = "0.11.0", features = ["dlopen"] }
+harfrust = "0.16.1"
+png = "0.18.1"
+skrifa = { version = "0.50.0", default-features = false, features = ["std"] }
+thiserror = "2.0.21"
+zeno = "0.3.3"
 sumie-macos = { path = "crates/sumie-macos" }
 sumie-wayland = { path = "crates/sumie-wayland" }
 
