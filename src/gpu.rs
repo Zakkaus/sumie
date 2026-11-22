@@ -1,0 +1,120 @@
+use std::time::Duration;
+
+use sumie_render::{
+    AtlasUpload, DrawList, SurfaceError, SurfaceFrame, SurfaceRenderer, backends,
+    instance_descriptor, wgpu,
+};
+use sumie_wayland::{CursorRect, Event, Platform, SourceHandle};
+
+use crate::{Result, capture::Readback};
+
+/// Window-side frame pacing, confined to the event-loop thread.
+trait FrameWindow {
+    fn frame_slot_available(&self) -> bool;
+    fn arm_frame_callback(&mut self);
+}
+
+impl FrameWindow for Platform {
+    fn frame_slot_available(&self) -> bool {
+        self.can_present()
+    }
+    fn arm_frame_callback(&mut self) {
+        assert!(self.begin_frame());
+    }
+}
+
+pub(crate) struct Gpu {
+    target: SurfaceRenderer<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    _instance: wgpu::Instance,
+    window: Platform,
+}
+
+impl Gpu {
+    pub(crate) fn new(capture: bool) -> Result<Self> {
+        let window = Platform::connect("sumie")?;
+        let instance = wgpu::Instance::new(instance_descriptor(
+            wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
+                window.display_handle_source(),
+            )),
+            backends(),
+        ));
+        let surface = instance.create_surface(window.window_owner())?;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(&surface),
+            ..Default::default()
+        }))?;
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                required_limits:
+                    wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+                ..Default::default()
+            }))?;
+        let mut target = SurfaceRenderer::new(surface, &adapter, &device, &queue, [0, 0])?;
+        if capture {
+            target.enable_readback(&adapter)?;
+        }
+        Ok(Self {
+            target,
+            device,
+            queue,
+            _instance: instance,
+            window,
+        })
+    }
+
+    pub(crate) fn loop_handle(&self) -> SourceHandle {
+        self.window.loop_handle()
+    }
+
+    pub(crate) fn dispatch(
+        &mut self,
+        received: &mut Vec<Event>,
+        timeout: Option<Duration>,
+    ) -> Result<()> {
+        self.window.dispatch(timeout)?;
+        received.extend(self.window.drain_events());
+        Ok(())
+    }
+
+    pub(crate) fn frame_slot_available(&self) -> bool {
+        self.window.frame_slot_available()
+    }
+
+    pub(crate) fn draw(
+        &mut self,
+        list: &DrawList<'_>,
+        clear: wgpu::Color,
+        capture: bool,
+    ) -> Result<(SurfaceFrame, Option<Result<Readback>>), SurfaceError> {
+        let mut readback = None;
+        let result = self.target.draw_with(list, clear, |frame| {
+            if capture {
+                readback = Some(Readback::copy(&self.device, &self.queue, frame));
+            }
+            self.window.arm_frame_callback();
+        })?;
+        Ok((result, readback))
+    }
+
+    pub(crate) fn upload_atlas(&mut self, atlas: &AtlasUpload<'_>) {
+        self.target.upload_atlas(atlas);
+    }
+
+    pub(crate) const fn present_count(&self) -> u64 {
+        self.target.present_count()
+    }
+
+    pub(crate) const fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub(crate) fn set_cursor_rectangle(&mut self, rect: CursorRect) {
+        self.window.set_cursor_rectangle(rect);
+    }
+
+    pub(crate) fn resize(&mut self, device: [u32; 2]) {
+        self.target.resize(device);
+    }
+}

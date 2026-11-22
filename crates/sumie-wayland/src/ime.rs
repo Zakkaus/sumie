@@ -1,18 +1,15 @@
 use std::collections::VecDeque;
 
-use smithay_client_toolkit::{
-    reexports::client::{
-        Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
-        protocol::{wl_seat::WlSeat, wl_surface::WlSurface},
-    },
-    shell::WaylandSurface,
+use smithay_client_toolkit::reexports::client::{
+    Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
+    protocol::{wl_seat::WlSeat, wl_surface::WlSurface},
 };
 use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3::ZwpTextInputManagerV3,
     zwp_text_input_v3::{self, ContentHint, ContentPurpose, ZwpTextInputV3},
 };
 
-use crate::{Event, Platform};
+use crate::{Event, platform::State};
 
 /// Cursor rectangle in surface-local logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,7 +94,7 @@ impl TextInput {
     pub(crate) fn new(
         manager: &ZwpTextInputManagerV3,
         seat: &WlSeat,
-        qh: &QueueHandle<Platform>,
+        qh: &QueueHandle<State>,
     ) -> Self {
         Self {
             proxy: manager.get_text_input(seat, qh, ()),
@@ -152,10 +149,8 @@ impl Drop for TextInput {
     }
 }
 
-impl Platform {
-    /// Update the IME anchor. The latest rectangle is retained across focus changes.
-    /// Call outside the interval between `begin_frame` and the buffer commit.
-    pub fn set_cursor_rectangle(&mut self, rect: CursorRect) {
+impl State {
+    pub(crate) fn set_cursor_rectangle(&mut self, rect: CursorRect) {
         self.cursor_rect = Some(rect);
         if let Some(ime) = self
             .keyboard
@@ -191,7 +186,7 @@ impl Platform {
     }
 }
 
-impl Dispatch<ZwpTextInputV3, ()> for Platform {
+impl Dispatch<ZwpTextInputV3, ()> for State {
     fn event(
         state: &mut Self,
         proxy: &ZwpTextInputV3,
@@ -243,7 +238,7 @@ impl Dispatch<ZwpTextInputV3, ()> for Platform {
     }
 }
 
-delegate_noop!(Platform: ignore ZwpTextInputManagerV3);
+delegate_noop!(State: ignore ZwpTextInputManagerV3);
 
 #[cfg(test)]
 mod tests {

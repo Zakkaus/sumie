@@ -76,6 +76,27 @@ fn close_reaps_a_child_that_ignores_hangup() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn child_exit_releases_watcher_with_or_without_status() {
+    for externally_reaped in [false, true] {
+        let mut pty = shell("exit 7", None);
+        let until = Instant::now() + TIMEOUT;
+        assert!(ready(pty.exit_fd().unwrap(), PollFlags::IN, until));
+        if externally_reaped {
+            let pid = pty.child_pid().unwrap();
+            assert!(waitpid(Some(pid), WaitOptions::NOHANG).unwrap().is_some());
+        }
+        let code = pty
+            .service_child()
+            .unwrap()
+            .and_then(|status| status.code());
+        assert_eq!(code, (!externally_reaped).then_some(7));
+        assert!(pty.exit_fd().is_none());
+        assert!(pty.child_pid().is_none());
+    }
+}
+
 #[test]
 fn child_environment_is_exact() {
     let mut env = session_env();
@@ -146,7 +167,7 @@ fn send(pty: &mut Pty, bytes: &[u8]) {
             ready(fd, PollFlags::OUT, until),
             "input never became writable"
         );
-        pty.flush_input().unwrap();
+        assert!(pty.flush_input().unwrap());
     }
 }
 

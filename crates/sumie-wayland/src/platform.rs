@@ -1,19 +1,21 @@
-use std::{collections::VecDeque, ptr::NonNull};
+use std::time::Duration;
+use std::{collections::VecDeque, fmt::Debug, ptr::NonNull, sync::Arc};
 
 use raw_window_handle::{
-    DisplayHandle, HandleError, HasDisplayHandle, RawWindowHandle, WaylandWindowHandle,
+    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WaylandWindowHandle,
+    WindowHandle,
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_dispatch2, delegate_registry,
     output::{OutputHandler, OutputState},
     reexports::{
-        calloop::{self, EventLoop, LoopHandle, RegistrationToken},
+        calloop::{self, EventLoop, EventSource, LoopHandle, RegistrationToken},
         calloop_wayland_source::WaylandSource,
         client::{
             Connection, Proxy, QueueHandle,
             globals::{self, BindError},
-            protocol::{wl_output, wl_surface::WlSurface},
+            protocol::{wl_output, wl_shm, wl_surface::WlSurface},
         },
     },
     registry::{ProvidesRegistryState, RegistryState},
@@ -26,7 +28,10 @@ use smithay_client_toolkit::{
             window::{DecorationMode, Window, WindowConfigure, WindowDecorations, WindowHandler},
         },
     },
-    shm::{Shm, ShmHandler},
+    shm::{
+        CreatePoolError, Shm, ShmHandler,
+        slot::{ActivateSlotError, CreateBufferError, SlotPool},
+    },
 };
 use wayland_backend::client::Backend;
 use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3;
@@ -44,16 +49,193 @@ pub enum ConnectError {
         interface: &'static str,
         source: BindError,
     },
-    #[error("register Wayland event source: {0}")]
+    #[error("set up Wayland event loop: {0}")]
     Register(#[from] calloop::Error),
 }
 
-/// One xdg-toplevel dispatched on the caller's event-loop thread.
-/// Release GPU resources and the wgpu surface before dropping this object.
+#[derive(Clone, Debug)]
+struct DisplayOwner(Backend);
+
+impl HasDisplayHandle for DisplayOwner {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        self.0.display_handle()
+    }
+}
+
+/// Owns the native window and its connection. Share it with the graphics surface.
+pub struct WindowOwner {
+    window: Window,
+    display: DisplayOwner,
+}
+
+impl WindowOwner {
+    pub(crate) fn wl_surface(&self) -> &WlSurface {
+        self.window.wl_surface()
+    }
+}
+
+impl HasDisplayHandle for WindowOwner {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        self.display.display_handle()
+    }
+}
+
+impl HasWindowHandle for WindowOwner {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        let ptr =
+            NonNull::new(self.wl_surface().id().as_ptr().cast()).ok_or(HandleError::Unavailable)?;
+        let raw = WaylandWindowHandle::new(ptr).into();
+        // SAFETY: WindowOwner keeps the SCTK window and display alive for the borrow and
+        // exposes neither proxy. wgpu keeps an Arc<WindowOwner> until its surface drops.
+        Ok(unsafe { WindowHandle::borrow_raw(raw) })
+    }
+}
+
+/// Register non-Wayland sources on the platform's event-loop thread.
+#[derive(Clone)]
+pub struct SourceHandle(LoopHandle<'static, State>);
+
+impl SourceHandle {
+    /// Register a source with a callback that does not access the Wayland dispatch state.
+    ///
+    /// # Errors
+    /// Returns an error if calloop cannot register the source.
+    pub fn insert<S, F>(&self, source: S, mut callback: F) -> calloop::Result<RegistrationToken>
+    where
+        S: EventSource + 'static,
+        F: FnMut(S::Event, &mut S::Metadata) -> S::Ret + 'static,
+    {
+        Ok(self
+            .0
+            .insert_source(source, move |event, metadata, _| callback(event, metadata))?)
+    }
+
+    /// Unregister a previously inserted source.
+    pub fn remove(&self, token: RegistrationToken) {
+        self.0.remove(token);
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ShmPresentError {
+    #[error("window dimensions exceed the wl_shm buffer limit")]
+    Size,
+    #[error("create shared memory pool: {0}")]
+    Pool(#[from] CreatePoolError),
+    #[error("create shared memory buffer: {0}")]
+    Buffer(#[from] CreateBufferError),
+    #[error("attach shared memory buffer: {0}")]
+    Attach(#[from] ActivateSlotError),
+}
+
+/// One xdg-toplevel. Connect, dispatch and present on the same thread.
 pub struct Platform {
+    shm_pool: Option<SlotPool>,
+    state: State,
+    event_loop: EventLoop<'static, State>,
+}
+
+impl Platform {
+    /// Connect, register the Wayland source, and request the initial configure.
+    /// This performs a registry round trip; subsequent dispatch is driven by calloop.
+    ///
+    /// # Errors
+    /// Returns an error if the connection, required globals, or event-loop setup fail.
+    pub fn connect(title: &str) -> Result<Self, ConnectError> {
+        let event_loop = EventLoop::try_new()?;
+        let state = State::connect(event_loop.handle(), title)?;
+        Ok(Self {
+            shm_pool: None,
+            state,
+            event_loop,
+        })
+    }
+
+    /// Wait up to `timeout` and dispatch ready sources. `None` waits indefinitely.
+    ///
+    /// # Errors
+    /// Returns an error from calloop or the Wayland event source.
+    pub fn dispatch(&mut self, timeout: Option<Duration>) -> calloop::Result<()> {
+        self.event_loop.dispatch(timeout, &mut self.state)
+    }
+
+    /// Drain events before the next dispatch or presentation.
+    pub fn drain_events(&mut self) -> impl Iterator<Item = Event> + '_ {
+        self.state.events.drain(..)
+    }
+
+    #[must_use]
+    pub fn loop_handle(&self) -> SourceHandle {
+        SourceHandle(self.event_loop.handle())
+    }
+
+    /// Share native window ownership with a graphics surface.
+    #[must_use]
+    pub fn window_owner(&self) -> Arc<WindowOwner> {
+        Arc::clone(&self.state.window)
+    }
+
+    /// Retain the display without retaining the window, for graphics instance creation.
+    #[must_use]
+    pub fn display_handle_source(&self) -> impl HasDisplayHandle + Debug + Send + Sync + use<> {
+        self.state.window.display.clone()
+    }
+
+    /// Whether the surface is configured and the compositor has released the frame slot.
+    #[must_use]
+    pub fn can_present(&self) -> bool {
+        self.state.can_present()
+    }
+
+    /// Arm the next frame callback and stage buffer geometry for presentation.
+    /// Call only when a buffer is ready, immediately before presenting it. A successful
+    /// call must be followed by a buffer commit before dispatching or changing IME state.
+    #[must_use]
+    pub fn begin_frame(&mut self) -> bool {
+        self.state.begin_frame()
+    }
+
+    /// Update the IME anchor. The latest rectangle is retained across focus changes.
+    /// Call outside the interval between `begin_frame` and the buffer commit.
+    pub fn set_cursor_rectangle(&mut self, rect: CursorRect) {
+        self.state.set_cursor_rectangle(rect);
+    }
+
+    /// Fill and commit a tightly packed XRGB8888 buffer at the configured device size.
+    /// Returns `false` without calling `fill` if there is no frame slot.
+    ///
+    /// # Errors
+    /// Returns an error if the buffer size is invalid or the SHM buffer cannot be created or attached.
+    pub fn present_shm(&mut self, fill: impl FnOnce(&mut [u8])) -> Result<bool, ShmPresentError> {
+        if !self.can_present() {
+            return Ok(false);
+        }
+        let (width, height) = self.state.scale.device_size(self.state.logical);
+        let (Ok(width), Ok(height)) = (i32::try_from(width), i32::try_from(height)) else {
+            return Err(ShmPresentError::Size);
+        };
+        let stride = width.checked_mul(4).ok_or(ShmPresentError::Size)?;
+        stride.checked_mul(height).ok_or(ShmPresentError::Size)?;
+        let pool = match &mut self.shm_pool {
+            Some(pool) => pool,
+            None => self.shm_pool.insert(SlotPool::new(1, &self.state.shm)?),
+        };
+        let (buffer, pixels) =
+            pool.create_buffer(width, height, stride, wl_shm::Format::Xrgb8888)?;
+        fill(pixels);
+        buffer.attach_to(self.state.wl_surface())?;
+        self.state.arm_frame();
+        let surface = self.state.wl_surface();
+        surface.damage(0, 0, i32::MAX, i32::MAX);
+        surface.commit();
+        Ok(true)
+    }
+}
+
+// SCTK's handler traits return proxies. Keep their implementor out of the public API.
+pub(crate) struct State {
     scale: Scale,
-    pub(crate) window: Window,
-    backend: Backend,
+    pub(crate) window: Arc<WindowOwner>,
     qh: QueueHandle<Self>,
     pub(crate) loop_handle: LoopHandle<'static, Self>,
     source: RegistrationToken,
@@ -71,16 +253,8 @@ pub struct Platform {
     geometry_dirty: bool,
 }
 
-impl Platform {
-    /// Connect, register the Wayland source, and request the initial configure.
-    /// This performs a registry round trip; subsequent dispatch is driven by calloop.
-    ///
-    /// # Errors
-    /// Returns an error if the connection, required globals, or source registration fail.
-    pub fn connect(
-        event_loop: &EventLoop<'static, Self>,
-        title: &str,
-    ) -> Result<Self, ConnectError> {
+impl State {
+    fn connect(loop_handle: LoopHandle<'static, Self>, title: &str) -> Result<Self, ConnectError> {
         let conn = Connection::connect_to_env()?;
         let (globals, queue) = globals::registry_queue_init::<Self>(&conn)?;
         let qh = queue.handle();
@@ -108,15 +282,16 @@ impl Platform {
         if text_input_manager.is_none() {
             tracing::info!("text-input-v3 unavailable; keyboard input only");
         }
-        let backend = conn.backend();
-        let loop_handle = event_loop.handle();
+        let window = Arc::new(WindowOwner {
+            window,
+            display: DisplayOwner(conn.backend()),
+        });
         let source = WaylandSource::new(conn, queue)
             .insert(loop_handle.clone())
             .map_err(|err| err.error)?;
         Ok(Self {
             scale,
             window,
-            backend,
             registry: RegistryState::new(&globals),
             output: OutputState::new(&globals, &qh),
             seats: SeatState::new(&globals, &qh),
@@ -135,47 +310,23 @@ impl Platform {
         })
     }
 
-    /// Drain events before the next dispatch or presentation.
-    pub fn drain_events(&mut self) -> impl Iterator<Item = Event> + '_ {
-        self.events.drain(..)
-    }
-
-    /// `wl_surface` used by the renderer. Do not destroy it or assign another role.
-    #[must_use]
-    pub fn wl_surface(&self) -> &WlSurface {
+    pub(crate) fn wl_surface(&self) -> &WlSurface {
         self.window.wl_surface()
     }
 
-    /// Shared-memory global for clients that attach their own buffers.
-    #[must_use]
-    pub fn shm(&self) -> &Shm {
-        &self.shm
-    }
-
-    /// Raw handle for wgpu's raw surface target. It is valid only while this platform lives.
-    ///
-    /// # Errors
-    /// Returns `HandleError::Unavailable` if the native surface is gone.
-    pub fn raw_window_handle(&self) -> Result<RawWindowHandle, HandleError> {
-        let ptr =
-            NonNull::new(self.wl_surface().id().as_ptr().cast()).ok_or(HandleError::Unavailable)?;
-        Ok(RawWindowHandle::Wayland(WaylandWindowHandle::new(ptr)))
-    }
-
-    /// Whether the surface is configured and the compositor has released the frame slot.
-    #[must_use]
-    pub fn can_present(&self) -> bool {
+    fn can_present(&self) -> bool {
         self.configured && !self.frame_pending
     }
 
-    /// Arm the next frame callback and stage buffer geometry for presentation.
-    /// Call only when a buffer is ready, immediately before presenting it. A successful
-    /// call must be followed by a buffer commit before dispatching or changing IME state.
-    #[must_use]
-    pub fn begin_frame(&mut self) -> bool {
+    fn begin_frame(&mut self) -> bool {
         if !self.can_present() {
             return false;
         }
+        self.arm_frame();
+        true
+    }
+
+    fn arm_frame(&mut self) {
         if self.geometry_dirty {
             self.scale.apply(self.wl_surface(), self.logical);
             self.geometry_dirty = false;
@@ -183,7 +334,6 @@ impl Platform {
         let surface = self.wl_surface();
         surface.frame(&self.qh, FrameCallbackData(surface.clone()));
         self.frame_pending = true;
-        true
     }
 
     pub(crate) fn emit_resize(&mut self) {
@@ -204,13 +354,7 @@ impl Platform {
     }
 }
 
-impl HasDisplayHandle for Platform {
-    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
-        self.backend.display_handle()
-    }
-}
-
-impl Drop for Platform {
+impl Drop for State {
     fn drop(&mut self) {
         self.loop_handle.remove(self.source);
         drop(self.keyboard.take());
@@ -221,7 +365,7 @@ impl Drop for Platform {
     }
 }
 
-impl WindowHandler for Platform {
+impl WindowHandler for State {
     fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &Window) {
         self.events.push_back(Event::CloseRequested);
     }
@@ -269,7 +413,7 @@ impl WindowHandler for Platform {
     }
 }
 
-impl CompositorHandler for Platform {
+impl CompositorHandler for State {
     fn scale_factor_changed(
         &mut self,
         _: &Connection,
@@ -313,7 +457,7 @@ impl CompositorHandler for Platform {
     }
 }
 
-impl OutputHandler for Platform {
+impl OutputHandler for State {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output
     }
@@ -323,18 +467,18 @@ impl OutputHandler for Platform {
     fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
 }
 
-impl ShmHandler for Platform {
+impl ShmHandler for State {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
     }
 }
 
-impl ProvidesRegistryState for Platform {
+impl ProvidesRegistryState for State {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry
     }
     registry_handlers![OutputState, SeatState];
 }
 
-delegate_registry!(Platform);
-delegate_dispatch2!(Platform);
+delegate_registry!(State);
+delegate_dispatch2!(State);

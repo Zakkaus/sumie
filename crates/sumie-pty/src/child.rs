@@ -105,7 +105,9 @@ impl Cleanup {
             Self::Watched(child) => child.finish(),
             Self::Unwatched(pid) => reap_after_setup_failure(pid),
         };
-        if let Err(err) = result {
+        if let Err(err) = result
+            && err != Errno::CHILD
+        {
             tracing::error!(%err, "could not reap detached PTY child");
         }
     }

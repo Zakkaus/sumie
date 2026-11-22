@@ -19,7 +19,7 @@ EDGES.update({
     "sumie-ui": BASE | {"sumie-font", "sumie-render"},
     "sumie": BASE | ADAPTERS | {"sumie-ui"},
 })
-UNSAFE_CRATES = {"sumie-vt", "sumie-font", "sumie-render"}
+UNSAFE_CRATES = {"sumie-vt", "sumie-font", "sumie-render", "sumie-wayland"}
 FORBIDDEN_NAMES = {"util", "common", "helper", "misc"}
 FILE_LIMIT = 600
 GATED_LINTS = {

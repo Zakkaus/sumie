@@ -2,6 +2,9 @@
 //! decide which shortcuts to handle.
 
 mod ffi;
+mod key;
+
+pub use key::{KeyAction, KeyEncoder, KeyEvent};
 
 use std::ffi::c_int;
 use std::fmt;
@@ -14,6 +17,62 @@ pub struct Cell {
     pub text: String,
     /// Display columns: 1 for a regular cell, 2 for a wide cell, and 0 for its trailing cell.
     pub width: u8,
+    pub foreground: Rgb,
+    pub background: Rgb,
+}
+
+pub type Rgb = [u8; 3];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cursor {
+    pub column: u16,
+    pub row: u16,
+    pub visible: bool,
+    pub color: Rgb,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Snapshot {
+    pub rows: Vec<Vec<Cell>>,
+    pub cursor: Option<Cursor>,
+    pub foreground: Rgb,
+    pub background: Rgb,
+}
+
+#[derive(Clone, Copy)]
+struct Colors {
+    foreground: Rgb,
+    background: Rgb,
+    cursor: Rgb,
+}
+
+/// Width of a Unicode codepoint, before any grapheme clustering.
+#[must_use]
+pub fn codepoint_width(ch: char) -> u8 {
+    // SAFETY: Any Rust char is a valid Unicode scalar value.
+    unsafe { ffi::ghostty_unicode_codepoint_width(u32::from(ch)) }
+}
+
+unsafe extern "C" fn queue_reply(
+    _: ffi::Terminal,
+    data: *mut std::ffi::c_void,
+    bytes: *const u8,
+    len: usize,
+) {
+    if len == 0 {
+        return;
+    }
+    // SAFETY: The callback is synchronous with the exclusive terminal call. `data` is the
+    // boxed reply queue, and Ghostty supplies `len` initialized bytes for this call.
+    let (queue, bytes) = unsafe {
+        (
+            &mut *data.cast::<Vec<u8>>(),
+            std::slice::from_raw_parts(bytes, len),
+        )
+    };
+    if len <= 1024 * 1024 - queue.len() {
+        queue.extend_from_slice(bytes);
+    }
 }
 
 /// An error reported by libghostty-vt.
@@ -42,10 +101,11 @@ pub struct Terminal {
     render: ffi::RenderState,
     row_iter: ffi::RenderStateRowIterator,
     cell_iter: ffi::RenderStateRowCells,
+    replies: *mut Vec<u8>,
 }
 
 impl Terminal {
-    /// Create a terminal with the given size in cells and no callbacks.
+    /// Create a terminal with the given size in cells.
     ///
     /// # Errors
     /// Returns an error for zero dimensions or a native allocation failure.
@@ -55,6 +115,7 @@ impl Terminal {
             render: null_mut(),
             row_iter: null_mut(),
             cell_iter: null_mut(),
+            replies: Box::into_raw(Box::<Vec<u8>>::default()),
         };
         // SAFETY: The constructors accept a null allocator and write to the corresponding
         // handle slots. Drop accepts null handles if any constructor fails.
@@ -77,6 +138,16 @@ impl Terminal {
                 null(),
                 &raw mut terminal.cell_iter,
             ))?;
+            check(ffi::ghostty_terminal_set(
+                terminal.raw,
+                ffi::TERMINAL_OPT_USERDATA,
+                terminal.replies.cast(),
+            ))?;
+            check(ffi::ghostty_terminal_set(
+                terminal.raw,
+                ffi::TERMINAL_OPT_WRITE_PTY,
+                queue_reply as *const std::ffi::c_void,
+            ))?;
         }
         Ok(terminal)
     }
@@ -87,13 +158,73 @@ impl Terminal {
         unsafe { ffi::ghostty_terminal_vt_write(self.raw, bytes.as_ptr(), bytes.len()) };
     }
 
+    /// Consume protocol replies after writes or resizes, on the terminal owner thread.
+    pub fn drain_replies(&mut self, consume: impl FnOnce(&[u8])) {
+        // SAFETY: This terminal owns the reply queue, and no callback can run here.
+        let replies = unsafe { &mut *self.replies };
+        if !replies.is_empty() {
+            consume(replies);
+            replies.clear();
+        }
+    }
+
+    /// Override the default colors and the first sixteen palette entries.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read or update the palette.
+    pub fn set_colors(
+        &mut self,
+        foreground: Rgb,
+        background: Rgb,
+        palette: &[Rgb; 16],
+    ) -> Result<(), Error> {
+        let mut colors = [[0; 3]; 256];
+        // SAFETY: The live terminal accepts exactly these RGB and palette layouts and copies them.
+        unsafe {
+            check(ffi::ghostty_terminal_get(
+                self.raw,
+                ffi::TERMINAL_DATA_COLOR_PALETTE,
+                from_mut(&mut colors).cast(),
+            ))?;
+            colors[..16].copy_from_slice(palette);
+            for (option, color) in [
+                (ffi::TERMINAL_OPT_COLOR_FOREGROUND, foreground),
+                (ffi::TERMINAL_OPT_COLOR_BACKGROUND, background),
+            ] {
+                check(ffi::ghostty_terminal_set(
+                    self.raw,
+                    option,
+                    color.as_ptr().cast(),
+                ))?;
+            }
+            check(ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::TERMINAL_OPT_COLOR_PALETTE,
+                colors.as_ptr().cast(),
+            ))
+        }
+    }
+
     /// Resize the grid. Ghostty reflows the primary screen when wraparound is enabled.
     ///
     /// # Errors
     /// Returns an error for zero dimensions or a native allocation failure.
     pub fn resize(&mut self, cols: u16, rows: u16) -> Result<(), Error> {
-        // SAFETY: The terminal is live and exclusive. Pixel dimensions are unused here.
-        check(unsafe { ffi::ghostty_terminal_resize(self.raw, cols, rows, 0, 0) })
+        self.resize_pixels(cols, rows, [0, 0])
+    }
+
+    /// Resize the grid and report the device-pixel dimensions of one cell.
+    ///
+    /// # Errors
+    /// Returns an error for zero grid dimensions or a native allocation failure.
+    pub fn resize_pixels(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        [width, height]: [u32; 2],
+    ) -> Result<(), Error> {
+        // SAFETY: The terminal is live and exclusive.
+        check(unsafe { ffi::ghostty_terminal_resize(self.raw, cols, rows, width, height) })
     }
 
     /// Copy the visible grid, with one entry per column, top to bottom.
@@ -103,6 +234,14 @@ impl Terminal {
     /// # Errors
     /// Returns an error if Ghostty cannot update or read the render state.
     pub fn snapshot(&mut self) -> Result<Vec<Vec<Cell>>, Error> {
+        Ok(self.render_snapshot()?.rows)
+    }
+
+    /// Copy visible cells, effective colors and the cursor into owned Rust data.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot update or read the render state.
+    pub fn render_snapshot(&mut self) -> Result<Snapshot, Error> {
         let mut cols = 0_u16;
         let mut rows = 0_u16;
         // SAFETY: Both handles are live and exclusive. Each key matches the output slot type.
@@ -124,15 +263,66 @@ impl Terminal {
                 from_mut(&mut self.row_iter).cast(),
             ))?;
         }
+        let colors = self.colors()?;
+        let cursor = self.cursor(colors.cursor)?;
         let mut screen = Vec::with_capacity(usize::from(rows));
         // SAFETY: The row iterator was populated above; the render state is not updated in this loop.
         while unsafe { ffi::ghostty_render_state_row_iterator_next(self.row_iter) } {
-            screen.push(self.snapshot_row(cols)?);
+            screen.push(self.snapshot_row(cols, colors)?);
         }
-        Ok(screen)
+        Ok(Snapshot {
+            rows: screen,
+            cursor,
+            foreground: colors.foreground,
+            background: colors.background,
+        })
     }
 
-    fn snapshot_row(&mut self, cols: u16) -> Result<Vec<Cell>, Error> {
+    fn colors(&self) -> Result<Colors, Error> {
+        // SAFETY: All three data keys have the RGB output layout.
+        let foreground = unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_FOREGROUND) }?;
+        // SAFETY: The key has the RGB output layout.
+        let background = unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_BACKGROUND) }?;
+        // SAFETY: The key has the RGB output layout, or reports an unset cursor color.
+        let cursor = match unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_CURSOR) } {
+            Err(Error(ffi::NO_VALUE)) => foreground,
+            result => result?,
+        };
+        Ok(Colors {
+            foreground,
+            background,
+            cursor,
+        })
+    }
+
+    fn cursor(&self, color: Rgb) -> Result<Option<Cursor>, Error> {
+        // SAFETY: Each key is paired with its documented bool or u16 output layout.
+        unsafe {
+            if !self.render_value::<bool>(ffi::RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE)? {
+                return Ok(None);
+            }
+            let column: u16 = self.render_value(ffi::RENDER_STATE_DATA_CURSOR_VIEWPORT_X)?;
+            let wide_tail: bool =
+                self.render_value(ffi::RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL)?;
+            Ok(Some(Cursor {
+                column: column - u16::from(wide_tail),
+                row: self.render_value(ffi::RENDER_STATE_DATA_CURSOR_VIEWPORT_Y)?,
+                visible: self.render_value(ffi::RENDER_STATE_DATA_CURSOR_VISIBLE)?,
+                color,
+            }))
+        }
+    }
+
+    unsafe fn render_value<T: Default>(&self, data: c_int) -> Result<T, Error> {
+        let mut value = T::default();
+        // SAFETY: The caller pairs the data key with its output layout; the state is live.
+        check(unsafe {
+            ffi::ghostty_render_state_get(self.render, data, from_mut(&mut value).cast())
+        })?;
+        Ok(value)
+    }
+
+    fn snapshot_row(&mut self, cols: u16, colors: Colors) -> Result<Vec<Cell>, Error> {
         // SAFETY: The row iterator is positioned on a live row, and CELLS takes a pointer to
         // a preallocated cell iterator handle.
         check(unsafe {
@@ -145,12 +335,12 @@ impl Terminal {
         let mut row = Vec::with_capacity(usize::from(cols));
         // SAFETY: The cell iterator was populated above and does not outlive the captured row.
         while unsafe { ffi::ghostty_render_state_row_cells_next(self.cell_iter) } {
-            row.push(self.snapshot_cell()?);
+            row.push(self.snapshot_cell(colors)?);
         }
         Ok(row)
     }
 
-    fn snapshot_cell(&self) -> Result<Cell, Error> {
+    fn snapshot_cell(&self, colors: Colors) -> Result<Cell, Error> {
         let mut cell: ffi::Cell = 0;
         let mut wide: c_int = 0;
         // SAFETY: The cell iterator is positioned on a live cell. RAW writes a GhosttyCell;
@@ -173,8 +363,45 @@ impl Terminal {
             ffi::CELL_WIDE_SPACER_TAIL => 0,
             _ => return Err(Error(ffi::INVALID_VALUE)),
         };
-        let text = self.cell_text()?;
-        Ok(Cell { text, width })
+        let mut foreground =
+            self.cell_color(ffi::RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, colors.foreground)?;
+        let mut background =
+            self.cell_color(ffi::RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, colors.background)?;
+        let mut style = ffi::Style::default();
+        // SAFETY: STYLE writes a 16-byte GhosttyStyle for the current cell.
+        check(unsafe {
+            ffi::ghostty_render_state_row_cells_get(
+                self.cell_iter,
+                ffi::RENDER_STATE_ROW_CELLS_DATA_STYLE,
+                from_mut(&mut style).cast(),
+            )
+        })?;
+        if style.flags & ffi::STYLE_INVERSE != 0 {
+            std::mem::swap(&mut foreground, &mut background);
+        }
+        let text = if style.flags & ffi::STYLE_INVISIBLE == 0 {
+            self.cell_text()?
+        } else {
+            String::new()
+        };
+        Ok(Cell {
+            text,
+            width,
+            foreground,
+            background,
+        })
+    }
+
+    fn cell_color(&self, data: c_int, default: Rgb) -> Result<Rgb, Error> {
+        let mut rgb = default;
+        // SAFETY: Both color keys used here write exactly one RGB value for the current cell.
+        let result = unsafe {
+            ffi::ghostty_render_state_row_cells_get(self.cell_iter, data, rgb.as_mut_ptr().cast())
+        };
+        if result != ffi::NO_VALUE {
+            check(result)?;
+        }
+        Ok(rgb)
     }
 
     fn cell_text(&self) -> Result<String, Error> {
@@ -222,6 +449,7 @@ impl Drop for Terminal {
             ffi::ghostty_render_state_row_iterator_free(self.row_iter);
             ffi::ghostty_render_state_free(self.render);
             ffi::ghostty_terminal_free(self.raw);
+            drop(Box::from_raw(self.replies));
         }
     }
 }

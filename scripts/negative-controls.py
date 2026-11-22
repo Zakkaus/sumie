@@ -9,12 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts/check-gate.py"
 CORE = "crates/sumie-core/src/lib.rs"
 VT = "crates/sumie-vt/src/lib.rs"
+WAYLAND = "crates/sumie-wayland/src/lib.rs"
 CORE_MANIFEST = "crates/sumie-core/Cargo.toml"
 RENDER_MANIFEST = "crates/sumie-render/Cargo.toml"
 UI_MANIFEST = "crates/sumie-ui/Cargo.toml"
-VT_READ = ("#[must_use]\npub fn read_probe() -> u8 {\n"
-           "    let bytes = [0_u8; 1];\n"
-           "    unsafe { std::ptr::read(bytes.as_ptr()) }\n}\n")
+UNSAFE_READ = ("#[must_use]\npub fn read_probe() -> u8 {\n"
+               "    let bytes = [0_u8; 1];\n"
+               "    unsafe { std::ptr::read(bytes.as_ptr()) }\n}\n")
 
 
 class GateUnavailable(Exception):
@@ -92,7 +93,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("missing unsafe forbid", "structure", CORE,
           replace_once("#![forbid(unsafe_code)]", "#![deny(unsafe_code)]"),
           f"unsafe: {CORE}: missing crate-level #![forbid(unsafe_code)]")
-    probe("VT unsafe exemption", "structure", VT, append(VT_READ), "exempt", expected=0)
+    for name, path in (("VT", VT), ("Wayland", WAYLAND)):
+        probe(f"{name} unsafe exemption", "structure", path, append(UNSAFE_READ),
+              "exempt", expected=0)
     probe("crate attributes after doc comment with BOM and CRLF", "structure", CORE,
           lambda source: ("\ufeff//! Core crate.\n#![doc(hidden)]\n" + source).replace("\n", "\r\n"),
           "unsafe: scanned", expected=0)
@@ -141,7 +144,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           append("#[must_use]\npub fn complexity_probe(flags: u16) -> u8 {\n"
                  "    let mut count = 0;\n" + branches + "    count\n}\n"),
           "cognitive complexity of (16/15)")
-    probe("undocumented unsafe block", "clippy", VT, append(VT_READ),
+    unsafe_path = WAYLAND if sys.platform.startswith("linux") else VT
+    probe("undocumented unsafe block", "clippy", unsafe_path, append(UNSAFE_READ),
           "unsafe block missing a safety comment")
     probe("unit test failure", "test", CORE,
           append("#[test]\nfn test_probe() -> Result<(), &'static str> {\n"
@@ -150,6 +154,11 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")
+    if sys.platform.startswith("linux"):
+        probe("preedit written to PTY", "test", "src/input.rs",
+              replace_once("Event::ImePreedit { text, .. } => return Ok(Some(text)),",
+                           "Event::ImePreedit { ref text, .. } => PaneCommand::Text(text.as_bytes()),"),
+              "test tests::local_pane_executes_committed_input_without_preedit ... FAILED")
 
 
 def interrupted(_signum, _frame):

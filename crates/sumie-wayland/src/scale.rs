@@ -10,7 +10,7 @@ use wayland_protocols::wp::{
     viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter},
 };
 
-use crate::Platform;
+use crate::platform::State;
 
 const UNIT: u32 = 120;
 
@@ -20,11 +20,7 @@ pub(crate) struct Scale {
 }
 
 impl Scale {
-    pub(crate) fn bind(
-        globals: &GlobalList,
-        qh: &QueueHandle<Platform>,
-        surface: &WlSurface,
-    ) -> Self {
+    pub(crate) fn bind(globals: &GlobalList, qh: &QueueHandle<State>, surface: &WlSurface) -> Self {
         Self {
             viewport: bind_viewport(globals, qh, surface),
             units: UNIT,
@@ -85,7 +81,7 @@ impl Drop for Scale {
 
 fn bind_viewport(
     globals: &GlobalList,
-    qh: &QueueHandle<Platform>,
+    qh: &QueueHandle<State>,
     surface: &WlSurface,
 ) -> Option<(WpFractionalScaleV1, WpViewport)> {
     let fractional = globals
@@ -106,7 +102,7 @@ fn device_pixels(logical: u32, units: u32) -> u32 {
     u32::try_from(pixels).unwrap_or(u32::MAX)
 }
 
-impl Dispatch<WpFractionalScaleV1, ()> for Platform {
+impl Dispatch<WpFractionalScaleV1, ()> for State {
     fn event(
         state: &mut Self,
         _: &WpFractionalScaleV1,
@@ -121,9 +117,9 @@ impl Dispatch<WpFractionalScaleV1, ()> for Platform {
     }
 }
 
-delegate_noop!(Platform: ignore WpFractionalScaleManagerV1);
-delegate_noop!(Platform: ignore WpViewporter);
-delegate_noop!(Platform: ignore WpViewport);
+delegate_noop!(State: ignore WpFractionalScaleManagerV1);
+delegate_noop!(State: ignore WpViewporter);
+delegate_noop!(State: ignore WpViewport);
 
 #[cfg(test)]
 mod tests {

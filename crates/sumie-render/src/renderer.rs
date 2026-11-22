@@ -114,6 +114,7 @@ impl Renderer {
             list,
             &target.view,
             [target.texture.width(), target.texture.height()],
+            wgpu::Color::TRANSPARENT,
         );
     }
 
@@ -122,6 +123,7 @@ impl Renderer {
         list: &DrawList<'_>,
         view: &wgpu::TextureView,
         size: [u32; 2],
+        clear: wgpu::Color,
     ) {
         let mut encoder = self
             .device
@@ -140,7 +142,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: wgpu::LoadOp::Clear(clear),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

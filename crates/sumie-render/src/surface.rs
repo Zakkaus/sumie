@@ -13,6 +13,8 @@ pub enum SurfaceError {
     Lost,
     #[error("wgpu rejected surface texture acquisition")]
     Validation,
+    #[error("the surface does not support copying the frame for readback")]
+    NoReadback,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +29,7 @@ pub enum SurfaceFrame {
     Occluded,
 }
 
-/// A renderer and its caller-created surface. Drop on the render thread before the native window.
+/// A renderer and its caller-created surface. Drop on the render thread.
 pub struct SurfaceRenderer<'window> {
     // Rust drops fields in declaration order; the surface outlives the renderer's resources.
     renderer: Renderer,
@@ -75,6 +77,24 @@ impl<'window> SurfaceRenderer<'window> {
         Ok(target)
     }
 
+    /// Enable copying acquired frames before configuring the initial device size.
+    ///
+    /// # Errors
+    /// Returns an error if the adapter cannot copy from the surface.
+    pub fn enable_readback(&mut self, adapter: &wgpu::Adapter) -> Result<(), SurfaceError> {
+        if !self
+            .surface
+            .get_capabilities(adapter)
+            .usages
+            .contains(wgpu::TextureUsages::COPY_SRC)
+        {
+            return Err(SurfaceError::NoReadback);
+        }
+        self.config.usage |= wgpu::TextureUsages::COPY_SRC;
+        self.resize([self.config.width, self.config.height]);
+        Ok(())
+    }
+
     /// Resize or reconfigure in device pixels. wgpu may wait for the previous swapchain.
     /// Either dimension being zero suspends draws without configuring the surface.
     pub fn resize(&mut self, [width, height]: [u32; 2]) {
@@ -96,6 +116,21 @@ impl<'window> SurfaceRenderer<'window> {
     /// # Errors
     /// Reports outdated, lost, or invalid surface texture acquisition.
     pub fn draw(&mut self, list: &DrawList<'_>) -> Result<SurfaceFrame, SurfaceError> {
+        self.draw_with(list, wgpu::Color::TRANSPARENT, |_| {})
+    }
+
+    /// Submit a draw with a linear clear color. Run `before_present` only after acquisition and
+    /// drawing succeed, just before the buffer commit. On Wayland, arm the frame callback there.
+    /// The texture may be copied from the hook when readback has been enabled.
+    ///
+    /// # Errors
+    /// Reports outdated, lost, or invalid surface texture acquisition.
+    pub fn draw_with(
+        &mut self,
+        list: &DrawList<'_>,
+        clear: wgpu::Color,
+        before_present: impl FnOnce(&wgpu::Texture),
+    ) -> Result<SurfaceFrame, SurfaceError> {
         if self.config.width == 0 || self.config.height == 0 {
             return Ok(SurfaceFrame::Suspended);
         }
@@ -113,8 +148,9 @@ impl<'window> SurfaceRenderer<'window> {
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
             let size = [frame.texture.width(), frame.texture.height()];
-            self.renderer.draw_view(list, &view, size);
+            self.renderer.draw_view(list, &view, size, clear);
         }
+        before_present(&frame.texture);
         self.renderer.queue.present(frame);
         self.present_count += 1;
         Ok(SurfaceFrame::Presented { suboptimal })

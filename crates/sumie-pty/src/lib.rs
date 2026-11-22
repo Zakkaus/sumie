@@ -202,22 +202,26 @@ impl Pty {
     }
 
     /// Attempt one nonblocking write, keeping the unwritten suffix in the FIFO.
+    /// Returns `false` if the PTY is closed or its peer no longer accepts writes.
     ///
     /// # Errors
-    /// Returns an error on a permanent write failure or after close.
-    pub fn flush_input(&mut self) -> io::Result<()> {
-        let master = self.master()?;
+    /// Returns an error on other permanent write failures.
+    pub fn flush_input(&mut self) -> io::Result<bool> {
+        let Some(master) = &self.master else {
+            return Ok(false);
+        };
         if self.pending.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
         let (head, tail) = self.pending.as_slices();
         match rustix::io::writev(master, &[IoSlice::new(head), IoSlice::new(tail)]) {
             Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
             Ok(written) => drop(self.pending.drain(..written)),
             Err(Errno::AGAIN | Errno::INTR) => (),
+            Err(Errno::IO | Errno::PIPE) => return Ok(false),
             Err(err) => return Err(err.into()),
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Apply cell and pixel dimensions to the PTY.
@@ -247,7 +251,7 @@ impl Pty {
     }
 
     /// On exit readiness or timer expiry, reap the child or escalate a pending close.
-    /// A returned status consumes the watcher. `None` means to keep watching.
+    /// A completed reap removes `exit_fd()`. An externally reaped child has no status.
     ///
     /// # Errors
     /// Returns an error if the wait, the exit event, or the signal fails.
@@ -255,12 +259,15 @@ impl Pty {
         let Some(child) = &mut self.child else {
             return Ok(None);
         };
-        let result = child.service();
-        if matches!(result, Ok(Some(_)) | Err(Errno::CHILD)) {
-            self.child = None;
-            self.reader.release_cleanup();
-        }
-        Ok(result?)
+        let status = match child.service() {
+            Ok(None) => return Ok(None),
+            Ok(status) => status,
+            Err(Errno::CHILD) => None,
+            Err(err) => return Err(err.into()),
+        };
+        self.child = None;
+        self.reader.release_cleanup();
+        Ok(status)
     }
 
     /// Send SIGHUP, stop I/O, and schedule escalation. Does not wait or join.

@@ -40,10 +40,36 @@ pub struct Buffer {
     pub len: usize,
 }
 
+#[repr(C)]
+pub struct Str {
+    pub ptr: *const u8,
+    pub len: usize,
+}
+
+#[repr(C)]
+#[derive(Default)]
+pub struct Style {
+    colors: [[u8; 4]; 3],
+    pub flags: u16,
+    reserved: u16,
+}
+
+pub type KeyEncoder = *mut c_void;
+pub type KeyEvent = *mut c_void;
+
 pub type Cell = u64;
 pub const SUCCESS: c_int = 0;
 pub const INVALID_VALUE: c_int = -2;
 pub const OUT_OF_SPACE: c_int = -3;
+pub const NO_VALUE: c_int = -4;
+pub const TERMINAL_OPT_USERDATA: c_int = 1;
+pub const TERMINAL_OPT_WRITE_PTY: c_int = 2;
+pub const TERMINAL_OPT_COLOR_FOREGROUND: c_int = 12;
+pub const TERMINAL_OPT_COLOR_BACKGROUND: c_int = 13;
+pub const TERMINAL_OPT_COLOR_PALETTE: c_int = 15;
+pub const TERMINAL_DATA_COLOR_PALETTE: c_int = 21;
+pub const STYLE_INVERSE: u16 = 1 << 4;
+pub const STYLE_INVISIBLE: u16 = 1 << 5;
 pub const CELL_DATA_WIDE: c_int = 3;
 pub const CELL_WIDE_NARROW: c_int = 0;
 pub const CELL_WIDE_WIDE: c_int = 1;
@@ -52,8 +78,19 @@ pub const CELL_WIDE_SPACER_HEAD: c_int = 3;
 pub const RENDER_STATE_DATA_COLS: c_int = 1;
 pub const RENDER_STATE_DATA_ROWS: c_int = 2;
 pub const RENDER_STATE_DATA_ROW_ITERATOR: c_int = 4;
+pub const RENDER_STATE_DATA_COLOR_BACKGROUND: c_int = 5;
+pub const RENDER_STATE_DATA_COLOR_FOREGROUND: c_int = 6;
+pub const RENDER_STATE_DATA_COLOR_CURSOR: c_int = 7;
+pub const RENDER_STATE_DATA_CURSOR_VISIBLE: c_int = 11;
+pub const RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE: c_int = 14;
+pub const RENDER_STATE_DATA_CURSOR_VIEWPORT_X: c_int = 15;
+pub const RENDER_STATE_DATA_CURSOR_VIEWPORT_Y: c_int = 16;
+pub const RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL: c_int = 17;
 pub const RENDER_STATE_ROW_DATA_CELLS: c_int = 3;
 pub const RENDER_STATE_ROW_CELLS_DATA_RAW: c_int = 1;
+pub const RENDER_STATE_ROW_CELLS_DATA_STYLE: c_int = 2;
+pub const RENDER_STATE_ROW_CELLS_DATA_BG_COLOR: c_int = 5;
+pub const RENDER_STATE_ROW_CELLS_DATA_FG_COLOR: c_int = 6;
 pub const RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8: c_int = 9;
 
 // SAFETY: ABI declarations and values come from the pinned vt-1.0.1 bindings.
@@ -73,6 +110,27 @@ unsafe extern "C" {
         cell_height_px: u32,
     ) -> c_int;
     pub fn ghostty_terminal_vt_write(terminal: Terminal, data: *const u8, len: usize);
+    pub fn ghostty_terminal_set(terminal: Terminal, option: c_int, value: *const c_void) -> c_int;
+    pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
+    pub fn ghostty_unicode_codepoint_width(value: u32) -> u8;
+    pub fn ghostty_key_encoder_new(allocator: *const Allocator, out: *mut KeyEncoder) -> c_int;
+    pub fn ghostty_key_encoder_free(encoder: KeyEncoder);
+    pub fn ghostty_key_encoder_set_from_terminal(encoder: KeyEncoder, terminal: Terminal) -> c_int;
+    pub fn ghostty_key_encoder_encode(
+        encoder: KeyEncoder,
+        event: KeyEvent,
+        out: *mut u8,
+        cap: usize,
+        written: *mut usize,
+    ) -> c_int;
+    pub fn ghostty_key_event_new(allocator: *const Allocator, out: *mut KeyEvent) -> c_int;
+    pub fn ghostty_key_event_free(event: KeyEvent);
+    pub fn ghostty_key_event_set_action(event: KeyEvent, action: c_int) -> c_int;
+    pub fn ghostty_key_event_set_key(event: KeyEvent, key: c_int) -> c_int;
+    pub fn ghostty_key_event_set_mods(event: KeyEvent, mods: u16) -> c_int;
+    pub fn ghostty_key_event_set_consumed_mods(event: KeyEvent, mods: u16) -> c_int;
+    pub fn ghostty_key_event_set_unshifted_codepoint(event: KeyEvent, codepoint: u32) -> c_int;
+    pub fn ghostty_key_event_set_utf8(event: KeyEvent, text: Str) -> c_int;
     pub fn ghostty_render_state_new(allocator: *const Allocator, state: *mut RenderState) -> c_int;
     pub fn ghostty_render_state_free(state: RenderState);
     pub fn ghostty_render_state_update(state: RenderState, terminal: Terminal) -> c_int;

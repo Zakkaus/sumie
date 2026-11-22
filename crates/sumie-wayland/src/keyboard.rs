@@ -9,7 +9,7 @@ use smithay_client_toolkit::{
     },
 };
 
-use crate::{Event, Platform, ime::TextInput};
+use crate::{Event, ime::TextInput, platform::State};
 
 pub(crate) struct Keyboard {
     seat: WlSeat,
@@ -27,7 +27,7 @@ impl Drop for Keyboard {
     }
 }
 
-impl Platform {
+impl State {
     fn start_keyboard(&mut self, qh: &QueueHandle<Self>, seat: WlSeat) {
         let result = self.seats.get_keyboard_with_repeat(
             qh,
@@ -97,7 +97,7 @@ impl Platform {
     }
 }
 
-impl SeatHandler for Platform {
+impl SeatHandler for State {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seats
     }
@@ -133,7 +133,7 @@ impl SeatHandler for Platform {
     }
 }
 
-impl KeyboardHandler for Platform {
+impl KeyboardHandler for State {
     fn enter(
         &mut self,
         _: &Connection,

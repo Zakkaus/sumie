@@ -1,4 +1,3 @@
-#![forbid(unsafe_code)]
 #![cfg(target_os = "linux")]
 
 //! Linux Wayland adapter. The caller owns the event loop, input policy, and renderer.
@@ -9,7 +8,7 @@ mod platform;
 mod scale;
 
 pub use ime::CursorRect;
-pub use platform::{ConnectError, Platform};
+pub use platform::{ConnectError, Platform, ShmPresentError, SourceHandle, WindowOwner};
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 /// Events in dispatch order. Text input is sensitive; do not log its contents.
