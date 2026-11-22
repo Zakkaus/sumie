@@ -40,6 +40,16 @@ The caller supplies the grid widths for an already ordered, left-to-right run, i
 
 Skrifa draws unhinted outlines into Zeno's 8-bit coverage rasterizer. Glyph origins and cell metrics use integer device pixels. Atlas entries retain their pixel rectangles when the shelf packer grows; growth marks the full atlas dirty. At a new scale or font size, replace the `FontSystem` and its atlas together. The binary reads the atlas dimensions, bytes, and dirty rectangles, then clears the dirty regions after consuming them. The font crate does not call the GPU.
 
+## Unix PTY (`sumie-pty`)
+
+`Pty` owns the Unix master, child process group, and one reader thread. It does not own terminal state, windows, rendering, or an event loop. `SpawnOptions` supplies the command or login shell, the complete child environment (including `TERM` and `COLORTERM`), the initial cell and pixel dimensions, and a close grace period. The default grace period is three seconds, with a five-second maximum. Spawn can wait for exec; the live-pane methods do not wait for PTY I/O or child exit.
+
+The reader polls the master and a stop descriptor. It sends byte chunks through a bounded channel and signals `output_fd()` with an eventfd on Linux or a pipe on macOS. On readiness, clear the wake with `clear_output_wake()` before draining `try_recv_output()` to empty or disconnected. `enqueue_input()` admits whole messages into a 1 MiB FIFO. Poll `input_fd()` only while it is present and call `flush_input()` on write readiness; partial writes keep their original order. `resize()` applies `TIOCSWINSZ`.
+
+Keep the `Pty` after removing the pane from the UI. `close()` sends SIGHUP to the child group, discards queued I/O, and signals the reader to release the master. Call `service_child()` on `exit_fd()` readiness or at `close_deadline()`. It reaps a ready child or sends SIGKILL once at the deadline, then keeps watching until exit. No other code may wait on the child or enable automatic reaping. `Drop` never joins or waits for the child; it hands any unreaped child to the reader thread for the same deadline and exit handling.
+
+Linux uses rustix for pidfd, `waitid(P_PIDFD)`, and Unix descriptor operations. macOS uses nix for the safe kqueue API and rustix for `waitpid` after `EVFILT_PROC` reports `NOTE_EXIT`. `pty-process` supplies safe Unix PTY allocation and controlling-terminal spawn through its synchronous API; its Tokio feature is disabled.
+
 ## Gates
 
 Run `scripts/check-all.sh` from the repository root. It runs the read-only checks, then the negative controls. Use `--fast` to run only the read-only checks. Negative controls temporarily edit files and restore their bytes. They also compare Git porcelain status before and after. Do not edit the worktree while they run. Cargo uses `$CARGO_TARGET_DIR` if set, otherwise a `sumie/target` directory under the user's cache.
