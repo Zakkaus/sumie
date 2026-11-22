@@ -82,16 +82,26 @@ fn run(
     stop: &Wake,
     cleanup: &Receiver<Cleanup>,
 ) {
-    if let Err(err) = read_output(&master, &sender, wake, stop) {
-        tracing::error!(%err, "PTY reader failed");
-    }
+    log_error(
+        read_output(&master, &sender, wake, stop),
+        "PTY reader failed",
+    );
     drop(master);
     drop(sender);
-    if let Err(err) = wake.notify() {
-        tracing::error!(%err, "could not notify event loop that PTY output ended");
-    }
+    log_error(
+        wake.notify(),
+        "could not notify event loop that PTY output ended",
+    );
     if let Ok(child) = cleanup.recv() {
         child.finish();
+    }
+}
+
+// One call site per message keeps tracing's macro expansion (larger when another
+// crate enables its `log` feature) out of the callers' cognitive complexity.
+fn log_error<E: std::fmt::Display>(result: Result<(), E>, message: &'static str) {
+    if let Err(err) = result {
+        tracing::error!(%err, "{message}");
     }
 }
 

@@ -5,5 +5,20 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+raw-window-handle.workspace = true
+smithay-client-toolkit.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+wayland-backend.workspace = true
+wayland-protocols.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tracing-subscriber.workspace = true
+
 [lints]
 workspace = true
+
+[[example]]
+name = "window"
+path = "examples/window.rs"

@@ -50,6 +50,16 @@ Keep the `Pty` after removing the pane from the UI. `close()` sends SIGHUP to th
 
 Linux uses rustix for pidfd, `waitid(P_PIDFD)`, and Unix descriptor operations. macOS uses nix for the safe kqueue API and rustix for `waitpid` after `EVFILT_PROC` reports `NOTE_EXIT`. `pty-process` supplies safe Unix PTY allocation and controlling-terminal spawn through its synchronous API; its Tokio feature is disabled.
 
+## Wayland platform (`sumie-wayland`)
+
+`Platform::connect` creates one xdg-toplevel with app ID `sumie` and registers its Wayland queue in the caller's `calloop::EventLoop<Platform>`. Connection setup performs a registry round trip; the caller dispatches and drains events on the same thread. The window requests server-side decorations. If the compositor does not grant them, P0 is undecorated and logs the fallback once.
+
+Wait for `Resized` before sizing the renderer. `scale` is in units of 1/120. With fractional-scale-v1 and viewporter, the surface keeps `buffer_scale = 1`; its viewport destination is the logical size, and device dimensions round `logical × scale / 120`. Otherwise SCTK supplies the integer scale from `wl_surface.preferred_buffer_scale` or the outputs. Call `begin_frame()` immediately before committing a ready buffer. The initial configure and each completed frame callback release one frame slot; neither forces a redraw. Finish that buffer commit before changing IME state or dispatching again.
+
+SCTK and calloop supply window, seat, and XKB dispatch and key repeat. `wayland-protocols` supplies the fractional-scale, viewporter, and text-input-v3 bindings. The adapter uses the first available keyboard seat and emits raw evdev codes and interpreted key data without matching shortcuts. The text-input object uses terminal content type, emits committed text before the next preedit at `done`, and applies the batch even when its serial is stale. A stale serial defers outgoing cursor changes until a matching `done`. The adapter resends the rectangle after focus returns, but does not resend an unchanged rectangle within a focus session. Text-input interface version 2 pairs its state commit with a surface commit.
+
+The libwayland backend supplies `HasDisplayHandle`. Use `Platform::raw_window_handle()` with wgpu's raw surface target; SCTK does not supply `HasWindowHandle` and this crate forbids `unsafe`. Destroy the view's GPU resources and wgpu surface before dropping `Platform`; SCTK then destroys the xdg-toplevel, xdg-surface, and wl_surface in order. `cargo run -p sumie-wayland --example window` demonstrates the buffer commit path using `wl_shm` and logs event metadata without input contents.
+
 ## Gates
 
 Run `scripts/check-all.sh` from the repository root. It runs the read-only checks, then the negative controls. Use `--fast` to run only the read-only checks. Negative controls temporarily edit files and restore their bytes. They also compare Git porcelain status before and after. Do not edit the worktree while they run. Cargo uses `$CARGO_TARGET_DIR` if set, otherwise a `sumie/target` directory under the user's cache.
