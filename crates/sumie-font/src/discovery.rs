@@ -84,7 +84,7 @@ impl Discovery {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) struct Discovery;
+pub(crate) enum Discovery {}
 
 #[cfg(target_os = "macos")]
 impl Discovery {
@@ -94,6 +94,6 @@ impl Discovery {
     }
 
     pub fn find(&self, _: Option<char>) -> Result<Match, FontError> {
-        Err(FontError::UnsupportedPlatform)
+        match *self {}
     }
 }

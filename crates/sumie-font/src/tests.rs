@@ -175,7 +175,7 @@ fn atlas_keeps_rectangles_and_reports_uploads() {
         .unwrap();
     atlas.clear_dirty_regions();
     assert_eq!(atlas.get(key(1)), Some(first));
-    assert!(atlas.dirty_regions().is_empty());
+    assert_eq!(atlas.dirty_regions(), &[]);
     let next = atlas
         .insert(key(2), small, |pixels, _| pixels[0] = 200)
         .unwrap();
