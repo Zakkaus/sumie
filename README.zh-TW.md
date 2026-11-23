@@ -18,7 +18,7 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 安裝 Git、Python 3.11 以上版本、rustfmt 與 Clippy 後，在儲存庫根目錄執行 `scripts/check-all.sh`。加上 `--fast` 可略過會暫時修改原始碼的反向驗證。crate 邊界與 Git hook 安裝方式見 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
-## 設定 Linux 字型、配色與游標
+## 在 Linux 上設定 sumie
 
 建立 `$XDG_CONFIG_HOME/sumie/sumie.toml`；未設定 `XDG_CONFIG_HOME` 時，使用 `~/.config/sumie/sumie.toml`。
 
@@ -26,6 +26,7 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 #:schema ./sumie.schema.json
 include = []
 minimum-contrast = 1.1 # 設為 1.0 可停用文字對比校正
+scrollback-limit = 50000000
 
 [font]
 family = "JetBrains Mono"
@@ -42,6 +43,8 @@ blink = true
 ```
 
 在 Linux 上，儲存主設定檔或 `include` 引入的檔案即可套用變更，不必重新啟動 sumie。設定有誤時，sumie 會沿用上一份有效設定，並在視窗頂端顯示檔名、行號與欄號，直到儲存有效的設定為止。色碼採用 `#rrggbb` 格式；若設定 `palette`，須依索引順序列出全部 16 個 ANSI 色碼。
+
+`scrollback-limit` 以位元組設定捲動記錄的近似上限。調低上限可能立即刪除較舊的記錄。設為 `0` 會清除並停用捲動記錄。
 
 粗體和斜體優先使用同一字型家族的對應字體，不改變字元格大小。SGR 2 將前景的不透明度降至 50%。底線支援單線、雙線、波浪線、點線和虛線，可用 SGR 58 單獨指定顏色。刪除線、頂線和底線可同時顯示。
 

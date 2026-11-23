@@ -57,6 +57,10 @@ pub(super) fn assert_decorations(
             "double" => assert!(first < single_y && last > single_y && gaps == 1),
             "curly" => {
                 assert!(middle.is_some() && top_at(0) > middle && top_at(w - 1) > middle);
+                assert!(
+                    top_at(0).unwrap() - middle.unwrap() >= w / 4,
+                    "curly underline is too shallow"
+                );
                 let bg = view.draw_list(true).backgrounds[usize::from(size.cols) + column];
                 assert!(
                     (h..2 * h).all(|y| (0..w).all(|x| red(x, y) == bg[0])),

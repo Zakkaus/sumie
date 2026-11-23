@@ -54,6 +54,10 @@ pub struct Config {
         default = "default_contrast"
     )]
     minimum_contrast: Option<f64>,
+    /// Approximate scrollback limit in bytes. Lowering it can discard history immediately.
+    /// Set to 0 to clear and disable scrollback.
+    #[schemars(with = "usize", default = "default_scrollback_limit")]
+    scrollback_limit: Option<usize>,
 }
 
 impl Config {
@@ -65,17 +69,28 @@ impl Config {
         }
     }
 
+    #[must_use]
+    pub fn scrollback_limit(&self) -> usize {
+        self.scrollback_limit
+            .unwrap_or_else(default_scrollback_limit)
+    }
+
     fn overlay(&mut self, file: Self) {
         self.font.overlay(file.font);
         self.colors.overlay(&file.colors);
         self.cursor.overlay(file.cursor);
         self.shell.overlay(&file.shell);
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
+        self.scrollback_limit = file.scrollback_limit.or(self.scrollback_limit);
     }
 }
 
 const fn default_contrast() -> f64 {
     1.1
+}
+
+const fn default_scrollback_limit() -> usize {
+    50_000_000
 }
 
 fn deserialize_contrast<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f64>, D::Error> {
@@ -503,6 +518,11 @@ pub fn defaults_toml() -> String {
         &mut text,
         "minimum-contrast",
         &properties["minimum-contrast"],
+    );
+    write_default(
+        &mut text,
+        "scrollback-limit",
+        &properties["scrollback-limit"],
     );
     for table in ["font", "colors", "cursor", "shell"] {
         use std::fmt::Write as _;

@@ -159,6 +159,15 @@ impl App {
                     }
                 }
             }
+            if changes.scrollback_limit {
+                let terminal = &mut session.pane.terminal;
+                terminal.set_scrollback_bytes(next.scrollback_limit())?;
+                session.snapshot_dirty = true;
+                if let Some(bar) = &mut session.search {
+                    bar.output(terminal)?;
+                    session.frame_dirty = true;
+                }
+            }
             if changes.terminal_colors {
                 set_colors(&mut session.pane.terminal, &next.colors)?;
                 session.snapshot_dirty = true;

@@ -18,7 +18,8 @@ fn load_configuration() {
     let main = scratch.0.join("sumie.toml");
     fs::write(
         scratch.0.join("shared.toml"),
-        "minimum-contrast = 7.0\n[font]\nfamily = 'Iosevka'\nsize = 12\nweight = 500\n\
+        "minimum-contrast = 7.0\nscrollback-limit = 104857600\n\
+         [font]\nfamily = 'Iosevka'\nsize = 12\nweight = 500\n\
          hinting = 'off'\n[colors]\nforeground = '#AB12EF'\nbackground = '#123456'\n",
     )
     .unwrap();
@@ -26,20 +27,24 @@ fn load_configuration() {
     let defaults = defaults_toml();
     let palette = ["#010203"; 16];
     let colors = format!(
-        "include = ['shared.toml']\nminimum-contrast = 1.0\n[colors]\n\
+        "include = ['shared.toml']\nminimum-contrast = 1.0\nscrollback-limit = 0\n[colors]\n\
          background = '#fedcba'\ncursor = '#123456'\nselection-foreground = '#abcdef'\n\
          selection-background = '#654321'\npalette = {palette:?}\n"
     );
     let cases: [Case<'_>; 9] = [
         (
             "[font]\nfamily = 'Monospace'\nsize = 18\nweight = 600\nhinting = 'normal'\n",
-            Ok(|config| assert_font(config.font, "Monospace", 24.0, 600, Hinting::Normal)),
+            Ok(|config| {
+                assert_eq!(config.scrollback_limit(), 50_000_000);
+                assert_font(config.font, "Monospace", 24.0, 600, Hinting::Normal);
+            }),
         ),
         ("[font]\nunknown = true\n", Err((2, 1, "unknown field"))),
         (
             "include = ['shared.toml']\n[font]\nsize = 15\nweight = 700\n",
             Ok(|config| {
                 assert_eq!(config.minimum_contrast().to_bits(), 7.0_f32.to_bits());
+                assert_eq!(config.scrollback_limit(), 104_857_600);
                 assert_font(config.font, "Iosevka", 20.0, 700, Hinting::Off);
             }),
         ),
@@ -103,6 +108,7 @@ fn assert_defaults(config: Config) {
 
 fn assert_colors(config: Config) {
     assert_eq!(config.minimum_contrast().to_bits(), 1.0_f32.to_bits());
+    assert_eq!(config.scrollback_limit(), 0);
     let colors = config.colors;
     assert_eq!(colors.foreground(), [0xab, 0x12, 0xef]);
     assert_eq!(colors.background(), [0xfe, 0xdc, 0xba]);

@@ -1,7 +1,7 @@
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
 use skrifa::GlyphId;
-use zeno::{Command, Fill, Mask, PathBuilder, Placement, Scratch, Stroke, Style};
+use zeno::{Cap, Command, Fill, Mask, PathBuilder, Placement, Scratch, Stroke, Style};
 
 use crate::{Atlas, AtlasGlyph, CellMetrics, FontError, FontSystem, GlyphKey, sprite};
 
@@ -88,17 +88,17 @@ impl Decoration {
                 (offset as u32, offset + 0.5 * t + r)
             }
             Self::Curly => {
-                let offset = (t / 2.0).ceil();
-                // Preserve the font's underline position when the descender space is short.
-                let descent = metrics.height.saturating_sub(line.top) as f32;
-                let amplitude = (w / PI).min((descent - t * 0.5).max(t));
-                let low = offset + amplitude;
-                // Ghostty uses two cubic segments per column, with a crest at its center.
-                path.move_to([0.0, low])
-                    .curve_to([0.2 * w, low], [0.3 * w, offset], [0.5 * w, offset])
-                    .curve_to([0.7 * w, offset], [0.8 * w, low], [w, low]);
-                style = Stroke::new(t).into();
-                (offset as u32, low + 0.5 * t)
+                let crest = 0.5 * t;
+                // Use Ghostty's full wave unless it is taller than the cell itself.
+                let amplitude = (w / PI).min(metrics.height as f32 - t);
+                let trough = crest + amplitude;
+                path.move_to([0.0, trough])
+                    .curve_to([0.2 * w, trough], [0.3 * w, crest], [0.5 * w, crest])
+                    .curve_to([0.7 * w, crest], [0.8 * w, trough], [w, trough]);
+                let mut stroke = Stroke::new(t);
+                stroke.cap(Cap::Round);
+                style = stroke.into();
+                (crest as u32, amplitude + t)
             }
         };
         let height = (height.ceil() as u32).min(metrics.height);

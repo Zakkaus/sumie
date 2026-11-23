@@ -51,7 +51,7 @@ impl LocalPane {
         let mut terminal = Terminal::new(size.cols, size.rows)?;
         let term = env.get(std::ffi::OsStr::new("TERM"));
         terminal.set_identity(XTVERSION, term.map_or(&[], |term| term.as_encoded_bytes()))?;
-        terminal.set_scrollback_bytes(10_000_000)?;
+        terminal.set_scrollback_bytes(config.scrollback_limit())?;
         set_colors(&mut terminal, &config.colors)?;
         set_cursor_defaults(&mut terminal, config.cursor)?;
         terminal.resize_pixels(size.cols, size.rows, cell)?;

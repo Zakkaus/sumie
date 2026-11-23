@@ -22,7 +22,7 @@ Build the workspace from the repository root with `cargo build --workspace --loc
 
 With Git, Python 3.11 or newer, rustfmt, and Clippy available, run `scripts/check-all.sh` from the repository root. Use `--fast` to skip the probes that temporarily edit source files. See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate boundaries and hook setup.
 
-## Configure fonts, colors, and the cursor on Linux
+## Configure sumie on Linux
 
 Create `$XDG_CONFIG_HOME/sumie/sumie.toml` (or `~/.config/sumie/sumie.toml`):
 
@@ -30,6 +30,7 @@ Create `$XDG_CONFIG_HOME/sumie/sumie.toml` (or `~/.config/sumie/sumie.toml`):
 #:schema ./sumie.schema.json
 include = []
 minimum-contrast = 1.1 # 1.0 disables text contrast correction
+scrollback-limit = 50000000
 
 [font]
 family = "JetBrains Mono"
@@ -50,6 +51,9 @@ restarting sumie. Invalid settings leave the previous settings in effect and sho
 the filename, line, and column at the top of the window until the next valid save.
 Colors use `#rrggbb` notation; an optional `palette` must contain all 16 ANSI colors
 in index order.
+
+`scrollback-limit` sets the approximate scrollback limit in bytes. Lowering it
+can discard history immediately. Set it to `0` to clear and disable scrollback.
 
 Bold and italic use the font family's matching faces when available. They do not change the grid size. SGR 2 dims the foreground to 50% opacity. Underlines can be single, double, curly, dotted or dashed; SGR 58 sets their color independently of text. Strikethrough and overline can appear together with an underline.
 

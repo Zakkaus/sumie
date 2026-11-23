@@ -12,6 +12,7 @@ pub struct Changes {
     pub terminal_colors: bool,
     pub selection_colors: bool,
     pub minimum_contrast: bool,
+    pub scrollback_limit: bool,
 }
 
 impl Config {
@@ -39,6 +40,7 @@ impl Config {
                 || old.selection_background() != new.selection_background(),
             minimum_contrast: self.minimum_contrast().to_bits()
                 != next.minimum_contrast().to_bits(),
+            scrollback_limit: self.scrollback_limit() != next.scrollback_limit(),
         }
     }
 }
@@ -52,31 +54,38 @@ mod tests {
         let old = Config::default();
         let defaults = crate::defaults_toml();
         for (text, expected) in [
-            (&*defaults, [false; 5]),
-            ("[font]\nsize = 18", [true, false, false, false, false]),
+            (&*defaults, [false; 6]),
+            (
+                "[font]\nsize = 18",
+                [true, false, false, false, false, false],
+            ),
             (
                 "[font]\nhinting = 'off'",
-                [true, false, false, false, false],
+                [true, false, false, false, false, false],
             ),
             (
                 "[cursor]\nstyle = 'bar'",
-                [false, true, false, false, false],
+                [false, true, false, false, false, false],
             ),
             (
                 "[cursor]\nblink = false",
-                [false, true, false, false, false],
+                [false, true, false, false, false, false],
             ),
             (
                 "[colors]\nbackground = '#123456'",
-                [false, false, true, false, false],
+                [false, false, true, false, false, false],
             ),
             (
                 "[colors]\nselection-background = '#123456'",
-                [false, false, false, true, false],
+                [false, false, false, true, false, false],
             ),
             (
                 "minimum-contrast = 7\n[font]\nweight = 500",
-                [true, false, false, false, true],
+                [true, false, false, false, true, false],
+            ),
+            (
+                "scrollback-limit = 0",
+                [false, false, false, false, false, true],
             ),
         ] {
             let new = toml::from_str(text).unwrap();
@@ -86,6 +95,7 @@ mod tests {
                 terminal_colors,
                 selection_colors,
                 minimum_contrast,
+                scrollback_limit,
             } = old.changes(&new);
             assert_eq!(
                 [
@@ -93,7 +103,8 @@ mod tests {
                     cursor,
                     terminal_colors,
                     selection_colors,
-                    minimum_contrast
+                    minimum_contrast,
+                    scrollback_limit,
                 ],
                 expected,
                 "{text}"
