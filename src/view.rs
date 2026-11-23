@@ -35,6 +35,7 @@ pub(crate) struct View {
     /// Viewport row, inclusive first/last columns, and whether this is the current match.
     pub(crate) search_highlights: Vec<(u16, u16, u16, bool)>,
     search_box: Option<SearchBox>,
+    presented_search: Option<overlays::PresentedSearch>,
     grid: [u32; 2],
     backgrounds: Vec<Rgba>,
     selection_foreground: Option<Rgb>,
@@ -95,6 +96,7 @@ impl View {
             search_bar: None,
             search_highlights: Vec::new(),
             search_box: None,
+            presented_search: None,
             backgrounds: Vec::new(),
             selection_foreground: colors.selection_foreground(),
             selection_background: colors.selection_background(),

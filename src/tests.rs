@@ -245,7 +245,8 @@ fn search_pointer_only_scrolls_history() {
     };
     let right = Button::Right;
     let left = Button::Left;
-    let close_hit = |_| Some(SearchAction::Close);
+    let mut routing = input::Routing::default();
+    let close_hit = || Some(input::SearchTarget::Close);
     let scenarios = [
         (true, Press(right), false, Effect::None),
         (true, Motion, false, Effect::None),
@@ -258,13 +259,14 @@ fn search_pointer_only_scrolls_history() {
         (true, Release(right), true, Effect::None),
         (true, Press(right), false, Effect::None),
         (false, Release(right), false, Effect::None),
+        (true, Press(left), false, Effect::None),
+        (true, Motion, false, Effect::None),
         (
             true,
-            Press(left),
+            Release(left),
             false,
             Effect::Search(SearchAction::Close),
         ),
-        (false, Release(left), false, Effect::None),
     ];
     let mut searching = false;
     for (next, phase, reported, expected) in scenarios {
@@ -273,7 +275,9 @@ fn search_pointer_only_scrolls_history() {
             searching = next;
         }
         assert_eq!(
-            input::pointer(&mut pane, searching, event(phase), close_hit).unwrap(),
+            routing
+                .pointer(&mut pane, searching, event(phase), close_hit)
+                .unwrap(),
             expected
         );
         assert_eq!(pane.pty.input_fd().is_some(), reported);
@@ -283,7 +287,7 @@ fn search_pointer_only_scrolls_history() {
     let wheel = event(MousePhase::Wheel(-120.0));
     assert!(pane.terminal.at_bottom().unwrap());
     assert_eq!(
-        input::pointer(&mut pane, true, wheel, |_| None).unwrap(),
+        routing.pointer(&mut pane, true, wheel, || None).unwrap(),
         Effect::ViewportChanged
     );
     assert!(!pane.terminal.at_bottom().unwrap());
@@ -292,9 +296,9 @@ fn search_pointer_only_scrolls_history() {
     pane.command(PaneCommand::Text(b"\n")).unwrap();
     assert!(pane.pty.flush_input().unwrap());
     wait_for_line(&mut pane, "ALT");
-    input::pointer(&mut pane, true, wheel, |_| None).unwrap();
+    routing.pointer(&mut pane, true, wheel, || None).unwrap();
     assert!(pane.pty.input_fd().is_none());
-    input::pointer(&mut pane, false, wheel, |_| None).unwrap();
+    routing.pointer(&mut pane, false, wheel, || None).unwrap();
     assert!(
         pane.pty.input_fd().is_some(),
         "1007 must encode arrows outside search"

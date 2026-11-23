@@ -24,17 +24,30 @@ pub(crate) enum SearchAction {
     Navigate { newer: bool },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchTarget {
+    Field,
+    Previous,
+    Next,
+    Close,
+}
+
 #[derive(Default)]
 pub(crate) struct Routing {
     shortcuts: Shortcuts,
     generation: u64,
     repeating_search_key: Option<u32>,
+    search_presses: [Option<SearchTarget>; 3],
 }
 
 impl Routing {
     pub(crate) fn change_recipient(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1);
         self.repeating_search_key = None;
+        // Keep ownership until release, but never activate a button in a reopened search.
+        for pressed in self.search_presses.iter_mut().flatten() {
+            *pressed = SearchTarget::Field;
+        }
         self.generation
     }
 
@@ -167,24 +180,49 @@ fn search_key(keysym: u32, modifiers: KeyModifiers, text: Option<String>) -> Eff
     Effect::Search(action)
 }
 
-pub(crate) fn pointer(
-    pane: &mut LocalPane,
-    searching: bool,
-    event: MouseEvent,
-    hit: impl FnOnce([f32; 2]) -> Option<SearchAction>,
-) -> Result<Effect> {
-    if searching
-        && matches!(event.phase, MousePhase::Press(Button::Left))
-        && let Some(action) = hit(event.pixel)
-    {
-        // The pane ignores the release because it never received this press.
-        return Ok(Effect::Search(action));
+impl Routing {
+    pub(crate) fn pointer(
+        &mut self,
+        pane: &mut LocalPane,
+        searching: bool,
+        event: MouseEvent,
+        hit: impl FnOnce() -> Option<SearchTarget>,
+    ) -> Result<Effect> {
+        match event.phase {
+            MousePhase::Press(button) if searching => {
+                self.search_presses[button as usize] = hit();
+            }
+            MousePhase::Motion if self.search_presses.iter().any(Option::is_some) => {
+                return Ok(Effect::None);
+            }
+            MousePhase::Release(button)
+                if let Some(target) = self.search_presses[button as usize].take() =>
+            {
+                return Ok(
+                    if searching && button == Button::Left && hit() == Some(target) {
+                        match target {
+                            SearchTarget::Field => Effect::None,
+                            SearchTarget::Close => Effect::Search(SearchAction::Close),
+                            SearchTarget::Previous | SearchTarget::Next => {
+                                Effect::Search(SearchAction::Navigate {
+                                    newer: target == SearchTarget::Next,
+                                })
+                            }
+                        }
+                    } else {
+                        Effect::None
+                    },
+                );
+            }
+            MousePhase::Cancel => self.search_presses.fill(None),
+            _ => (),
+        }
+        Ok(match send_pointer(pane, searching, event)? {
+            PaneEffect::ViewportChanged => Effect::ViewportChanged,
+            PaneEffect::Select(step) => Effect::Select(step),
+            _ => Effect::None,
+        })
     }
-    Ok(match send_pointer(pane, searching, event)? {
-        PaneEffect::ViewportChanged => Effect::ViewportChanged,
-        PaneEffect::Select(step) => Effect::Select(step),
-        _ => Effect::None,
-    })
 }
 
 fn send_pointer(pane: &mut LocalPane, searching: bool, event: MouseEvent) -> Result<PaneEffect> {

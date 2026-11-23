@@ -325,8 +325,11 @@ impl Session {
                 pixel,
                 modifiers: input::key_modifiers(modifiers),
             };
-            let hit = |pixel| self.view.search_hit(pixel);
-            match input::pointer(&mut self.pane, searching, mouse, hit)? {
+            let hit = || self.view.search_hit(position);
+            match self
+                .routing
+                .pointer(&mut self.pane, searching, mouse, hit)?
+            {
                 input::Effect::Select(step) if self.select(step, cell)? => {
                     input::Effect::Copy(serial)
                 }
@@ -492,6 +495,7 @@ impl Session {
         }
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
+                self.view.frame_presented();
                 self.frame_dirty = false;
                 self.cursor_hidden = cursor_hidden;
                 tracing::debug!(count = gpu.present_count(), "submitted terminal frame");

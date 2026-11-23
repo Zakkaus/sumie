@@ -5,7 +5,7 @@ use std::ops::Range;
 use super::{
     Cursor, FontStyle, GlyphQuad, Line, PixelRect, Rgb, Snapshot, View, codepoint_width, rgba,
 };
-use crate::input::SearchAction;
+use crate::input::SearchTarget;
 
 /// Cell-aligned bounds; glyph masks and pointer events use the same integer pixel edges.
 #[derive(Clone, Copy)]
@@ -14,6 +14,13 @@ pub(super) struct SearchBox {
     top: u32,
     width: u32,
     height: u32,
+}
+
+pub(super) struct PresentedSearch {
+    panel: SearchBox,
+    cell: [u32; 2],
+    logical: [u32; 2],
+    device: [u32; 2],
 }
 
 impl SearchBox {
@@ -90,7 +97,7 @@ impl SearchBox {
         self.pixels(self.columns(), cell)
     }
 
-    fn buttons(self) -> impl Iterator<Item = (Range<u32>, &'static str, SearchAction)> {
+    fn buttons(self) -> impl Iterator<Item = (Range<u32>, &'static str, SearchTarget)> {
         let width = if self.width >= 24 { 3 } else { 1 };
         // Keep a caret cell even when only the close button fits.
         let count = match self.width {
@@ -99,9 +106,9 @@ impl SearchBox {
             _ => 3,
         };
         [
-            ("×", SearchAction::Close),
-            ("↓", SearchAction::Navigate { newer: true }),
-            ("↑", SearchAction::Navigate { newer: false }),
+            ("×", SearchTarget::Close),
+            ("↓", SearchTarget::Next),
+            ("↑", SearchTarget::Previous),
         ]
         .into_iter()
         .zip(1..=count)
@@ -160,17 +167,33 @@ impl Glyphs {
 }
 
 impl View {
-    pub(crate) fn search_hit(&self, pixel: [f32; 2]) -> Option<SearchAction> {
-        self.search_bar.as_ref()?;
-        let search_box = self.search_box?;
-        search_box.buttons().find_map(|(columns, _, action)| {
-            let rect = search_box.pixels(columns, self.cell);
-            (0..2)
-                .all(|i| {
-                    let offset = f64::from(pixel[i]) - f64::from(rect.origin[i]);
-                    (0.0..f64::from(rect.size[i])).contains(&offset)
+    pub(crate) fn frame_presented(&mut self) {
+        self.presented_search = self.search_box.map(|panel| PresentedSearch {
+            panel,
+            cell: self.cell,
+            logical: self.logical,
+            device: self.device,
+        });
+    }
+
+    pub(crate) fn search_hit(&self, (x, y): (f64, f64)) -> Option<SearchTarget> {
+        let frame = self.presented_search.as_ref()?;
+        let pixel: [f64; 2] = std::array::from_fn(|i| {
+            [x, y][i] * f64::from(frame.device[i]) / f64::from(frame.logical[i])
+        });
+        let contains = |rect: PixelRect| {
+            (0..2).all(|i| {
+                (0.0..f64::from(rect.size[i])).contains(&(pixel[i] - f64::from(rect.origin[i])))
+            })
+        };
+        let panel = frame.panel;
+        contains(panel.bounds(frame.cell)).then(|| {
+            panel
+                .buttons()
+                .find_map(|(cols, _, target)| {
+                    contains(panel.pixels(cols, frame.cell)).then_some(target)
                 })
-                .then_some(action)
+                .unwrap_or(SearchTarget::Field)
         })
     }
 
