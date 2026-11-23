@@ -1,6 +1,7 @@
-use std::{cmp::Reverse, num::NonZeroU64, ops::Range};
+use std::{num::NonZeroU64, ops::Range};
 
 use sumie_core::graphics::{IMAGE_BUDGET, Image, Placement, texture_bytes};
+use sumie_core::splits::Rect;
 use wgpu::util::StagingBelt;
 
 use crate::{DrawList, PixelRect, atlas};
@@ -20,14 +21,22 @@ pub(crate) struct Images {
 }
 
 pub(crate) struct Layers {
+    pub start: u32,
     pub below_background: u32,
     pub below_text: u32,
     pub end: u32,
     pub base: Option<PixelRect>,
 }
 
+pub(crate) struct Candidates {
+    range: Range<usize>,
+    base: PixelRect,
+}
+
+#[derive(Clone, Copy)]
 struct Draw {
     index: usize,
+    generation: u64,
     bytes: usize,
     quad: Quad,
 }
@@ -42,21 +51,20 @@ impl Images {
         }
     }
 
-    pub(crate) fn prepare(
+    pub(crate) fn clear(&mut self) {
+        self.draws.clear();
+    }
+
+    pub(crate) fn gather(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
         list: &DrawList<'_>,
         target: [u32; 2],
-        capacity: u32,
-    ) -> Option<Layers> {
-        let clip = Clip::grid(list, target)?;
-        if capacity == 0 {
-            return None;
-        }
-        let dimension_limit = device.limits().max_texture_dimension_2d;
+        scissor: Rect,
+        dimension_limit: u32,
+    ) -> Option<Candidates> {
+        let clip = Clip::grid(list, scissor)?;
         let ndc_scale = [2.0 / f64::from(target[0]), -2.0 / f64::from(target[1])];
-        self.draws.clear();
+        let start = self.draws.len();
         self.draws
             .extend(list.images.iter().enumerate().filter_map(|(index, p)| {
                 let bytes = texture_bytes(p.image.size, dimension_limit)?;
@@ -65,70 +73,116 @@ impl Images {
                 }
                 Some(Draw {
                     index,
+                    generation: p.image.generation,
                     bytes,
                     quad: Quad::clipped(p, list, clip, ndc_scale)?,
                 })
             }));
-        // Keep the foremost images when the visible working set exceeds the budget.
-        self.draws.sort_unstable_by_key(|draw| {
+        // Larger z values are foremost, and selected first if the frame fills the cache.
+        self.draws[start..].sort_unstable_by_key(|draw| {
             let p = &list.images[draw.index];
-            Reverse((p.z, p.image_id, p.placement_id, draw.index))
+            (p.z, p.image_id, p.placement_id, draw.index)
         });
+        let end = self.draws.len();
+        (start != end).then(|| Candidates {
+            range: start..end,
+            base: clip.pixel_rect(),
+        })
+    }
+
+    pub(crate) fn begin_frame(&mut self) -> bool {
+        if self.draws.is_empty() {
+            return false;
+        }
+        self.cache
+            .begin_frame(self.draws.iter().map(|draw| draw.generation));
+        true
+    }
+
+    pub(crate) fn admit(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        list: &DrawList<'_>,
+        candidates: Candidates,
+        available: u32,
+        start: u32,
+    ) -> Option<Layers> {
         let format = self.format;
-        self.cache.begin_frame(
-            self.draws
-                .iter()
-                .map(|draw| list.images[draw.index].image.generation),
-        );
-        let (cache, pipeline) = (&mut self.cache, &mut self.pipeline);
-        let mut remaining = capacity;
-        self.draws.retain(|draw| {
+        let end = candidates.range.end;
+        let mut first = end;
+        let mut remaining = available;
+        for index in candidates.range.rev() {
             if remaining == 0 {
-                return false;
+                break;
             }
+            let draw = &self.draws[index];
             let image = &list.images[draw.index].image;
-            let admitted = cache.acquire(image.generation, draw.bytes, || {
-                pipeline
+            if self.cache.acquire(draw.generation, draw.bytes, || {
+                self.pipeline
                     .get_or_insert_with(|| BoundPipeline::new(device, format))
                     .bind_texture(device, queue, image)
-            });
-            remaining -= u32::from(admitted);
-            admitted
-        });
-        self.draws.reverse();
-        let end = capacity - remaining;
-        if end == 0 {
+            }) {
+                remaining -= 1;
+                first -= 1;
+                if first != index {
+                    self.draws[first] = *draw;
+                }
+            }
+        }
+        if first == end {
             return None;
         }
-        let boundary =
-            |z| u32::try_from(self.draws.partition_point(|d| list.images[d.index].z < z)).unwrap();
+        let boundary = |z| {
+            let count = self.draws[first..end].partition_point(|d| list.images[d.index].z < z);
+            start + u32::try_from(count).unwrap()
+        };
         let below_background = boundary(BELOW_BACKGROUND);
+        let below_text = boundary(0);
+        // Pack admitted placements without touching candidates for the following panes.
+        if first != start as usize {
+            self.draws.copy_within(first..end, start as usize);
+        }
         Some(Layers {
+            start,
             below_background,
-            below_text: boundary(0),
-            end,
-            base: (below_background != 0).then(|| clip.pixel_rect()),
+            below_text,
+            end: start + (available - remaining),
+            base: (below_background != start).then_some(candidates.base),
         })
+    }
+
+    pub(crate) fn finish_frame(&mut self, images: u32) {
+        self.draws.truncate(images as usize);
     }
 
     pub(crate) fn stage_exclusions(
         &mut self,
+        device: &wgpu::Device,
         staging: &mut StagingBelt,
         encoder: &mut wgpu::CommandEncoder,
-        exclusions: [Option<PixelRect>; 2],
+        count: u32,
+        exclusions: impl Iterator<Item = [Option<PixelRect>; 2]>,
     ) {
+        if count == 1 {
+            return;
+        }
         let pipeline = self.pipeline.as_mut().expect("prepared image pipeline");
-        if exclusions != pipeline.last_exclusions {
+        let stride = pipeline.exclusion_stride;
+        let bytes = u64::from(stride) * u64::from(count);
+        pipeline.reserve_exclusions(device, bytes);
+        // Slot zero always holds empty exclusions. Do not overwrite it on later frames.
+        let mut out = staging.write_buffer(
+            encoder,
+            &pipeline.exclusions,
+            u64::from(stride),
+            NonZeroU64::new(bytes - u64::from(stride)).unwrap(),
+        );
+        for (slot, exclusions) in exclusions.enumerate() {
+            let start = slot * stride as usize;
             let edges: Exclusions = exclusions.map(|rect| rect.map_or([0.0; 4], pixel_edges));
-            staging
-                .write_buffer(
-                    encoder,
-                    &pipeline.exclusions,
-                    0,
-                    NonZeroU64::new(size_of::<Exclusions>() as u64).unwrap(),
-                )
+            out.slice(start..start + size_of::<Exclusions>())
                 .copy_from_slice(bytemuck::bytes_of(&edges));
-            pipeline.last_exclusions = exclusions;
         }
     }
 
@@ -146,7 +200,7 @@ impl Images {
     pub(crate) fn draw(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
-        placements: &[Placement],
+        exclusions: u32,
         range: Range<u32>,
         vertices: wgpu::BufferSlice<'_>,
     ) {
@@ -155,14 +209,17 @@ impl Images {
         }
         let pipeline = self.pipeline.as_ref().expect("prepared image pipeline");
         pass.set_pipeline(&pipeline.pipeline);
-        pass.set_bind_group(1, &pipeline.exclusions_bindings, &[]);
+        pass.set_bind_group(
+            1,
+            &pipeline.exclusions_bindings,
+            &[exclusions * pipeline.exclusion_stride],
+        );
         pass.set_vertex_buffer(0, vertices);
-        let generation = |draw: &Draw| placements[draw.index].image.generation;
         let mut start = range.start;
         let draws = &self.draws[range.start as usize..range.end as usize];
-        for group in draws.chunk_by(|a, b| generation(a) == generation(b)) {
+        for group in draws.chunk_by(|a, b| a.generation == b.generation) {
             let end = start + u32::try_from(group.len()).unwrap();
-            pass.set_bind_group(0, self.cache.get(generation(&group[0])), &[]);
+            pass.set_bind_group(0, self.cache.get(group[0].generation), &[]);
             pass.draw(0..4, start..end);
             start = end;
         }
@@ -173,12 +230,14 @@ impl Images {
 struct Clip([[i64; 2]; 2]);
 
 impl Clip {
-    fn grid(list: &DrawList<'_>, target: [u32; 2]) -> Option<Self> {
+    fn grid(list: &DrawList<'_>, scissor: Rect) -> Option<Self> {
+        let lo = [scissor.x, scissor.y];
+        let hi = [scissor.x + scissor.width, scissor.y + scissor.height];
         let bounds = std::array::from_fn(|axis| {
             let start = i64::from(list.origin[axis]);
             let extent = u64::from(list.grid_size[axis]) * u64::from(list.cell_size[axis]);
             let end = start.saturating_add(i64::try_from(extent).unwrap_or(i64::MAX));
-            [start.max(0), end.min(i64::from(target[axis]))]
+            [start.max(i64::from(lo[axis])), end.min(i64::from(hi[axis]))]
         });
         bounds
             .iter()
@@ -276,33 +335,66 @@ struct BoundPipeline {
     texture_layout: wgpu::BindGroupLayout,
     exclusions: wgpu::Buffer,
     exclusions_bindings: wgpu::BindGroup,
-    last_exclusions: [Option<PixelRect>; 2],
+    exclusion_stride: u32,
 }
 
 impl BoundPipeline {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let pipeline = pipeline(device, format);
-        let texture_layout = pipeline.get_bind_group_layout(0);
-        let exclusions = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sumie image exclusions"),
-            size: size_of::<Exclusions>() as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: false,
-        });
-        let exclusions_bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sumie image exclusion bindings"),
-            layout: &pipeline.get_bind_group_layout(1),
-            entries: &[wgpu::BindGroupEntry {
+        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sumie image textures"),
+            entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                resource: exclusions.as_entire_binding(),
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
             }],
         });
+        let exclusions_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sumie image exclusions"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: NonZeroU64::new(size_of::<Exclusions>() as u64),
+                },
+                count: None,
+            }],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sumie image layouts"),
+            bind_group_layouts: &[Some(&texture_layout), Some(&exclusions_layout)],
+            immediate_size: 0,
+        });
+        let pipeline = pipeline(device, format, &layout);
+        let alignment = device.limits().min_uniform_buffer_offset_alignment;
+        let size = u32::try_from(size_of::<Exclusions>()).unwrap();
+        let exclusion_stride = size.div_ceil(alignment) * alignment;
+        let (exclusions, exclusions_bindings) =
+            exclusions_buffer(device, &exclusions_layout, u64::from(exclusion_stride));
         Self {
             pipeline,
             texture_layout,
             exclusions,
             exclusions_bindings,
-            last_exclusions: [None; 2],
+            exclusion_stride,
+        }
+    }
+
+    fn reserve_exclusions(&mut self, device: &wgpu::Device, bytes: u64) {
+        if bytes > self.exclusions.size() {
+            (self.exclusions, self.exclusions_bindings) = exclusions_buffer(
+                device,
+                &self.pipeline.get_bind_group_layout(1),
+                bytes
+                    .next_power_of_two()
+                    .min(device.limits().max_buffer_size),
+            );
         }
     }
 
@@ -346,14 +438,44 @@ impl BoundPipeline {
     }
 }
 
-fn pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+fn exclusions_buffer(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    bytes: u64,
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("sumie image exclusions"),
+        size: bytes,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+        mapped_at_creation: false,
+    });
+    let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sumie image exclusion bindings"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &buffer,
+                offset: 0,
+                size: NonZeroU64::new(size_of::<Exclusions>() as u64),
+            }),
+        }],
+    });
+    (buffer, bindings)
+}
+
+fn pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    layout: &wgpu::PipelineLayout,
+) -> wgpu::RenderPipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("sumie image shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("images.wgsl").into()),
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sumie image pipeline"),
-        layout: None,
+        layout: Some(layout),
         vertex: wgpu::VertexState {
             module: &module,
             entry_point: Some("vertex"),

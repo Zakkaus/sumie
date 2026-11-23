@@ -12,98 +12,97 @@ pub enum TabAction {
     MoveRight,
 }
 
-/// Ordered panes in one window. The caller supplies any stable pane identity.
-/// Every non-empty window has exactly one active pane.
-pub struct WindowTabs<P> {
-    panes: Vec<P>,
+/// Tab order and active index in one window. Each tab owns its pane payload.
+pub struct WindowTabs<T> {
+    tabs: Vec<T>,
     active: usize,
 }
 
-impl<P> WindowTabs<P> {
+impl<T> WindowTabs<T> {
     #[must_use]
-    pub fn new(first: P) -> Self {
+    pub fn new(first: T) -> Self {
         Self {
-            panes: vec![first],
+            tabs: vec![first],
             active: 0,
         }
     }
 
     #[must_use]
-    pub fn as_slice(&self) -> &[P] {
-        &self.panes
+    pub fn as_slice(&self) -> &[T] {
+        &self.tabs
     }
 
-    /// Borrow pane payloads in tab order. Use [`Self::move_active`] to reorder them.
-    pub fn as_mut_slice(&mut self) -> &mut [P] {
-        &mut self.panes
+    /// Borrow tabs in order. Use [`Self::move_active`] to reorder them.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.tabs
     }
 
     #[must_use]
-    pub fn active(&self) -> Option<&P> {
-        self.panes.get(self.active)
+    pub fn active(&self) -> Option<&T> {
+        self.tabs.get(self.active)
     }
 
-    pub fn active_mut(&mut self) -> Option<&mut P> {
-        self.panes.get_mut(self.active)
+    pub fn active_mut(&mut self) -> Option<&mut T> {
+        self.tabs.get_mut(self.active)
     }
 
     #[must_use]
     pub fn active_index(&self) -> Option<usize> {
-        (!self.panes.is_empty()).then_some(self.active)
+        (!self.tabs.is_empty()).then_some(self.active)
     }
 
-    /// Append a pane and make it active.
-    pub fn open(&mut self, pane: P) {
-        self.panes.push(pane);
-        self.active = self.panes.len() - 1;
+    /// Append a tab and make it active.
+    pub fn open(&mut self, tab: T) {
+        self.tabs.push(tab);
+        self.active = self.tabs.len() - 1;
     }
 
-    /// Preserve the active pane unless closing it. Then select the next pane,
-    /// or the previous pane if the closed pane was last.
-    pub fn close(&mut self, index: usize) -> Option<P> {
-        if index >= self.panes.len() {
+    /// Preserve the active tab unless closing it. Then select the next tab,
+    /// or the previous tab if the closed tab was last.
+    pub fn close(&mut self, index: usize) -> Option<T> {
+        if index >= self.tabs.len() {
             return None;
         }
-        let pane = self.panes.remove(index);
+        let tab = self.tabs.remove(index);
         if index < self.active {
             self.active -= 1;
         }
-        self.active = self.active.min(self.panes.len().saturating_sub(1));
-        Some(pane)
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        Some(tab)
     }
 
-    /// Activate a pane by position. Return whether the active pane changed.
+    /// Activate a tab by position. Return whether the active tab changed.
     pub fn switch(&mut self, index: usize) -> bool {
-        if index >= self.panes.len() || index == self.active {
+        if index >= self.tabs.len() || index == self.active {
             return false;
         }
         self.active = index;
         true
     }
 
-    /// Move the active pane to a new position without changing its identity.
+    /// Move the active tab to a new position without changing its identity.
     /// Return whether the order changed.
     pub fn move_active(&mut self, index: usize) -> bool {
-        if index >= self.panes.len() || index == self.active {
+        if index >= self.tabs.len() || index == self.active {
             return false;
         }
         if index < self.active {
-            self.panes[index..=self.active].rotate_right(1);
+            self.tabs[index..=self.active].rotate_right(1);
         } else {
-            self.panes[self.active..=index].rotate_left(1);
+            self.tabs[self.active..=index].rotate_left(1);
         }
         self.active = index;
         true
     }
 
     /// Apply a navigation or reorder command. Switching wraps; moving stops at
-    /// either edge. Return whether the active pane or order changed.
-    /// Opening and closing use the separate pane lifecycle methods.
+    /// either edge. Return whether the active tab or order changed.
+    /// Opening and closing use the separate tab lifecycle methods.
     pub fn navigate(&mut self, action: TabAction) -> bool {
         let Some(active) = self.active_index() else {
             return false;
         };
-        let len = self.panes.len();
+        let len = self.tabs.len();
         match action {
             TabAction::Cycle(steps) => {
                 let offset = steps.unsigned_abs() % len;

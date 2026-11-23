@@ -6,6 +6,7 @@ pub struct AtlasRect {
 }
 
 /// A tightly packed, row-major R8 coverage atlas. Dirty rectangles lie within its bounds.
+#[derive(Clone, Copy)]
 pub struct AtlasUpload<'a> {
     pub width: u32,
     pub height: u32,

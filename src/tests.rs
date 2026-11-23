@@ -181,32 +181,59 @@ fn window_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut inpu
         .map(|(physical, symbol, modifiers, action)| {
             (physical, symbol, modifiers, Effect::Tab(action))
         });
-    for (physical, symbol, modifiers, effect) in tabs.chain(zoom) {
-        for (action, modifiers, expected) in [
-            (Press, modifiers, effect),
-            (Repeat, plain, Effect::None),
-            (Release, plain, Effect::None),
-        ] {
-            let event = key_event(physical, symbol, action, modifiers);
-            assert_eq!(
-                input::route(0, pane, routing, false, event).unwrap(),
-                expected
-            );
-            assert!(pane.pty.input_fd().is_none(), "matched key: {physical}");
+    let panes = pane_chords(ctrl, ctrl_shift);
+    for (physical, symbol, modifiers, effect) in tabs.chain(zoom).chain(panes) {
+        for searching in [false, true] {
+            for (action, modifiers, expected) in [
+                (Press, modifiers, &effect),
+                (Repeat, plain, &Effect::None),
+                (Release, plain, &Effect::None),
+            ] {
+                let event = key_event(physical, symbol, action, modifiers);
+                let searching = searching && !matches!(action, Release);
+                assert_eq!(
+                    &input::route(0, pane, routing, searching, event).unwrap(),
+                    expected
+                );
+                assert!(pane.pty.input_fd().is_none(), "matched key: {physical}");
+            }
         }
     }
+}
 
-    let press = key_event(15, key::ISO_Left_Tab, Press, ctrl_shift);
-    assert_eq!(
-        input::route(0, pane, routing, true, press).unwrap(),
-        Effect::Tab(TabAction::Cycle(-1))
-    );
-    let release = key_event(15, key::Tab, Release, plain);
-    assert_eq!(
-        input::route(0, pane, routing, false, release).unwrap(),
-        Effect::None
-    );
-    assert!(pane.pty.input_fd().is_none());
+fn pane_chords(
+    ctrl: Modifiers,
+    ctrl_shift: Modifiers,
+) -> impl Iterator<Item = (u32, u32, Modifiers, input::Effect)> {
+    use input::Effect::Pane;
+    use sumie_core::{
+        PaneAction::{Focus, Resize, Split, Zoom},
+        splits::{
+            Axis::{Horizontal, Vertical},
+            Direction::{Down, Left, Right, Up},
+        },
+    };
+    use xkeysym::key;
+
+    let focus = Modifiers { alt: true, ..ctrl };
+    let resize = Modifiers {
+        alt: true,
+        ..ctrl_shift
+    };
+    [
+        (18, key::E, ctrl_shift, Pane(Split(Horizontal))),
+        (24, key::O, ctrl_shift, Pane(Split(Vertical))),
+        (44, key::Z, ctrl_shift, Pane(Zoom)),
+        (105, key::Left, focus, Pane(Focus(Left))),
+        (106, key::Right, focus, Pane(Focus(Right))),
+        (103, key::Up, focus, Pane(Focus(Up))),
+        (108, key::Down, focus, Pane(Focus(Down))),
+        (105, key::Left, resize, Pane(Resize(Left))),
+        (106, key::Right, resize, Pane(Resize(Right))),
+        (103, key::Up, resize, Pane(Resize(Up))),
+        (108, key::Down, resize, Pane(Resize(Down))),
+    ]
+    .into_iter()
 }
 
 fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {

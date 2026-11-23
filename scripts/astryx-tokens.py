@@ -61,7 +61,7 @@ def main():
     family = scalar("font-family-code").rsplit(",", 1)[-1].strip()
     lines.append(f"pub const LABEL_FAMILY: &str = {json.dumps(family)};")
     colors = {"surface": "background-body", "label": "text-secondary", "selected": "text-primary",
-              "accent": "accent", "rule": "border"}
+              "accent": "accent", "rule": "border", "inactive_pane": "background-muted"}
     for i, mode in enumerate(("LIGHT", "DARK")):
         lines += ["", f"pub(super) const {mode}: Palette = Palette {{"]
         for field, token in colors.items():

@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use sumie_vt::{GridAnchor, Search, SearchMatch, Terminal};
 
-use super::{Tab, View, highlights::visible_spans};
+use super::{PaneState, View, highlights::visible_spans};
 use crate::{Result, input::SearchAction};
 
 /// The last immutable row before a write. Its new coordinate measures how many rows Ghostty
@@ -180,7 +180,7 @@ impl Bar {
     }
 }
 
-impl Tab {
+impl PaneState {
     pub(super) fn search_pending(&self) -> bool {
         self.search.as_ref().is_some_and(|bar| !bar.complete)
     }
@@ -256,7 +256,7 @@ impl Tab {
         let Some(bar) = &self.search else {
             return Ok(());
         };
-        let size = view.size();
+        let size = view.pane_size(self.rect);
         let label = view.search_bar.as_mut().expect("search bar is open");
         let matches = bar.matches();
         let current = bar.position()?.and_then(|pos| {

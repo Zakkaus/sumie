@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use sumie_core::graphics::Placement;
+use sumie_core::splits::Rect;
 
 use crate::{AtlasRect, AtlasUpload};
 
@@ -80,7 +81,7 @@ impl Cursor {
     }
 }
 
-/// A solid device-pixel rectangle outside the terminal grid.
+/// A solid device-pixel rectangle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fill {
     pub rect: PixelRect,
@@ -88,6 +89,7 @@ pub struct Fill {
 }
 
 /// Chrome is composited last, with its own font size and atlas in the same render pass.
+#[derive(Clone, Copy)]
 pub struct ChromeLayer<'a> {
     pub fills: &'a [Fill],
     /// Cell ownership does not apply to chrome; all masks use `text_background` for contrast.
@@ -102,7 +104,8 @@ impl ChromeLayer<'_> {
     }
 }
 
-/// One complete frame. All positions and sizes are in device pixels except `grid_size`.
+/// One terminal grid. All positions and sizes are in device pixels except `grid_size`.
+#[derive(Clone, Copy)]
 pub struct DrawList<'a> {
     /// Number of columns and rows.
     pub grid_size: [u32; 2],
@@ -120,6 +123,23 @@ pub struct DrawList<'a> {
     pub image_exclusions: [Option<PixelRect>; 2],
     pub glyphs: &'a [GlyphQuad],
     pub cursor: Option<Cursor>,
+    pub chrome: Option<ChromeLayer<'a>>,
+}
+
+/// One leaf of a split frame. Its bounds include any space left over by whole cells.
+#[derive(Clone, Copy)]
+pub struct PaneDraw<'a> {
+    pub rect: Rect,
+    /// Window-relative geometry, with cell ownership relative to this grid. The frame owns chrome.
+    pub draw: DrawList<'a>,
+}
+
+/// A window's terminal grids and overlays. Panes must be disjoint and the iterator repeatable.
+pub struct FrameDraw<'a, P> {
+    pub background: Rgba,
+    pub panes: P,
+    /// Divider and dim fills, composited in order after the panes and before the chrome.
+    pub fills: &'a [Fill],
     pub chrome: Option<ChromeLayer<'a>>,
 }
 
@@ -196,6 +216,24 @@ fn instance_writer(bytes: wgpu::WriteOnly<'_, [u8]>) -> impl FnMut(Instance) + '
     move |instance| out.next().unwrap().write(bytemuck::cast(instance))
 }
 
+pub(crate) fn write_fills(bytes: wgpu::WriteOnly<'_, [u8]>, fills: &[Fill]) {
+    let mut write = instance_writer(bytes);
+    for fill in fills {
+        write(Instance::solid(fill.rect, fill.color));
+    }
+}
+
+impl ChromeLayer<'_> {
+    pub(crate) fn write_instances(&self, bytes: wgpu::WriteOnly<'_, [u8]>) {
+        let (fills, glyphs) = bytes.split_at(self.fills.len() * size_of::<Instance>());
+        write_fills(fills, self.fills);
+        let mut write = instance_writer(glyphs);
+        for glyph in self.glyphs {
+            write(Instance::glyph(glyph, self.text_background));
+        }
+    }
+}
+
 impl DrawList<'_> {
     pub(crate) fn grid_instances(&self) -> u32 {
         let [columns, rows] = self.grid_size;
@@ -209,9 +247,7 @@ impl DrawList<'_> {
     }
 
     pub(crate) fn write_instances(&self, bytes: wgpu::WriteOnly<'_, [u8]>) {
-        let mut write = instance_writer(bytes);
-        self.write_grid(&mut write);
-        self.write_chrome(write);
+        self.write_grid(instance_writer(bytes));
     }
 
     pub(crate) fn image_layers(&self, base: Option<PixelRect>, grid: u32) -> GridLayers {
@@ -235,8 +271,7 @@ impl DrawList<'_> {
 
     pub(crate) fn write_layered(&self, bytes: wgpu::WriteOnly<'_, [u8]>, layers: &GridLayers) {
         let stride = size_of::<Instance>();
-        let (text, rest) = bytes.split_at(layers.text as usize * stride);
-        let (cursor, chrome) = rest.split_at((layers.end - layers.text) as usize * stride);
+        let (text, cursor) = bytes.split_at(layers.text as usize * stride);
         let mut write = instance_writer(text);
         let mut write_cursor = instance_writer(cursor);
         if let Some(base) = layers.base {
@@ -264,18 +299,6 @@ impl DrawList<'_> {
                 ));
             } else {
                 write(Instance::glyph(glyph, background));
-            }
-        }
-        self.write_chrome(instance_writer(chrome));
-    }
-
-    fn write_chrome(&self, mut write: impl FnMut(Instance)) {
-        if let Some(layer) = &self.chrome {
-            for fill in layer.fills {
-                write(Instance::solid(fill.rect, fill.color));
-            }
-            for glyph in layer.glyphs {
-                write(Instance::glyph(glyph, layer.text_background));
             }
         }
     }

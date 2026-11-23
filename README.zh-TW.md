@@ -8,7 +8,9 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 按 Ctrl+Shift+F 可搜尋畫面與捲動記錄。搜尋會接續自動換行的文字，只有搜尋字串含大寫字母時才區分大小寫。結果由舊到新編號。按 Enter 或 F3 可跳到較舊的結果，同時按住 Shift 則跳到較新的結果。按 Escape 會回到開啟搜尋列前的位置；若原本在底部，則繼續跟隨輸出。
 
-在 Wayland 上，按 Ctrl+Shift+T 可新增分頁。新分頁沿用目前 shell 透過 OSC 7 回報的本機目錄；若沒有可用的目錄，則從 `$HOME` 開始。新視窗一律從 `$HOME` 開始。按 Ctrl+Shift+W 可關閉目前分頁，子程序結束時也會關閉分頁。最後一個分頁關閉時，視窗會一併關閉。
+在 Wayland 上，按 Ctrl+Shift+T 可新增分頁。按 Ctrl+Shift+E 可在目前窗格右側開啟新窗格，按 Ctrl+Shift+O 則在下方開啟。新分頁和新窗格沿用目前窗格透過 OSC 7 回報的本機目錄；若沒有可用的目錄，則從 `$HOME` 開始。新視窗一律從 `$HOME` 開始。
+
+點選窗格即可輸入，也可按 Ctrl+Alt+方向鍵切換到相鄰窗格。拖曳分隔線或按 Ctrl+Shift+Alt+方向鍵可調整大小。按 Ctrl+Shift+Z 可讓目前窗格填滿分頁，再按一次即可還原。按 Ctrl+Shift+W 或結束 shell 會關閉目前窗格，原來的空間由同一次分割的另一側接手。關閉最後一個窗格時會關閉分頁，關閉最後一個分頁時會關閉視窗。
 
 按 Ctrl+Tab 或 Ctrl+PageDown 切換到下一個分頁，按 Ctrl+Shift+Tab 或 Ctrl+PageUp 切換到上一個。Alt+1 至 Alt+8 依位置選取分頁，Alt+9 選取最後一個。按 Ctrl+Shift+PageUp 或 Ctrl+Shift+PageDown 可將目前分頁向左或向右移動。開啟第二個分頁後才會顯示分頁列。按左鍵選取分頁，按中鍵關閉分頁，在分頁列上捲動滾輪可切換分頁。
 

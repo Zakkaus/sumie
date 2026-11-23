@@ -1,7 +1,7 @@
 use thiserror::Error;
 use wgpu::CurrentSurfaceTexture;
 
-use crate::{AtlasUpload, DrawList, Renderer};
+use crate::{AtlasUpload, DrawList, FrameDraw, PaneDraw, Renderer};
 
 #[derive(Debug, Error)]
 pub enum SurfaceError {
@@ -137,6 +137,32 @@ impl<'window> SurfaceRenderer<'window> {
         clear: wgpu::Color,
         before_present: impl FnOnce(&wgpu::Texture),
     ) -> Result<SurfaceFrame, SurfaceError> {
+        self.with_surface(before_present, |renderer, view, size| {
+            renderer.draw_view(list, view, [size.width, size.height], clear);
+        })
+    }
+
+    /// Draw all panes and present once. Run `before_present` just before committing the buffer.
+    /// On Wayland, arm the frame callback there. The hook may also copy a readback-enabled texture.
+    /// Do not hold a terminal lock.
+    ///
+    /// # Errors
+    /// Reports outdated, lost, or invalid surface texture acquisition.
+    pub fn draw_frame_with<'a>(
+        &mut self,
+        frame: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
+        before_present: impl FnOnce(&wgpu::Texture),
+    ) -> Result<SurfaceFrame, SurfaceError> {
+        self.with_surface(before_present, |renderer, view, size| {
+            renderer.draw_frame_view(frame, view, size);
+        })
+    }
+
+    fn with_surface(
+        &mut self,
+        before_present: impl FnOnce(&wgpu::Texture),
+        draw: impl FnOnce(&mut Renderer, &wgpu::TextureView, wgpu::Extent3d),
+    ) -> Result<SurfaceFrame, SurfaceError> {
         if self.config.width == 0 || self.config.height == 0 {
             return Ok(SurfaceFrame::Suspended);
         }
@@ -153,8 +179,7 @@ impl<'window> SurfaceRenderer<'window> {
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
-            let size = [frame.texture.width(), frame.texture.height()];
-            self.renderer.draw_view(list, &view, size, clear);
+            draw(&mut self.renderer, &view, frame.texture.size());
         }
         before_present(&frame.texture);
         self.renderer.queue.present(frame);

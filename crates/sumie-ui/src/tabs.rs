@@ -12,7 +12,8 @@ pub struct Palette {
     pub label: Rgba,
     pub selected: Rgba,
     pub(crate) accent: Rgba,
-    pub(crate) rule: Rgba,
+    pub rule: Rgba,
+    pub inactive_pane: Rgba,
 }
 
 impl Palette {

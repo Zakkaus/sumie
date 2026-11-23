@@ -14,9 +14,11 @@ pub mod graphics;
 mod link;
 pub mod mouse;
 mod selection;
+pub mod splits;
 mod tabs;
 pub use link::LinkUri;
 pub use selection::{CellPosition, CellRange, Selection, SelectionPoint};
+use splits::{Axis, Direction};
 pub use tabs::{TabAction, WindowTabs};
 
 /// Key action before encoding against the active terminal modes.
@@ -52,8 +54,17 @@ pub enum Shortcut {
     Paste,
     Search,
     Tab(TabAction),
+    Pane(PaneAction),
     Zoom(FontZoom),
     Consume,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneAction {
+    Split(Axis),
+    Focus(Direction),
+    Resize(Direction),
+    Zoom,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +104,7 @@ impl Shortcuts {
         }
         let shortcut = match (modifiers.control, modifiers.alt, modifiers.shift) {
             (true, false, shift) => control_shortcut(evdev, symbol, shift),
+            (true, true, shift) => directional_shortcut(evdev, shift),
             (false, true, false) => alt_tab_shortcut(evdev, symbol).map(Shortcut::Tab),
             _ => None,
         }?;
@@ -104,8 +116,11 @@ impl Shortcuts {
 fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Shortcut> {
     const KEY_TAB: u32 = 15;
     const KEY_W: u32 = 17;
+    const KEY_E: u32 = 18;
     const KEY_T: u32 = 20;
+    const KEY_O: u32 = 24;
     const KEY_F: u32 = 33;
+    const KEY_Z: u32 = 44;
     const KEY_C: u32 = 46;
     const KEY_V: u32 = 47;
     const KEY_PAGE_UP: u32 = 104;
@@ -127,23 +142,48 @@ fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Sho
         (_, true) => {
             let key = match evdev {
                 KEY_C => Some('c'),
+                KEY_E => Some('e'),
                 KEY_F => Some('f'),
+                KEY_O => Some('o'),
                 KEY_V => Some('v'),
                 KEY_T => Some('t'),
                 KEY_W => Some('w'),
+                KEY_Z => Some('z'),
                 _ => symbol,
             };
             match key?.to_ascii_lowercase() {
                 'c' => return Some(Shortcut::Copy),
+                'e' => return Some(Shortcut::Pane(PaneAction::Split(Axis::Horizontal))),
                 'f' => return Some(Shortcut::Search),
+                'o' => return Some(Shortcut::Pane(PaneAction::Split(Axis::Vertical))),
                 'v' => return Some(Shortcut::Paste),
                 't' => TabAction::Open,
                 'w' => TabAction::Close,
+                'z' => return Some(Shortcut::Pane(PaneAction::Zoom)),
                 _ => return None,
             }
         }
     };
     Some(Shortcut::Tab(action))
+}
+
+fn directional_shortcut(evdev: u32, resize: bool) -> Option<Shortcut> {
+    const KEY_UP: u32 = 103;
+    const KEY_LEFT: u32 = 105;
+    const KEY_RIGHT: u32 = 106;
+    const KEY_DOWN: u32 = 108;
+    let direction = match evdev {
+        KEY_UP => Direction::Up,
+        KEY_LEFT => Direction::Left,
+        KEY_RIGHT => Direction::Right,
+        KEY_DOWN => Direction::Down,
+        _ => return None,
+    };
+    Some(Shortcut::Pane(if resize {
+        PaneAction::Resize(direction)
+    } else {
+        PaneAction::Focus(direction)
+    }))
 }
 
 fn alt_tab_shortcut(evdev: u32, symbol: Option<char>) -> Option<TabAction> {

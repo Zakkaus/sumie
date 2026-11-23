@@ -10,6 +10,8 @@ use sumie_render::{
 #[cfg(target_os = "linux")]
 mod attributes;
 #[cfg(target_os = "linux")]
+mod splits;
+#[cfg(target_os = "linux")]
 mod tabs;
 
 #[cfg(target_os = "linux")]
@@ -78,7 +80,7 @@ fn grid_on_gl() {
     snapshot(wgpu::Backends::GL, None);
 }
 
-fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
+fn gpu_device(backends: wgpu::Backends) -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(instance_descriptor(
         wgpu::InstanceDescriptor::new_without_display_handle(),
         backends,
@@ -95,7 +97,7 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
                     "{reason}"
                 );
                 eprintln!("Skipping grid snapshot: {reason}");
-                return;
+                return None;
             }
         };
     let info = adapter.get_info();
@@ -103,12 +105,20 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
         "Grid snapshot: {:?}, {} ({:?}; {})",
         info.backend, info.name, info.device_type, info.driver_info
     );
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits:
-            wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
-        ..Default::default()
-    }))
-    .expect("requesting a downlevel device");
+    Some(
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits:
+                wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+            ..Default::default()
+        }))
+        .expect("requesting a downlevel device"),
+    )
+}
+
+fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
+    let Some((device, queue)) = gpu_device(backends) else {
+        return;
+    };
 
     let mut renderer = Renderer::new(&device, &queue);
     let target = renderer.create_offscreen([WIDTH, HEIGHT]);

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use sumie_render::{
-    AtlasUpload, DrawList, SurfaceError, SurfaceFrame, SurfaceRenderer, backends,
+    AtlasUpload, FrameDraw, PaneDraw, SurfaceError, SurfaceFrame, SurfaceRenderer, backends,
     instance_descriptor, wgpu,
 };
 use sumie_wayland::{CursorRect, Event, Platform, SourceHandle};
@@ -116,14 +116,13 @@ impl Gpu {
         self.window.frame_slot_available()
     }
 
-    pub(crate) fn draw(
+    pub(crate) fn draw<'a>(
         &mut self,
-        list: &DrawList<'_>,
-        clear: wgpu::Color,
+        list: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
         capture: bool,
     ) -> Result<(SurfaceFrame, Option<Result<Readback>>), SurfaceError> {
         let mut readback = None;
-        let result = self.target.draw_with(list, clear, |frame| {
+        let result = self.target.draw_frame_with(list, |frame| {
             if capture {
                 readback = Some(Readback::copy(&self.device, &self.queue, frame));
             }

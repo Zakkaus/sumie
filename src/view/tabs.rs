@@ -6,7 +6,7 @@ use sumie_ui::{LABEL_FAMILY, LABEL_PX, LABEL_WEIGHT, Palette, TabLayout, tab_bar
 use sumie_vt::Rgb;
 
 use super::{
-    FontErrors, Glyphs, Line, View, clear_color, collect_dirty, grid_size, overlays::Mask, upload,
+    FontErrors, Glyphs, Line, View, collect_dirty, overlays::Mask, palette_for_background, upload,
 };
 use crate::Result;
 
@@ -84,12 +84,7 @@ impl View {
         self.tabs.count = count;
         let old = self.tabs.height;
         self.resize_strip();
-        if old == self.tabs.height {
-            return Ok(false);
-        }
-        self.grid = grid_size(self.terminal_device(), self.cell);
-        self.search_box = None;
-        Ok(true)
+        Ok(old != self.tabs.height)
     }
 
     pub(super) fn resize_strip(&mut self) {
@@ -104,11 +99,8 @@ impl View {
         self.tabs.height
     }
 
-    pub(super) fn terminal_device(&self) -> [u32; 2] {
-        [self.device[0], self.device[1] - self.tabs.height]
-    }
-
-    pub(super) fn window_pixel(&self, (x, y): (f64, f64)) -> [f64; 2] {
+    /// Viewporter stretches the rounded device buffer to the exact logical size.
+    pub(crate) fn window_pixel(&self, (x, y): (f64, f64)) -> [f64; 2] {
         std::array::from_fn(|i| [x, y][i] * f64::from(self.device[i]) / f64::from(self.logical[i]))
     }
 
@@ -128,7 +120,7 @@ impl View {
         self.tabs.presented?.hit(self.window_pixel(position))
     }
 
-    /// Call after building the active grid, before presenting. Titles are in window order.
+    /// Call after composing the terminal panes, before presenting. Titles are in window order.
     pub(crate) fn draw_tabs<'a>(
         &mut self,
         titles: impl Iterator<Item = &'a str>,
@@ -149,9 +141,13 @@ impl View {
             paint.frame = None;
             return;
         };
-        let c = clear_color(background);
-        let palette = Palette::for_luminance(0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b);
-        paint.build(layout, active, titles, palette, &mut self.font_errors);
+        paint.build(
+            layout,
+            active,
+            titles,
+            palette_for_background(background),
+            &mut self.font_errors,
+        );
     }
 }
 

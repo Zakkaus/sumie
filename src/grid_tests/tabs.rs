@@ -51,9 +51,16 @@ pub(super) fn assert_tab_bar(renderer: &mut Renderer, device: &wgpu::Device, que
                 );
             }
             let logical_top = f64::from(top) / 1.25;
-            assert!(view.pointer_position((0.0, logical_top)).1[1].abs() < f32::EPSILON);
+            assert!(
+                view.pointer_position((0.0, logical_top), view.content_rect())
+                    .1[1]
+                    .abs()
+                    < f32::EPSILON
+            );
             assert_eq!(
-                view.ime_rectangle(snapshot.cursor).unwrap().y,
+                view.ime_rectangle(snapshot.cursor, view.content_rect())
+                    .unwrap()
+                    .y,
                 top.cast_signed() * 120 / 150
             );
         }

@@ -3,7 +3,7 @@ use sumie_font::{AtlasGlyph, Decoration, FontStyle};
 use sumie_render::{AtlasRect, GlyphQuad, PixelRect, Rgba};
 use sumie_vt::{Cell, CellStyle, Rgb, Underline};
 
-use super::View;
+use super::paint::PanePainter;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct Ink {
@@ -38,13 +38,13 @@ pub(super) fn link_at(spans: &mut &[CellRange], row: u32, column: u32) -> bool {
 #[derive(Default)]
 pub(super) struct Decorations([Option<AtlasGlyph>; Decoration::Overline as usize + 1]);
 
-impl View {
+impl PanePainter<'_> {
     pub(super) fn finish_run(&mut self, origin: [u32; 2], ink: Ink) {
         self.line.trim_spaces();
         self.line.draw(
-            &mut self.font,
-            &mut self.font_errors,
-            &mut self.glyphs,
+            self.font,
+            self.font_errors,
+            &mut self.pane.glyphs,
             origin,
             ink.color,
             ink.face,
@@ -56,7 +56,7 @@ impl View {
 impl Decorations {
     pub(super) fn draw(
         &mut self,
-        view: &mut View,
+        view: &mut PanePainter<'_>,
         pos: [u32; 2],
         cell: &Cell,
         fg: Rgba,
@@ -96,7 +96,7 @@ impl Decorations {
 
     fn draw_mark(
         &mut self,
-        view: &mut View,
+        view: &mut PanePainter<'_>,
         [col, row]: [u32; 2],
         width: u8,
         mark: Decoration,
@@ -115,8 +115,10 @@ impl Decorations {
         };
         for column in col..col + u32::from(width) {
             let cell = [column, row];
-            view.glyphs
-                .push(glyph_quad(image, view.origin(cell), cell, color));
+            let origin = view.origin(cell);
+            view.pane
+                .glyphs
+                .push(glyph_quad(image, origin, cell, color));
         }
     }
 }

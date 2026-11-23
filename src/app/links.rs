@@ -5,7 +5,7 @@ use sumie_core::{
 use sumie_vt::Terminal;
 use sumie_wayland::{Event, PointerPhase};
 
-use super::{Gpu, Result, Session, Tab, View};
+use super::{Gpu, PaneState, Result, Session};
 
 #[derive(Default)]
 pub(super) struct Pointer {
@@ -37,11 +37,8 @@ impl Pointer {
         }
     }
 
-    pub(super) fn hit(&self, view: &View, searching: bool, banner: bool) -> Option<CellPosition> {
-        if !self.control || searching {
-            return None;
-        }
-        view.link_cell(self.position?, banner)
+    fn position(&self) -> Option<(f64, f64)> {
+        self.position.filter(|_| self.control)
     }
 }
 
@@ -101,7 +98,7 @@ impl Hover {
     }
 }
 
-impl Tab {
+impl PaneState {
     pub(super) fn prepare_pointer_link(
         &mut self,
         mouse: &mut sumie_core::mouse::MouseEvent,
@@ -144,14 +141,28 @@ impl Tab {
 
 impl Session {
     pub(super) fn update_link_hover(&mut self, gpu: &mut Gpu, banner: bool) -> Result<()> {
-        let hit = self
+        let target = self
             .link_pointer
-            .hit(&self.view, self.active().search.is_some(), banner);
-        let tab = self.tabs.active_mut().unwrap();
-        if hit.is_none() || !tab.snapshot_dirty {
-            tab.probe_link(hit, &self.host)?;
+            .position()
+            .and_then(|position| self.pane_under_pointer(position).map(|id| (id, position)));
+        let tab = self.tabs.active_mut().expect("live window");
+        let focused = tab.tree.focused();
+        let mut link = false;
+        for pane in &mut tab.panes {
+            let active = pane.id == focused;
+            let hit = target
+                .filter(|(id, _)| *id == pane.id && !(active && pane.search.is_some()))
+                .and_then(|(_, position)| {
+                    self.view.link_cell(position, pane.rect, banner && active)
+                });
+            if hit.is_none() || !pane.snapshot_dirty {
+                pane.probe_link(hit, &self.host)?;
+            }
+            link |= hit.is_some_and(|hit| {
+                pane.hover.uri().is_some() && pane.hover.checked.is_some_and(|(pos, _)| pos == hit)
+            });
         }
-        gpu.set_link_cursor(tab.hover.uri().is_some());
+        gpu.set_link_cursor(link);
         Ok(())
     }
 }

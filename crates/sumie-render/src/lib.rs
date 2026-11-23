@@ -10,7 +10,10 @@ mod renderer;
 mod surface;
 
 pub use atlas::{AtlasRect, AtlasUpload};
-pub use grid::{ChromeLayer, Cursor, CursorShape, DrawList, Fill, GlyphQuad, PixelRect, Rgba};
+pub use grid::{
+    ChromeLayer, Cursor, CursorShape, DrawList, Fill, FrameDraw, GlyphQuad, PaneDraw, PixelRect,
+    Rgba,
+};
 pub use renderer::{OffscreenTarget, Renderer};
 pub use surface::{SurfaceError, SurfaceFrame, SurfaceRenderer};
 pub use wgpu;

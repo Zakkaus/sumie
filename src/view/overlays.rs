@@ -2,9 +2,12 @@
 
 use std::ops::Range;
 
-use super::{
-    Cursor, FontStyle, GlyphQuad, Line, PixelRect, Rgb, Snapshot, View, codepoint_width, rgba,
-};
+use sumie_core::splits::Rect;
+use sumie_render::{Cursor, CursorShape, GlyphQuad, PixelRect};
+use sumie_vt::{Rgb, Snapshot, codepoint_width};
+
+use super::paint::PanePainter;
+use super::{FontStyle, Line, View, rgba};
 use crate::input::SearchTarget;
 
 /// Cell-aligned bounds; glyph masks and pointer events use the same integer pixel edges.
@@ -19,9 +22,7 @@ pub(super) struct SearchBox {
 pub(super) struct PresentedSearch {
     panel: SearchBox,
     cell: [u32; 2],
-    logical: [u32; 2],
-    device: [u32; 2],
-    grid_top: u32,
+    rect: Rect,
 }
 
 impl SearchBox {
@@ -181,45 +182,186 @@ impl Glyphs {
     }
 }
 
-impl View {
+impl PanePainter<'_> {
     pub(super) fn set_overlay_bounds(&mut self, banner: bool) {
-        self.search_box = self
+        self.pane.search_box = self
             .search_bar
-            .as_ref()
-            .map(|_| SearchBox::place(self.grid, banner, &self.search_highlights));
-        let search = self.search_box.map(|b| {
+            .map(|_| SearchBox::place(self.pane.grid, banner, self.search_highlights));
+        let search = self.pane.search_box.map(|b| {
             let mut rect = b.bounds(self.cell);
-            rect.origin[1] += self.glyphs.offset[1];
+            for i in 0..2 {
+                rect.origin[i] += self.pane.glyphs.offset[i];
+            }
             rect
         });
-        self.glyphs.cover = search.map(Mask::Outside);
-        self.image_exclusions = [
+        self.pane.glyphs.cover = search.map(Mask::Outside);
+        self.pane.image_exclusions = [
             banner.then(|| PixelRect {
-                origin: self.glyphs.offset,
-                size: [self.grid[0] * self.cell[0], self.cell[1]],
+                origin: self.pane.glyphs.offset,
+                size: [self.pane.grid[0] * self.cell[0], self.cell[1]],
             }),
             search,
         ];
     }
 
-    pub(crate) fn frame_presented(&mut self) {
-        self.tabs.presented();
-        self.presented_search = self.search_box.map(|panel| PresentedSearch {
-            panel,
-            cell: self.cell,
-            logical: self.logical,
-            device: self.device,
-            grid_top: self.bar_height(),
+    pub(super) fn draw_banner(&mut self, snapshot: &Snapshot, message: &str) {
+        self.pane.backgrounds.extend(std::iter::repeat_n(
+            rgba(snapshot.foreground),
+            self.pane.grid[0] as usize,
+        ));
+        self.line.ellipsize(message, self.pane.grid[0]);
+        self.line.draw(
+            self.font,
+            self.font_errors,
+            &mut self.pane.glyphs,
+            [0, 0],
+            rgba(snapshot.background),
+            FontStyle::default(),
+        );
+    }
+
+    pub(super) fn draw_search(&mut self, snapshot: &Snapshot, panel: SearchBox) {
+        let ink = readable(snapshot.foreground, snapshot.background);
+        let field = mix(snapshot.background, ink, 1);
+        let controls = mix(snapshot.background, ink, 2);
+        let rail = panel
+            .buttons()
+            .last()
+            .map_or(panel.columns().end, |(cols, _, _)| cols.start);
+        let stride = self.pane.grid[0] as usize;
+        for row in panel.top..panel.top + panel.height {
+            let row = row as usize * stride;
+            self.pane.backgrounds[row + panel.left as usize..row + rail as usize].fill(rgba(field));
+            self.pane.backgrounds[row + rail as usize..row + panel.columns().end as usize]
+                .fill(rgba(controls));
+            if !self.pane.default_backgrounds.is_empty() {
+                self.pane.default_backgrounds
+                    [row + panel.left as usize..row + panel.columns().end as usize]
+                    .fill(false);
+            }
+        }
+        let first = self.pane.glyphs.quads.len();
+        self.draw_query(panel, rail, readable(ink, field));
+        let control_ink = rgba(readable(ink, controls));
+        for (cols, label, _) in panel.buttons() {
+            self.line.clear();
+            self.line.push(label, 1);
+            self.line.draw(
+                self.font,
+                self.font_errors,
+                &mut self.pane.glyphs,
+                [cols.start.midpoint(cols.end - 1), panel.top],
+                control_ink,
+                FontStyle::default(),
+            );
+        }
+        let inset = ((panel.height - 1) * self.cell[1] / 2).cast_signed();
+        for glyph in &mut self.pane.glyphs.quads[first..] {
+            glyph.dest.origin[1] += inset;
+        }
+        if let Some(cursor) = &mut self.pane.cursor {
+            cursor.rect.origin[1] += inset;
+        }
+    }
+
+    fn draw_query(&mut self, panel: SearchBox, rail: u32, ink: Rgb) {
+        let label = self.search_bar.expect("search bar is open");
+        let (query, count) = label.rsplit_once('\t').unwrap_or((label, ""));
+        let left = panel.left + u32::from(panel.width >= 12);
+        let room = rail - left;
+        let count_width = self.line.ellipsize(count, room.saturating_sub(4));
+        let count_column = rail - u32::from(room >= 8) - count_width;
+        let color = rgba(ink);
+        self.line.draw(
+            self.font,
+            self.font_errors,
+            &mut self.pane.glyphs,
+            [count_column, panel.top],
+            color,
+            FontStyle::default(),
+        );
+        let available = count_column - left - u32::from(count_width != 0) - 1;
+        let (preedit, preedit_width) = visible_suffix(self.preedit, available);
+        let (query, query_width) = if preedit.len() == self.preedit.len() {
+            visible_suffix(query, available - preedit_width)
+        } else {
+            ("", 0)
+        };
+        self.line.clear();
+        self.line.append_overlay_text(query);
+        self.line.append_overlay_text(preedit);
+        self.line.draw(
+            self.font,
+            self.font_errors,
+            &mut self.pane.glyphs,
+            [left, panel.top],
+            color,
+            FontStyle::default(),
+        );
+        self.pane.cursor = Some(Cursor {
+            rect: PixelRect {
+                origin: self.origin([left + query_width + preedit_width, panel.top]),
+                size: [self.cell[0].min(2), self.cell[1]],
+            },
+            color,
+            shape: CursorShape::Solid,
         });
     }
 
-    pub(crate) fn search_hit(&self, (x, y): (f64, f64)) -> Option<SearchTarget> {
-        let frame = self.presented_search.as_ref()?;
-        let pixel = [
-            x * f64::from(frame.device[0]) / f64::from(frame.logical[0]),
-            y * f64::from(frame.device[1]) / f64::from(frame.logical[1])
-                - f64::from(frame.grid_top),
-        ];
+    pub(super) fn tint_matches(&mut self, snapshot: &Snapshot, banner: bool) {
+        let columns = self.pane.grid[0] as usize;
+        for &(row, first, last, current) in self.search_highlights {
+            if banner && row == 0 {
+                continue;
+            }
+            let offset = usize::from(row) * columns;
+            let cells = &snapshot.rows[usize::from(row)][usize::from(first)..=usize::from(last)];
+            let backgrounds = &mut self.pane.backgrounds
+                [offset + usize::from(first)..=offset + usize::from(last)];
+            let weight = if current { 4 } else { 2 };
+            if !self.pane.default_backgrounds.is_empty() {
+                self.pane.default_backgrounds
+                    [offset + usize::from(first)..=offset + usize::from(last)]
+                    .fill(false);
+            }
+            let accent = [255, 183, 71].map(|channel| channel * weight);
+            for (background, cell) in backgrounds.iter_mut().zip(cells) {
+                if !cell.wide_wrap_spacer {
+                    *background = rgba(std::array::from_fn(|i| {
+                        ((u16::from(background[i]) * (8 - weight) + accent[i]) / 8)
+                            .try_into()
+                            .expect("weighted average fits into u8")
+                    }));
+                }
+            }
+        }
+    }
+}
+
+impl View {
+    pub(crate) fn frame_presented(&mut self) {
+        self.tabs.presented();
+        self.presented_search = self.active_pane.and_then(|index| {
+            let pane = &self.panes[index];
+            Some(PresentedSearch {
+                panel: pane.search_box?,
+                cell: self.cell,
+                rect: pane.rect,
+            })
+        });
+    }
+
+    pub(crate) fn search_hit(&self, position: (f64, f64), rect: Rect) -> Option<SearchTarget> {
+        let frame = self
+            .presented_search
+            .as_ref()
+            .filter(|frame| frame.rect == rect)?;
+        let pixel = self.pane_pixel(position, rect);
+        if !(0.0..f64::from(rect.width)).contains(&pixel[0])
+            || !(0.0..f64::from(rect.height)).contains(&pixel[1])
+        {
+            return None;
+        }
         let contains = |rect: PixelRect| {
             (0..2).all(|i| {
                 (0.0..f64::from(rect.size[i])).contains(&(pixel[i] - f64::from(rect.origin[i])))
@@ -234,139 +376,6 @@ impl View {
                 })
                 .unwrap_or(SearchTarget::Field)
         })
-    }
-
-    pub(super) fn draw_banner(&mut self, snapshot: &Snapshot, message: &str) {
-        self.backgrounds.extend(std::iter::repeat_n(
-            rgba(snapshot.foreground),
-            self.grid[0] as usize,
-        ));
-        self.line.ellipsize(message, self.grid[0]);
-        self.line.draw(
-            &mut self.font,
-            &mut self.font_errors,
-            &mut self.glyphs,
-            [0, 0],
-            rgba(snapshot.background),
-            super::FontStyle::default(),
-        );
-    }
-
-    pub(super) fn draw_search(&mut self, snapshot: &Snapshot, panel: SearchBox, banner: bool) {
-        self.tint_matches(snapshot, banner);
-        let ink = readable(snapshot.foreground, snapshot.background);
-        let field = mix(snapshot.background, ink, 1);
-        let controls = mix(snapshot.background, ink, 2);
-        let rail = panel
-            .buttons()
-            .last()
-            .map_or(panel.columns().end, |(cols, _, _)| cols.start);
-        let stride = self.grid[0] as usize;
-        for row in panel.top..panel.top + panel.height {
-            let row = row as usize * stride;
-            self.backgrounds[row + panel.left as usize..row + rail as usize].fill(rgba(field));
-            self.backgrounds[row + rail as usize..row + panel.columns().end as usize]
-                .fill(rgba(controls));
-            if !self.default_backgrounds.is_empty() {
-                self.default_backgrounds
-                    [row + panel.left as usize..row + panel.columns().end as usize]
-                    .fill(false);
-            }
-        }
-        let first = self.glyphs.quads.len();
-        self.draw_query(panel, rail, readable(ink, field));
-        let control_ink = rgba(readable(ink, controls));
-        for (cols, label, _) in panel.buttons() {
-            self.line.clear();
-            self.line.push(label, 1);
-            self.line.draw(
-                &mut self.font,
-                &mut self.font_errors,
-                &mut self.glyphs,
-                [cols.start.midpoint(cols.end - 1), panel.top],
-                control_ink,
-                FontStyle::default(),
-            );
-        }
-        let inset = ((panel.height - 1) * self.cell[1] / 2).cast_signed();
-        for glyph in &mut self.glyphs.quads[first..] {
-            glyph.dest.origin[1] += inset;
-        }
-        if let Some(cursor) = &mut self.cursor {
-            cursor.rect.origin[1] += inset;
-        }
-    }
-
-    fn draw_query(&mut self, panel: SearchBox, rail: u32, ink: Rgb) {
-        let label = self.search_bar.as_deref().expect("search bar is open");
-        let (query, count) = label.rsplit_once('\t').unwrap_or((label, ""));
-        let left = panel.left + u32::from(panel.width >= 12);
-        let room = rail - left;
-        let count_width = self.line.ellipsize(count, room.saturating_sub(4));
-        let count_column = rail - u32::from(room >= 8) - count_width;
-        let color = rgba(ink);
-        self.line.draw(
-            &mut self.font,
-            &mut self.font_errors,
-            &mut self.glyphs,
-            [count_column, panel.top],
-            color,
-            FontStyle::default(),
-        );
-        let available = count_column - left - u32::from(count_width != 0) - 1;
-        let (preedit, preedit_width) = visible_suffix(&self.preedit, available);
-        let (query, query_width) = if preedit.len() == self.preedit.len() {
-            visible_suffix(query, available - preedit_width)
-        } else {
-            ("", 0)
-        };
-        self.line.clear();
-        self.line.append_overlay_text(query);
-        self.line.append_overlay_text(preedit);
-        self.line.draw(
-            &mut self.font,
-            &mut self.font_errors,
-            &mut self.glyphs,
-            [left, panel.top],
-            color,
-            FontStyle::default(),
-        );
-        self.cursor = Some(Cursor {
-            rect: PixelRect {
-                origin: self.origin([left + query_width + preedit_width, panel.top]),
-                size: [self.cell[0].min(2), self.cell[1]],
-            },
-            color,
-            shape: super::CursorShape::Solid,
-        });
-    }
-
-    fn tint_matches(&mut self, snapshot: &Snapshot, banner: bool) {
-        let columns = self.grid[0] as usize;
-        for &(row, first, last, current) in &self.search_highlights {
-            if banner && row == 0 {
-                continue;
-            }
-            let offset = usize::from(row) * columns;
-            let cells = &snapshot.rows[usize::from(row)][usize::from(first)..=usize::from(last)];
-            let backgrounds =
-                &mut self.backgrounds[offset + usize::from(first)..=offset + usize::from(last)];
-            let weight = if current { 4 } else { 2 };
-            if !self.default_backgrounds.is_empty() {
-                self.default_backgrounds[offset + usize::from(first)..=offset + usize::from(last)]
-                    .fill(false);
-            }
-            let accent = [255, 183, 71].map(|channel| channel * weight);
-            for (background, cell) in backgrounds.iter_mut().zip(cells) {
-                if !cell.wide_wrap_spacer {
-                    *background = rgba(std::array::from_fn(|i| {
-                        ((u16::from(background[i]) * (8 - weight) + accent[i]) / 8)
-                            .try_into()
-                            .expect("weighted average fits into u8")
-                    }));
-                }
-            }
-        }
     }
 }
 

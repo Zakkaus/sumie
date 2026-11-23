@@ -8,7 +8,9 @@ On Wayland, hold Ctrl over an OSC 8 link or a detected URL to underline it, incl
 
 Press Ctrl+Shift+F to search the screen and scrollback. Search treats wrapped rows as one line and ignores case unless the query contains an uppercase letter. Matches are numbered from oldest to newest. Enter or F3 selects an older match; hold Shift to select a newer one. Escape returns to the position where you opened search, or to the bottom if you were following output.
 
-On Wayland, Ctrl+Shift+T opens a tab in the active shell's last reported local directory (OSC 7), or in `$HOME` if none is available. New windows start in `$HOME`. Ctrl+Shift+W closes the active tab. A tab also closes when its child exits; closing the last tab closes the window.
+On Wayland, Ctrl+Shift+T opens a tab. Ctrl+Shift+E splits the focused pane to the right; Ctrl+Shift+O splits it down. Each new shell starts in the focused pane's last reported local directory (OSC 7), or in `$HOME` if none is available. New windows start in `$HOME`.
+
+Click a pane to focus it, or press Ctrl+Alt+Arrow to focus a neighbour. Drag a divider or press Ctrl+Shift+Alt+Arrow to move it. Ctrl+Shift+Z shows the focused pane at the full tab size; press it again to restore the split. Ctrl+Shift+W closes the focused pane, as does exiting its shell. Its sibling takes the freed space. Closing the last pane closes the tab; closing the last tab closes the window.
 
 Ctrl+Tab or Ctrl+PageDown selects the next tab; Ctrl+Shift+Tab or Ctrl+PageUp selects the previous one. Alt+1 through Alt+8 select tabs by position, and Alt+9 selects the last tab. Ctrl+Shift+PageUp and Ctrl+Shift+PageDown move the active tab left and right. The bar appears when a second tab opens. Click a tab to select it, middle-click to close it, or scroll over the bar to switch tabs.
 

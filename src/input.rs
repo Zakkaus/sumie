@@ -1,7 +1,7 @@
 use sumie_core::mouse::{Button, MouseEvent, MousePhase, SelectStep};
 use sumie_core::{
-    FontZoom, KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect, Shortcut, Shortcuts,
-    TabAction,
+    FontZoom, KeyAction, KeyModifiers, Pane, PaneAction, PaneCommand, PaneEffect, Shortcut,
+    Shortcuts, TabAction,
 };
 use sumie_wayland::Event;
 
@@ -18,6 +18,7 @@ pub(crate) enum Effect {
     ViewportChanged,
     Search(SearchAction),
     Tab(TabAction),
+    Pane(PaneAction),
     Zoom(FontZoom),
 }
 
@@ -55,6 +56,10 @@ impl Routing {
             *pressed = SearchTarget::Field;
         }
         self.generation
+    }
+
+    pub(crate) fn reset_pointer(&mut self) {
+        self.search_presses.fill(None);
     }
 
     fn search_key(
@@ -140,6 +145,7 @@ pub(crate) fn route(
                 .match_key(physical, symbol, modifiers, action);
             match shortcut {
                 Some(Shortcut::Tab(action)) => return Ok(Effect::Tab(action)),
+                Some(Shortcut::Pane(action)) => return Ok(Effect::Pane(action)),
                 Some(Shortcut::Zoom(action)) => return Ok(Effect::Zoom(action)),
                 shortcut if searching => {
                     return Ok(

@@ -1,10 +1,17 @@
 use std::{num::NonZeroU64, ops::Range};
 
+use sumie_core::splits::Rect;
 use wgpu::util::StagingBelt;
 
-use crate::grid::{GridLayers, Instance};
-use crate::images::{Images, Layers, QUAD_SIZE};
-use crate::{AtlasRect, AtlasUpload, DrawList, atlas};
+use crate::grid::{GridLayers, Instance, write_fills};
+use crate::images::{Candidates, Images, Layers, QUAD_SIZE};
+use crate::{
+    AtlasUpload, ChromeLayer, DrawList, Fill, FrameDraw, PaneDraw, PixelRect, Rgba, atlas,
+};
+
+mod pipeline;
+
+use pipeline::{BoundAtlas, frame_buffer, pipeline};
 
 const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const FRAME_SIZE: u64 = size_of::<Frame>() as u64;
@@ -23,6 +30,31 @@ struct Frame {
 struct LayeredFrame {
     grid: GridLayers,
     images: Layers,
+    exclusion: u32,
+}
+
+struct PaneBatch {
+    rect: Rect,
+    base: Option<Fill>,
+    start: u32,
+    count: u32,
+    candidates: Option<Candidates>,
+    layered: Option<LayeredFrame>,
+}
+
+#[derive(Default)]
+struct Batches {
+    grid: u32,
+    fills: u32,
+    chrome: u32,
+    images: u32,
+    exclusions: u32,
+}
+
+impl Batches {
+    fn image_offset(&self) -> u64 {
+        FRAME_SIZE + u64::from(self.grid + self.fills + self.chrome) * INSTANCE_SIZE
+    }
 }
 
 /// Persistent RGBA8 sRGB render attachment and copy source on the renderer's device.
@@ -44,6 +76,7 @@ pub struct Renderer {
     grid_atlas: BoundAtlas,
     chrome_atlas: Option<BoundAtlas>,
     images: Images,
+    panes: Vec<PaneBatch>,
     frame: wgpu::Buffer,
     frame_limit: u32,
     minimum_contrast: f32,
@@ -75,6 +108,7 @@ impl Renderer {
             grid_atlas,
             chrome_atlas: None,
             images: Images::new(format),
+            panes: Vec::new(),
             staging: StagingBelt::new(device.clone(), frame.size()),
             frame,
             frame_limit,
@@ -130,6 +164,34 @@ impl Renderer {
         );
     }
 
+    /// Submit one render pass containing all panes and overlays. Do not hold a terminal lock.
+    ///
+    /// # Panics
+    /// Panics if a grid does not supply exactly one background per cell or the frame exceeds
+    /// the device's instance storage limit.
+    pub fn draw_frame<'a>(
+        &mut self,
+        frame: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
+        target: &OffscreenTarget,
+    ) {
+        self.draw_frame_view(frame, &target.view, target.texture.size());
+    }
+
+    pub(crate) fn draw_frame_view<'a>(
+        &mut self,
+        frame: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
+        view: &wgpu::TextureView,
+        size: wgpu::Extent3d,
+    ) {
+        self.draw_batches(
+            frame,
+            view,
+            [size.width, size.height],
+            clear_color(frame.background),
+            true,
+        );
+    }
+
     pub(crate) fn draw_view(
         &mut self,
         list: &DrawList<'_>,
@@ -137,50 +199,50 @@ impl Renderer {
         size: [u32; 2],
         clear: wgpu::Color,
     ) {
+        let frame = FrameDraw {
+            background: [0; 4],
+            panes: std::iter::once(PaneDraw {
+                rect: full_rect(size),
+                draw: *list,
+            }),
+            fills: &[],
+            chrome: list.chrome,
+        };
+        self.draw_batches(&frame, view, size, clear, false);
+    }
+
+    fn draw_batches<'a>(
+        &mut self,
+        frame: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
+        view: &wgpu::TextureView,
+        size: [u32; 2],
+        clear: wgpu::Color,
+        draw_bases: bool,
+    ) {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("sumie frame"),
             });
-        let mut grid = list.grid_instances();
-        let chrome = list.chrome.as_ref().map_or(0, |layer| {
-            let size = [layer.atlas.width, layer.atlas.height];
-            let atlas = self.chrome_atlas.get_or_insert_with(|| {
-                BoundAtlas::new(&self.device, &self.pipeline, &self.frame, size)
+        let full = full_rect(size);
+        let batches = self.prepare(frame, full, draw_bases);
+        if batches.image_offset() > FRAME_SIZE {
+            self.stage_instances(&mut encoder, frame, size, &batches);
+        }
+        let exclusions = frame
+            .panes
+            .clone()
+            .zip(&self.panes)
+            .filter_map(|(pane, batch)| {
+                (batch.layered.as_ref()?.exclusion != 0).then_some(pane.draw.image_exclusions)
             });
-            atlas.upload(
-                &self.device,
-                &self.queue,
-                &self.pipeline,
-                &self.frame,
-                &layer.atlas,
-            );
-            layer.instance_count()
-        });
-        let layered = if list.images.is_empty() {
-            None
-        } else {
-            let available = self
-                .frame_limit
-                .saturating_sub(grid.saturating_add(chrome).saturating_add(1));
-            let available =
-                u32::try_from(u64::from(available) * INSTANCE_SIZE / IMAGE_INSTANCE_SIZE).unwrap();
-            self.images
-                .prepare(&self.device, &self.queue, list, size, available)
-                .map(|images| LayeredFrame {
-                    grid: list.image_layers(images.base, grid),
-                    images,
-                })
-        };
-        if let Some(layers) = &layered {
-            grid = layers.grid.end;
-            self.images
-                .stage_exclusions(&mut self.staging, &mut encoder, list.image_exclusions);
-        }
-        let count = grid.checked_add(chrome).expect("too many frame instances");
-        if count != 0 {
-            self.stage_instances(&mut encoder, list, size, count, layered.as_ref());
-        }
+        self.images.stage_exclusions(
+            &self.device,
+            &mut self.staging,
+            &mut encoder,
+            batches.exclusions,
+            exclusions,
+        );
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sumie grid"),
@@ -195,85 +257,277 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            if let Some(layers) = &layered {
-                self.draw_layered(&mut pass, list, layers, count);
-            } else if count != 0 {
-                self.draw_grid(&mut pass, 0..grid);
-            }
-            if chrome != 0 {
-                if layered.is_some() {
-                    pass.set_pipeline(&self.pipeline);
-                }
-                let atlas = self.chrome_atlas.as_ref().expect("uploaded chrome atlas");
-                pass.set_bind_group(0, &atlas.bindings, &[]);
-                let offset = FRAME_SIZE + u64::from(grid) * INSTANCE_SIZE;
-                pass.set_vertex_buffer(0, self.frame.slice(offset..));
-                pass.draw(0..4, 0..chrome);
-            }
+            self.draw_pass(&mut pass, &batches, full);
         }
         self.staging.finish_and_recall_on_submit(&encoder);
         self.queue.submit([encoder.finish()]);
     }
 
-    fn draw_grid(&self, pass: &mut wgpu::RenderPass<'_>, instances: Range<u32>) {
+    fn bind_grid(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.grid_atlas.bindings, &[]);
         pass.set_vertex_buffer(0, self.frame.slice(FRAME_SIZE..));
-        pass.draw(0..4, instances);
+    }
+
+    fn draw_pass(&self, pass: &mut wgpu::RenderPass<'_>, batches: &Batches, full: Rect) {
+        let mut last = full;
+        let mut bound = false;
+        for pane in &self.panes {
+            if pane.count == 0 {
+                continue;
+            }
+            let scissor = pane.rect;
+            if scissor != last {
+                pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
+                last = scissor;
+            }
+            if let Some(layers) = &pane.layered {
+                self.draw_layered(pass, pane, layers, batches.image_offset());
+                bound = false;
+            } else {
+                if !bound {
+                    self.bind_grid(pass);
+                    bound = true;
+                }
+                pass.draw(0..4, pane.start..pane.start + pane.count);
+            }
+        }
+        if batches.fills == 0 && batches.chrome == 0 {
+            return;
+        }
+        if last != full {
+            pass.set_scissor_rect(full.x, full.y, full.width, full.height);
+        }
+        self.draw_overlays(pass, batches, bound);
+    }
+
+    fn draw_overlays(&self, pass: &mut wgpu::RenderPass<'_>, batches: &Batches, mut bound: bool) {
+        let chrome_start = batches.grid + batches.fills;
+        if batches.fills != 0 {
+            if !bound {
+                self.bind_grid(pass);
+                bound = true;
+            }
+            pass.draw(0..4, batches.grid..chrome_start);
+        }
+        if batches.chrome != 0 {
+            if !bound {
+                pass.set_pipeline(&self.pipeline);
+                pass.set_vertex_buffer(0, self.frame.slice(FRAME_SIZE..));
+            }
+            let atlas = self.chrome_atlas.as_ref().expect("uploaded chrome atlas");
+            pass.set_bind_group(0, &atlas.bindings, &[]);
+            pass.draw(0..4, chrome_start..chrome_start + batches.chrome);
+        }
     }
 
     fn draw_layered(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
-        list: &DrawList<'_>,
+        pane: &PaneBatch,
         layers: &LayeredFrame,
-        count: u32,
+        vertex_offset: u64,
     ) {
         let grid = &layers.grid;
         let images = &layers.images;
-        let vertices = self
-            .frame
-            .slice(FRAME_SIZE + u64::from(count) * INSTANCE_SIZE..);
-        let base = u32::from(grid.base.is_some());
-        if base != 0 {
-            self.draw_grid(pass, 0..base);
-            self.images
-                .draw(pass, list.images, 0..images.below_background, vertices);
-        }
-        if base != grid.backgrounds {
-            self.draw_grid(pass, base..grid.backgrounds);
-        }
-        self.images.draw(
-            pass,
-            list.images,
-            images.below_background..images.below_text,
-            vertices,
-        );
-        if grid.backgrounds != grid.text {
-            self.draw_grid(pass, grid.backgrounds..grid.text);
-        }
-        self.images
-            .draw(pass, list.images, images.below_text..images.end, vertices);
-        if grid.text != grid.end {
-            self.draw_grid(pass, grid.text..grid.end);
-        }
+        let vertices = self.frame.slice(vertex_offset..);
+        let start = pane.start;
+        let prefill = u32::from(pane.base.is_some());
+        let base = start + prefill + u32::from(grid.base.is_some());
+        let backgrounds = start + prefill + grid.backgrounds;
+        let text = start + prefill + grid.text;
+        let end = start + pane.count;
+        let draw_grid = |pass: &mut wgpu::RenderPass<'_>, range: Range<u32>| {
+            if !range.is_empty() {
+                self.bind_grid(pass);
+                pass.draw(0..4, range);
+            }
+        };
+        let draw_images = |pass: &mut wgpu::RenderPass<'_>, range| {
+            self.images.draw(pass, layers.exclusion, range, vertices);
+        };
+        draw_grid(pass, start..base);
+        draw_images(pass, images.start..images.below_background);
+        draw_grid(pass, base..backgrounds);
+        draw_images(pass, images.below_background..images.below_text);
+        draw_grid(pass, backgrounds..text);
+        draw_images(pass, images.below_text..images.end);
+        draw_grid(pass, text..end);
     }
 
-    fn stage_instances(
+    fn prepare<'a>(
+        &mut self,
+        frame: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
+        full: Rect,
+        draw_bases: bool,
+    ) -> Batches {
+        let mut batches = Batches {
+            fills: u32::try_from(frame.fills.len()).expect("too many fills"),
+            chrome: self.prepare_chrome(frame.chrome.as_ref()),
+            exclusions: 1,
+            ..Batches::default()
+        };
+        self.panes.clear();
+        self.images.clear();
+        let mut image_panes = 0u32;
+        let dimension_limit = self.device.limits().max_texture_dimension_2d;
+        for pane in frame.panes.clone() {
+            let rect = clip_rect(pane.rect, full);
+            let mut batch = PaneBatch {
+                rect,
+                base: None,
+                start: batches.grid,
+                count: 0,
+                candidates: None,
+                layered: None,
+            };
+            if rect.width != 0 && rect.height != 0 {
+                let [r, g, b, _] = pane.draw.default_background;
+                let color = [r, g, b, 255];
+                if draw_bases && color != frame.background {
+                    batch.base = Some(Fill {
+                        rect: pixel_rect(rect),
+                        color,
+                    });
+                }
+                batch.count = pane.draw.grid_instances() + u32::from(batch.base.is_some());
+                if !pane.draw.images.is_empty() {
+                    batch.candidates = self.images.gather(
+                        &pane.draw,
+                        [full.width, full.height],
+                        rect,
+                        dimension_limit,
+                    );
+                    image_panes += u32::from(batch.candidates.is_some());
+                }
+            }
+            batches.grid = batches
+                .grid
+                .checked_add(batch.count)
+                .expect("too many grid instances");
+            self.panes.push(batch);
+        }
+        let grid_limit = batches
+            .grid
+            .checked_add(batches.fills)
+            .and_then(|n| n.checked_add(batches.chrome))
+            .expect("too many frame instances");
+        if self.images.begin_frame() {
+            let spare = self
+                .frame_limit
+                .saturating_sub(grid_limit.saturating_add(image_panes));
+            let capacity = u32::try_from(u64::from(spare) * INSTANCE_SIZE / IMAGE_INSTANCE_SIZE)
+                .unwrap_or(u32::MAX);
+            self.prepare_images(frame.panes.clone(), &mut batches, capacity);
+        }
+        batches
+    }
+
+    fn prepare_images<'a>(
+        &mut self,
+        panes: impl Iterator<Item = PaneDraw<'a>>,
+        batches: &mut Batches,
+        capacity: u32,
+    ) {
+        batches.grid = 0;
+        for (pane, batch) in panes.zip(&mut self.panes) {
+            if let Some(candidates) = batch.candidates.take()
+                && let Some(images) = self.images.admit(
+                    &self.device,
+                    &self.queue,
+                    &pane.draw,
+                    candidates,
+                    capacity - batches.images,
+                    batches.images,
+                )
+            {
+                batches.images = images.end;
+                let prefill = u32::from(batch.base.is_some());
+                let grid = pane.draw.image_layers(images.base, batch.count - prefill);
+                batch.count = grid.end + prefill;
+                let exclusion = if pane.draw.image_exclusions == [None; 2] {
+                    0
+                } else {
+                    let slot = batches.exclusions;
+                    batches.exclusions += 1;
+                    slot
+                };
+                batch.layered = Some(LayeredFrame {
+                    grid,
+                    images,
+                    exclusion,
+                });
+            }
+            batch.start = batches.grid;
+            batches.grid += batch.count;
+        }
+        self.images.finish_frame(batches.images);
+    }
+
+    fn prepare_chrome(&mut self, layer: Option<&ChromeLayer<'_>>) -> u32 {
+        let Some(layer) = layer else { return 0 };
+        let size = [layer.atlas.width, layer.atlas.height];
+        let atlas = self.chrome_atlas.get_or_insert_with(|| {
+            BoundAtlas::new(&self.device, &self.pipeline, &self.frame, size)
+        });
+        atlas.upload(
+            &self.device,
+            &self.queue,
+            &self.pipeline,
+            &self.frame,
+            &layer.atlas,
+        );
+        layer.instance_count()
+    }
+
+    fn stage_instances<'a>(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        list: &DrawList<'_>,
-        [width, height]: [u32; 2],
-        count: u32,
-        layered: Option<&LayeredFrame>,
+        frame: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
+        size: [u32; 2],
+        batches: &Batches,
     ) {
-        let image_bytes = layered.map_or(0, |layers| {
-            u64::from(layers.images.end) * IMAGE_INSTANCE_SIZE
-        });
-        let instance_bytes = u64::from(count) * INSTANCE_SIZE + image_bytes;
-        let bytes = FRAME_SIZE + instance_bytes;
+        let bytes = batches.image_offset() + u64::from(batches.images) * IMAGE_INSTANCE_SIZE;
+        self.reserve_frame(bytes);
+        let mut staging =
+            self.staging
+                .write_buffer(encoder, &self.frame, 0, NonZeroU64::new(bytes).unwrap());
+        let (mut header, mut instances) = staging.slice(..).split_at(size_of::<Frame>());
+        header.copy_from_slice(bytemuck::bytes_of(&Frame {
+            size,
+            minimum_contrast: self.minimum_contrast,
+            padding: 0,
+        }));
+        let stride = size_of::<Instance>();
+        for (pane, batch) in frame.panes.clone().zip(&self.panes) {
+            let (mut bytes, rest) = instances.split_at(batch.count as usize * stride);
+            instances = rest;
+            if batch.count == 0 {
+                continue;
+            }
+            if let Some(base) = &batch.base {
+                let (first, rest) = bytes.split_at(stride);
+                write_fills(first, std::slice::from_ref(base));
+                bytes = rest;
+            }
+            if let Some(layers) = &batch.layered {
+                pane.draw.write_layered(bytes, &layers.grid);
+            } else {
+                pane.draw.write_instances(bytes);
+            }
+        }
+        let (fills, rest) = instances.split_at(batches.fills as usize * stride);
+        write_fills(fills, frame.fills);
+        let (chrome, images) = rest.split_at(batches.chrome as usize * stride);
+        if let Some(layer) = &frame.chrome {
+            layer.write_instances(chrome);
+        }
+        self.images.write_instances(images);
+    }
+
+    fn reserve_frame(&mut self, bytes: u64) {
         if bytes > self.frame.size() {
-            let total = u32::try_from(instance_bytes.div_ceil(INSTANCE_SIZE)).unwrap();
+            let total = u32::try_from((bytes - FRAME_SIZE).div_ceil(INSTANCE_SIZE)).unwrap();
             let capacity = total
                 .checked_next_power_of_two()
                 .map_or(self.frame_limit, |rounded| rounded.min(self.frame_limit));
@@ -285,160 +539,50 @@ impl Renderer {
                 atlas.rebind(&self.device, &self.pipeline, &self.frame);
             }
         }
-        let mut staging =
-            self.staging
-                .write_buffer(encoder, &self.frame, 0, NonZeroU64::new(bytes).unwrap());
-        let (mut header, instances) = staging.slice(..).split_at(size_of::<Frame>());
-        header.copy_from_slice(bytemuck::bytes_of(&Frame {
-            size: [width, height],
-            minimum_contrast: self.minimum_contrast,
-            padding: 0,
-        }));
-        if let Some(layers) = layered {
-            let (grid, images) = instances.split_at(count as usize * size_of::<Instance>());
-            list.write_layered(grid, &layers.grid);
-            self.images.write_instances(images);
-        } else {
-            list.write_instances(instances);
-        }
     }
 }
 
-struct BoundAtlas {
-    texture: wgpu::Texture,
-    bindings: wgpu::BindGroup,
-    uploaded: bool,
-}
-
-impl BoundAtlas {
-    fn new(
-        device: &wgpu::Device,
-        pipeline: &wgpu::RenderPipeline,
-        frame: &wgpu::Buffer,
-        size: [u32; 2],
-    ) -> Self {
-        let texture = atlas::create(device, size);
-        Self {
-            bindings: bindings(device, pipeline, &texture, frame),
-            texture,
-            uploaded: false,
-        }
-    }
-
-    fn rebind(
-        &mut self,
-        device: &wgpu::Device,
-        pipeline: &wgpu::RenderPipeline,
-        frame: &wgpu::Buffer,
-    ) {
-        self.bindings = bindings(device, pipeline, &self.texture, frame);
-    }
-
-    fn upload(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        pipeline: &wgpu::RenderPipeline,
-        frame: &wgpu::Buffer,
-        upload: &AtlasUpload<'_>,
-    ) {
-        let size = [upload.width, upload.height];
-        if size != [self.texture.width(), self.texture.height()] {
-            *self = Self::new(device, pipeline, frame, size);
-        }
-        if self.uploaded {
-            for &rect in upload.dirty {
-                atlas::write(queue, &self.texture, upload, rect);
-            }
-        } else {
-            atlas::write(
-                queue,
-                &self.texture,
-                upload,
-                AtlasRect {
-                    origin: [0, 0],
-                    size,
-                },
-            );
-            self.uploaded = true;
-        }
+fn full_rect([width, height]: [u32; 2]) -> Rect {
+    Rect {
+        x: 0,
+        y: 0,
+        width,
+        height,
     }
 }
 
-fn frame_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("sumie frame uniform and instances"),
-        size: FRAME_SIZE + u64::from(capacity) * INSTANCE_SIZE,
-        usage: wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::UNIFORM
-            | wgpu::BufferUsages::VERTEX,
-        mapped_at_creation: false,
-    })
+fn clip_rect(rect: Rect, full: Rect) -> Rect {
+    Rect {
+        width: rect.width.min(full.width.saturating_sub(rect.x)),
+        height: rect.height.min(full.height.saturating_sub(rect.y)),
+        ..rect
+    }
 }
 
-fn bindings(
-    device: &wgpu::Device,
-    pipeline: &wgpu::RenderPipeline,
-    atlas: &wgpu::Texture,
-    frame: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("sumie frame bindings"),
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: frame,
-                    offset: 0,
-                    size: NonZeroU64::new(FRAME_SIZE),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(
-                    &atlas.create_view(&wgpu::TextureViewDescriptor::default()),
-                ),
-            },
+fn pixel_rect(rect: Rect) -> PixelRect {
+    PixelRect {
+        origin: [
+            i32::try_from(rect.x).unwrap(),
+            i32::try_from(rect.y).unwrap(),
         ],
-    })
+        size: [rect.width, rect.height],
+    }
 }
 
-fn pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("sumie grid shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("grid.wgsl").into()),
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("sumie grid pipeline"),
-        layout: None,
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vertex"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: INSTANCE_SIZE,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &Instance::ATTRS,
-            })],
-        },
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fragment"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
+fn clear_color([r, g, b, a]: Rgba) -> wgpu::Color {
+    let a = f64::from(a) / 255.0;
+    let linear = |value| {
+        let encoded = f64::from(value) / 255.0;
+        a * if encoded <= 0.04045 {
+            encoded / 12.92
+        } else {
+            ((encoded + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    wgpu::Color {
+        r: linear(r),
+        g: linear(g),
+        b: linear(b),
+        a,
+    }
 }

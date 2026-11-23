@@ -17,6 +17,7 @@ pub(super) const LIGHT: Palette = Palette {
     selected: [10, 19, 23, 255],
     accent: [0, 100, 224, 255],
     rule: [5, 54, 89, 25],
+    inactive_pane: [5, 54, 89, 12],
 };
 
 pub(super) const DARK: Palette = Palette {
@@ -25,4 +26,5 @@ pub(super) const DARK: Palette = Palette {
     selected: [223, 226, 229, 255],
     accent: [1, 113, 227, 255],
     rule: [242, 244, 246, 25],
+    inactive_pane: [17, 17, 18, 127],
 };

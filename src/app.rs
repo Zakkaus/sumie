@@ -1,6 +1,8 @@
 mod directory;
 mod highlights;
 mod links;
+mod pane_input;
+mod pane_layout;
 mod search;
 mod tabs;
 
@@ -9,6 +11,7 @@ use std::time::{Duration, Instant};
 use sumie_core::{
     CellPosition, CellRange, Pane, PaneCommand, PaneEffect, Selection, WindowTabs,
     mouse::{SelectStep, SelectionUnit},
+    splits::{Layout, Rect, SplitTree},
 };
 use sumie_render::{SurfaceError, SurfaceFrame};
 use sumie_vt::Snapshot;
@@ -21,7 +24,7 @@ use crate::{
     pane::{LocalPane, set_colors, set_cursor_defaults},
     reload::Reload,
     sources::{self, Sources},
-    view::{FontSettings, View, clear_color},
+    view::{FontSettings, PaneFocus, View},
 };
 
 const FRAME_RETRY_DELAY: Duration = Duration::from_millis(50);
@@ -63,22 +66,32 @@ struct App {
 }
 
 struct Session {
-    tabs: WindowTabs<Tab>,
+    tabs: WindowTabs<PaneTab>,
     routing: input::Routing,
     view: View,
     frame_retry: Option<Instant>,
     cursor_hidden: bool,
-    handle: SourceHandle,
-    click_interval: Option<u32>,
+    spawn: tabs::PaneHost,
+    next_id: u64,
     home: std::path::PathBuf,
     host: String,
     shell: String,
     closing: Vec<(Sources, sumie_pty::Pty)>,
     pointer: tabs::BarPointer,
+    pane_pointer: pane_input::Pointer,
     link_pointer: links::Pointer,
 }
 
-struct Tab {
+struct PaneTab {
+    tree: SplitTree,
+    layout: Layout,
+    panes: Vec<PaneState>,
+}
+
+struct PaneState {
+    id: u64,
+    rect: Rect,
+    cell: [u32; 2],
     exited: bool,
     paste_recipient: Option<u64>,
     search: Option<search::Bar>,
@@ -143,7 +156,7 @@ impl App {
             self.reload_config()?;
             if let Some(session) = &mut self.session {
                 session.active_mut().advance_search()?;
-                for tab in session.tabs.as_mut_slice() {
+                for tab in session.all_panes_mut() {
                     tab.sources.watch_input(tab.pane.pty.input_fd())?;
                 }
                 let gpu = self.gpu.as_mut().unwrap();
@@ -151,7 +164,7 @@ impl App {
                     && gpu.frame_slot_available()
                     && session.frame_retry.is_none_or(|at| Instant::now() >= at);
                 if ready {
-                    session.active_mut().update_snapshot()?;
+                    session.tabs.active_mut().unwrap().refresh_visible()?;
                 }
                 let banner = self.reload.banner.as_deref();
                 session.update_link_hover(gpu, banner.is_some())?;
@@ -192,7 +205,7 @@ impl App {
                 }
             }
             if changes.scrollback_limit {
-                for tab in session.tabs.as_mut_slice() {
+                for tab in session.all_panes_mut() {
                     tab.pane
                         .terminal
                         .set_scrollback_bytes(next.scrollback_limit())?;
@@ -203,7 +216,7 @@ impl App {
                     }
                 }
             }
-            for tab in session.tabs.as_mut_slice() {
+            for tab in session.all_panes_mut() {
                 if changes.terminal_colors {
                     set_colors(&mut tab.pane.terminal, &next.colors)?;
                     tab.snapshot_dirty = true;
@@ -298,23 +311,16 @@ impl Session {
         let font = FontSettings::from_config(config.font.clone())?;
         let view = View::new(scale, logical, device, font, &config.colors)?;
         let home = std::env::home_dir().ok_or("no home directory for login shell")?;
-        let click_interval = sumie_wayland::double_click_interval();
-        let first = Tab::open(
-            &view,
-            &handle,
-            config,
-            &home,
-            click_interval,
-            image_dimension_limit,
-        )?;
+        let spawn = tabs::PaneHost::new(handle, image_dimension_limit);
+        let first = spawn.open(0, view.content_rect(), &view, config, &home)?;
         Ok(Self {
-            tabs: WindowTabs::new(first),
+            tabs: WindowTabs::new(PaneTab::new(first)),
             routing: input::Routing::default(),
-            click_interval,
+            next_id: 1,
             view,
             frame_retry: None,
             cursor_hidden: false,
-            handle,
+            spawn,
             home,
             host: std::fs::read_to_string("/proc/sys/kernel/hostname")?
                 .trim_end()
@@ -322,6 +328,7 @@ impl Session {
             shell: directory::shell_name(),
             closing: Vec::new(),
             pointer: tabs::BarPointer::default(),
+            pane_pointer: pane_input::Pointer::default(),
             link_pointer: links::Pointer::default(),
         })
     }
@@ -335,6 +342,7 @@ impl Session {
         for tab in self.tabs.as_mut_slice() {
             tab.resize_grid(&self.view)?;
         }
+        self.active_mut().frame_dirty = true;
         Ok(())
     }
 
@@ -348,88 +356,9 @@ impl Session {
             }
         }
     }
-
-    fn input(&mut self, event: Event, gpu: &mut Gpu, banner: bool) -> Result<Option<tabs::Action>> {
-        self.link_pointer.record(&event);
-        if let std::ops::ControlFlow::Break(action) = self.bar_input(&event) {
-            return Ok(action);
-        }
-        let Some((index, recipient)) = self.input_target(&event) else {
-            return Ok(None);
-        };
-        let tab = &mut self.tabs.as_mut_slice()[index];
-        let routing = &mut self.routing;
-        if let Event::ModifiersChanged(modifiers) = event {
-            tab.pane
-                .pointer_modifiers_changed(input::key_modifiers(modifiers));
-            return Ok(None);
-        }
-        if matches!(
-            event,
-            Event::Key { pressed: true, .. } | Event::ImeCommit { .. }
-        ) {
-            tab.sources.reset_blink();
-        }
-        let searching = tab.search.is_some();
-        let effect = if let Event::Pointer {
-            phase,
-            position,
-            serial,
-            modifiers,
-        } = event
-        {
-            let mut mouse =
-                input::mouse_event(phase, modifiers, self.view.pointer_position(position));
-            let hit = || self.view.link_cell(position, banner);
-            let uri = tab.prepare_pointer_link(&mut mouse, hit, &self.host)?;
-            let hit = || self.view.search_hit(position);
-            match routing.pointer(&mut tab.pane, searching, mouse, hit)? {
-                input::Effect::OpenLink => {
-                    links::Hover::open(uri.expect("validated link release"));
-                    input::Effect::None
-                }
-                input::Effect::Select(step) if tab.select(step, mouse.cell)? => {
-                    input::Effect::Copy(serial)
-                }
-                effect => effect,
-            }
-        } else {
-            input::route(recipient, &mut tab.pane, routing, searching, event)?
-        };
-        match effect {
-            input::Effect::Tab(action) => return Ok(Some(tabs::Action::Key(action))),
-            input::Effect::Zoom(action) => self.zoom(action)?,
-            input::Effect::Search(action) => {
-                if matches!(
-                    action,
-                    input::SearchAction::Open | input::SearchAction::Close
-                ) {
-                    tab.pane.reset_pointer_gestures();
-                    tab.paste_recipient = None;
-                    gpu.set_input_generation(routing.change_recipient());
-                }
-                tab.search_action(action, &mut self.view)?;
-            }
-            input::Effect::Copy(serial) => tab.copy_selection(gpu, serial)?,
-            input::Effect::ViewportChanged => {
-                tab.frame_dirty |= searching || tab.selection.range().is_some();
-                tab.clear_selection();
-                tab.snapshot_dirty = true;
-            }
-            input::Effect::ReadClipboard => {
-                gpu.read_clipboard(*tab.paste_recipient.get_or_insert(routing.generation));
-            }
-            input::Effect::Preedit(text) if text != self.view.preedit => {
-                self.view.preedit = text;
-                tab.frame_dirty = true;
-            }
-            _ => (),
-        }
-        Ok(None)
-    }
 }
 
-impl Tab {
+impl PaneState {
     fn copy_selection(&mut self, gpu: &mut Gpu, serial: u32) -> Result<()> {
         self.update_snapshot()?;
         if let Some(range) = self.selection.range()
@@ -516,6 +445,45 @@ impl Session {
         self.active_mut().sources.watch_blink(enabled)
     }
 
+    fn rebuild(&mut self, gpu: &mut Gpu, banner: Option<&str>, focused: bool) -> Result<()> {
+        let tab = self.tabs.active().unwrap();
+        let active = tab.focused();
+        active.prepare_search_view(&mut self.view)?;
+        self.view.begin_frame(
+            tab.layout.dividers.iter().map(|d| d.rect),
+            active.snapshot.as_ref().unwrap().background,
+        );
+        for &(id, rect) in &tab.layout.panes {
+            let pane = tab.get(id);
+            let focus = PaneFocus {
+                id,
+                dirty: pane.frame_dirty,
+                active: id == active.id,
+                window_focused: focused,
+            };
+            self.view.build_pane(
+                rect,
+                pane.snapshot.as_ref().expect("visible pane snapshot"),
+                pane.selection.range(),
+                pane.hover.ranges(),
+                if focus.active { banner } else { None },
+                focus,
+            );
+        }
+        self.view.end_frame();
+        self.view.draw_tabs(
+            self.tabs
+                .as_slice()
+                .iter()
+                .map(|t| t.focused().label(&self.shell)),
+            self.tabs.active_index().unwrap(),
+            active.snapshot.as_ref().unwrap().background,
+        );
+        gpu.upload_atlas(&self.view.atlas());
+        self.view.atlas_uploaded();
+        Ok(())
+    }
+
     fn draw(
         &mut self,
         gpu: &mut Gpu,
@@ -524,49 +492,39 @@ impl Session {
         focused: bool,
     ) -> Result<bool> {
         self.frame_retry = None;
-        let tab = self.tabs.active_mut().unwrap();
-        let cursor_hidden = tab.sources.cursor_hidden();
-        if !tab.frame_dirty && self.cursor_hidden == cursor_hidden {
+        let tab = self.tabs.active().unwrap();
+        let cursor_hidden = tab.focused().sources.cursor_hidden();
+        let dirty = tab
+            .layout
+            .panes
+            .iter()
+            .any(|&(id, _)| tab.get(id).frame_dirty);
+        if !dirty && self.cursor_hidden == cursor_hidden {
             return Ok(false);
         }
-        if tab.frame_dirty {
-            tab.prepare_search_view(&mut self.view)?;
-            let snapshot = tab.snapshot.as_ref().expect("initial snapshot");
-            self.view.build(
-                snapshot,
-                tab.selection.range(),
-                tab.hover.ranges(),
-                banner,
-                focused,
-            );
-            let background = snapshot.background;
-            self.view.draw_tabs(
-                self.tabs.as_slice().iter().map(|t| t.label(&self.shell)),
-                self.tabs.active_index().unwrap(),
-                background,
-            );
-            gpu.upload_atlas(&self.view.atlas());
-            self.view.atlas_uploaded();
+        if dirty {
+            self.rebuild(gpu, banner, focused)?;
         }
         let tab = self.tabs.active_mut().unwrap();
-        let snapshot = tab.snapshot.as_ref().expect("initial snapshot");
+        let active = tab.focused();
         let final_frame = options
             .frames
             .is_some_and(|count| count == gpu.present_count() + 1);
-        let frame = gpu.draw(
-            &self.view.draw_list(cursor_hidden),
-            clear_color(snapshot.background),
-            final_frame && options.screenshot.is_some(),
-        );
-        if tab.frame_dirty
-            && let Some(rect) = self.view.ime_rectangle(snapshot.cursor)
+        let capture = final_frame && options.screenshot.is_some();
+        let frame = gpu.draw(&self.view.frame(cursor_hidden), capture);
+        if dirty
+            && let Some(rect) = self
+                .view
+                .ime_rectangle(active.snapshot.as_ref().unwrap().cursor, active.rect)
         {
             gpu.set_cursor_rectangle(rect);
         }
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
                 self.view.frame_presented();
-                tab.frame_dirty = false;
+                for pane in &mut tab.panes {
+                    pane.frame_dirty = false;
+                }
                 self.cursor_hidden = cursor_hidden;
                 tracing::debug!(count = gpu.present_count(), "submitted terminal frame");
                 if suboptimal {

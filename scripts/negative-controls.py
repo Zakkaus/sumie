@@ -159,6 +159,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("closing an earlier tab loses the active pane", "test", "crates/sumie-core/src/tabs.rs",
           replace_once("self.active -= 1;", "self.active = 0;"),
           "test tabs::tests::close_preserves_active_identity_or_selects_a_neighbor ... FAILED")
+    probe("three pixels lose their split divider", "test", "crates/sumie-core/src/splits.rs",
+          replace_once("len >= 3 && !rect.is_empty()", "len >= 4 && !rect.is_empty()"),
+          "test splits::tests::tiny_windows_partition_every_pixel ... FAILED")
     probe("contrast above the supported range", "test", "crates/sumie-config/src/lib.rs",
           replace_once("(1.0..=21.0).contains(&ratio)", "(1.0..=22.0).contains(&ratio)"),
           "test tests::load_configuration ... FAILED")
@@ -213,9 +216,12 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("Some(event.pixel.map(f32::to_bits))));\n                Dispatch::Ignore",
                            "Some(event.pixel.map(f32::to_bits))));\n                Dispatch::OpenLink"),
               "test tests::ctrl_click_a_link_bypasses_mouse_tracking ... FAILED")
-        probe("VT image dropped from the frame", "test", "src/view.rs",
-              replace_once("self.images.clone_from(&snapshot.images);",
-                           "self.images = Default::default();"),
+        probe("pane ink crosses the divider", "test", "crates/sumie-render/src/renderer.rs",
+              replace_once("let scissor = pane.rect;", "let scissor = full;"),
+              "test grid_tests::splits::gpu_split_pixels ... FAILED")
+        probe("VT image dropped from the frame", "test", "src/view/paint.rs",
+              replace_once("self.pane.images = (!snapshot.images.is_empty()).then(|| Arc::clone(&snapshot.images));",
+                           "self.pane.images = None;"),
               "test grid_tests::grid_on_selected_backend ... FAILED")
         probe("two tabs lose their bar", "test", "crates/sumie-ui/src/tabs.rs",
               replace_once("if count < 2 {", "if count < 3 {"),
