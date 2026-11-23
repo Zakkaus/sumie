@@ -34,7 +34,7 @@ impl Options {
                     options.screenshot =
                         Some(args.next().ok_or("--screenshot requires a path")?.into());
                 }
-                _ => return Err("usage: sumie [--exit-after-frames N [--screenshot PATH]]".into()),
+                _ => return Err("usage: sumie [--exit-after-frames N [--screenshot PATH]] | sumie config {schema | show --defaults}".into()),
             }
         }
         if options.screenshot.is_some() && options.frames.is_none() {

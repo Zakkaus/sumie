@@ -24,27 +24,13 @@ mod view;
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
 
-#[cfg(target_os = "linux")]
 type Error = Box<dyn std::error::Error>;
-#[cfg(target_os = "linux")]
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[cfg(target_os = "linux")]
 fn main() -> std::process::ExitCode {
     use std::process::ExitCode;
-    use tracing_subscriber::filter::LevelFilter;
 
-    let level = std::env::var("RUST_LOG")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(LevelFilter::INFO);
-
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_max_level(level)
-        .init();
-    let result = capture::Options::parse(std::env::args_os().skip(1)).and_then(app::run);
-    match result {
+    match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("sumie: {error}");
@@ -53,5 +39,49 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-fn main() {}
+fn run() -> Result<()> {
+    use std::io::Write as _;
+
+    let mut args = std::env::args_os().skip(1).peekable();
+    if args.next_if(|arg| arg == "config").is_some() {
+        let mut stdout = std::io::stdout().lock();
+        return match args.next().as_deref().and_then(std::ffi::OsStr::to_str) {
+            Some("schema") if args.next().is_none() => {
+                Ok(writeln!(stdout, "{}", sumie_config::schema_json()?)?)
+            }
+            Some("show")
+                if args.next().is_some_and(|arg| arg == "--defaults") && args.next().is_none() =>
+            {
+                Ok(write!(stdout, "{}", sumie_config::defaults_toml())?)
+            }
+            _ => Err("usage: sumie config {schema | show --defaults}".into()),
+        };
+    }
+
+    #[cfg(target_os = "linux")]
+    return run_app(args);
+    #[cfg(not(target_os = "linux"))]
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn run_app(args: impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
+    use tracing_subscriber::filter::LevelFilter;
+
+    let capture = capture::Options::parse(args)?;
+    let level = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(LevelFilter::INFO);
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_max_level(level)
+        .init();
+
+    // TODO(P1): Hot reload must keep the last valid config and display errors in the window.
+    let font = sumie_config::load_user_font().unwrap_or_else(|error| {
+        tracing::warn!(%error, "invalid configuration; using defaults");
+        sumie_config::Font::default()
+    });
+    app::run(capture, view::FontSettings::from_config(font)?)
+}

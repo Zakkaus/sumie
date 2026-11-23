@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashSet,
     mem::{Discriminant, discriminant},
 };
@@ -14,6 +15,7 @@ use crate::Result;
 
 pub(crate) struct View {
     font: FontSystem,
+    font_settings: FontSettings,
     font_errors: FontErrors,
     logical: [u32; 2],
     scale: u32,
@@ -54,12 +56,18 @@ impl FontErrors {
 }
 
 impl View {
-    pub(crate) fn new(scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<Self> {
-        let font = font_at_scale(scale)?;
+    pub(crate) fn new(
+        scale: u32,
+        logical: [u32; 2],
+        device: [u32; 2],
+        font_settings: FontSettings,
+    ) -> Result<Self> {
+        let font = font_settings.at_scale(scale)?;
         let cell = [font.metrics().width, font.metrics().height];
         let grid = grid_size(device, cell)?;
         Ok(Self {
             font,
+            font_settings,
             font_errors: FontErrors::default(),
             scale,
             logical,
@@ -78,7 +86,7 @@ impl View {
 
     pub(crate) fn resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<()> {
         if scale != self.scale {
-            self.font = font_at_scale(scale)?;
+            self.font = self.font_settings.at_scale(scale)?;
             self.scale = scale;
             self.cell = [self.font.metrics().width, self.font.metrics().height];
         }
@@ -368,36 +376,57 @@ fn grid_size(device: [u32; 2], cell: [u32; 2]) -> Result<[u32; 2]> {
     Ok([(width / cell[0]).max(1), (height / cell[1]).max(1)])
 }
 
-fn font_at_scale(scale: u32) -> Result<FontSystem> {
-    let scale_units = u16::try_from(scale)?;
-    // P0 comparison overrides until the TOML config lands in P1.
-    let family = std::env::var("SUMIE_FONT").unwrap_or_else(|_| "JetBrains Mono".into());
-    let px = std::env::var("SUMIE_FONT_PX").map_or(Ok(20.0), |px| px.parse::<f32>())?;
-    let hinting = match std::env::var("SUMIE_FONT_HINTING").as_deref() {
-        Ok("off") => Hinting::Off,
-        Err(std::env::VarError::NotPresent) | Ok("light") => Hinting::Light,
-        Ok("normal") => Hinting::Normal,
-        _ => return Err("SUMIE_FONT_HINTING must be off, light, or normal".into()),
-    };
-    let weight = match std::env::var("SUMIE_FONT_WEIGHT") {
-        Err(std::env::VarError::NotPresent) => None,
-        value => Some(value?.parse().map_err(|_| FontError::InvalidWeight)?),
-    };
-    let font = FontSystem::new(
-        &family,
-        px,
-        f32::from(scale_units) / 120.0,
-        FontOptions { hinting, weight },
-    )?;
-    let metrics = font.metrics();
-    tracing::info!(
-        family = font.family(font.primary_face()),
-        scale_units,
-        cell_width = metrics.width,
-        cell_height = metrics.height,
-        "terminal font"
-    );
-    Ok(font)
+pub(crate) struct FontSettings {
+    family: Cow<'static, str>,
+    px: f32,
+    options: FontOptions,
+}
+
+impl FontSettings {
+    pub(crate) fn from_config(config: sumie_config::Font) -> Result<Self> {
+        let px = std::env::var("SUMIE_FONT_PX")
+            .map_or_else(|_| Ok(config.logical_px()), |px| px.parse::<f32>())?;
+        let hinting = match std::env::var("SUMIE_FONT_HINTING").as_deref() {
+            Err(std::env::VarError::NotPresent) => match config.hinting() {
+                sumie_config::Hinting::Off => Hinting::Off,
+                sumie_config::Hinting::Light => Hinting::Light,
+                sumie_config::Hinting::Normal => Hinting::Normal,
+            },
+            Ok("off") => Hinting::Off,
+            Ok("light") => Hinting::Light,
+            Ok("normal") => Hinting::Normal,
+            _ => return Err("SUMIE_FONT_HINTING must be off, light, or normal".into()),
+        };
+        let weight = match std::env::var("SUMIE_FONT_WEIGHT") {
+            Err(std::env::VarError::NotPresent) => config.weight(),
+            value => Some(value?.parse().map_err(|_| FontError::InvalidWeight)?),
+        };
+        let family = std::env::var("SUMIE_FONT").map_or_else(|_| config.into_family(), Cow::Owned);
+        Ok(Self {
+            family,
+            px,
+            options: FontOptions { hinting, weight },
+        })
+    }
+
+    fn at_scale(&self, scale: u32) -> Result<FontSystem> {
+        let scale_units = u16::try_from(scale)?;
+        let font = FontSystem::new(
+            &self.family,
+            self.px,
+            f32::from(scale_units) / 120.0,
+            self.options,
+        )?;
+        let metrics = font.metrics();
+        tracing::info!(
+            family = font.family(font.primary_face()),
+            scale_units,
+            cell_width = metrics.width,
+            cell_height = metrics.height,
+            "terminal font"
+        );
+        Ok(font)
+    }
 }
 
 fn rgba([r, g, b]: Rgb) -> Rgba {

@@ -11,14 +11,14 @@ use crate::{
     input,
     pane::LocalPane,
     sources::{self, Sources},
-    view::{View, clear_color},
+    view::{FontSettings, View, clear_color},
 };
 
 const FRAME_RETRY_DELAY: Duration = Duration::from_millis(50);
 
-pub(crate) fn run(capture: capture::Options) -> Result<()> {
+pub(crate) fn run(capture: capture::Options, font: FontSettings) -> Result<()> {
     let gpu = Gpu::new(capture.screenshot.is_some())?;
-    let mut app = App::new(gpu, capture);
+    let mut app = App::new(gpu, capture, font);
     let result = app.drive();
     let close = app.close();
     let reap = app
@@ -31,6 +31,7 @@ pub(crate) fn run(capture: capture::Options) -> Result<()> {
 struct App {
     gpu: Option<Gpu>,
     capture: capture::Options,
+    font: Option<FontSettings>,
     session: Option<Session>,
     events: Vec<Event>,
 }
@@ -48,10 +49,11 @@ struct Session {
 }
 
 impl App {
-    fn new(gpu: Gpu, capture: capture::Options) -> Self {
+    fn new(gpu: Gpu, capture: capture::Options, font: FontSettings) -> Self {
         Self {
             gpu: Some(gpu),
             capture,
+            font: Some(font),
             session: None,
             events: Vec::new(),
         }
@@ -107,7 +109,12 @@ impl App {
                 if let Some(session) = &mut self.session {
                     session.resize(scale, logical, device)?;
                 } else {
-                    self.session = Some(Session::new(scale, logical, device, handle.clone())?);
+                    let font = self
+                        .font
+                        .take()
+                        .expect("font settings before the first resize");
+                    self.session =
+                        Some(Session::new(scale, logical, device, handle.clone(), font)?);
                 }
                 self.gpu.as_mut().unwrap().resize(device);
             }
@@ -131,8 +138,14 @@ impl App {
 }
 
 impl Session {
-    fn new(scale: u32, logical: [u32; 2], device: [u32; 2], handle: SourceHandle) -> Result<Self> {
-        let view = View::new(scale, logical, device)?;
+    fn new(
+        scale: u32,
+        logical: [u32; 2],
+        device: [u32; 2],
+        handle: SourceHandle,
+        font: FontSettings,
+    ) -> Result<Self> {
+        let view = View::new(scale, logical, device, font)?;
         let pane = LocalPane::login(view.size(), view.cell)?;
         let sources = Sources::new(handle, &pane.pty)?;
         Ok(Self {

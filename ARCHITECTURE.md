@@ -28,7 +28,9 @@ Two edges are deliberately closed:
 
 ## Single-pane Linux application
 
-`main` parses the capture options and selects the platform. `app` drives Wayland and the PTY on one calloop thread. `pane` owns the local terminal, key encoder and PTY. The consumer calls `Pane::command` and draws from its own `Pane::snapshot` result; neither method waits for PTY I/O. `view` composes the owned snapshot and IME preedit into device-pixel draw lists and hands font atlas data to the renderer. `capture` handles opt-in frame readback and PNG output; normal presentation does not read back pixels.
+`main` handles the schema and defaults commands without opening a window. For a Linux session it loads TOML once before connecting to Wayland, logs invalid settings, and maps the resulting font settings and environment overrides into `FontSettings`.
+
+`app` drives Wayland and the PTY on one calloop thread. `pane` owns the local terminal, key encoder and PTY. The consumer calls `Pane::command` and draws from its own `Pane::snapshot` result; neither method waits for PTY I/O. `view` composes the owned snapshot and IME preedit into device-pixel draw lists and hands font atlas data to the renderer. `capture` handles opt-in frame readback and PNG output; normal presentation does not read back pixels.
 
 PTY readiness clears the wake before draining output into VT. Key commands carry unencoded input; the local pane encodes them with the terminal's current modes. IME preedit only changes the overlay; only commit bytes cross the pane boundary. Input writes remain ordered in the PTY FIFO. Wayland configures the first frame slot. After that, output, geometry or preedit can use a free slot, but a frame callback alone never dirties the view. Close drops GPU state before the Wayland window and drives child reaping from pidfd readiness and the PTY close deadline.
 
