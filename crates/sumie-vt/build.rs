@@ -53,12 +53,14 @@ fn main() {
             .arg(std::path::absolute(dir).expect("resolve GHOSTTY_ZIG_SYSTEM_DIR"));
     }
     run(&mut build, "build libghostty-vt with Zig");
+    // Darwin passes -lNAME even for a Rust static link. Give the archive a
+    // distinct name so ld cannot prefer Ghostty's public-ABI-only dylib.
+    let lib = prefix.join("lib");
+    fs::rename(lib.join("libghostty-vt.a"), lib.join("libsumie-vt.a"))
+        .expect("name the static archive for the Rust linker");
     println!("cargo::warning=Built libghostty-vt vt-1.0.1 ({GHOSTTY_COMMIT})");
-    println!(
-        "cargo::rustc-link-search=native={}",
-        prefix.join("lib").display()
-    );
-    println!("cargo::rustc-link-lib=static=ghostty-vt");
+    println!("cargo::rustc-link-search=native={}", lib.display());
+    println!("cargo::rustc-link-lib=static=sumie-vt");
 }
 
 fn resolve_cursor_default_at_snapshot(source: &Path) {
