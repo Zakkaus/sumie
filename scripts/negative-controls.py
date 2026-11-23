@@ -194,6 +194,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("alternate scroll on primary screen", "test", "crates/sumie-core/src/mouse.rs",
           replace_once("modes.alternate && modes.alternate_scroll", "modes.alternate_scroll"),
           "test mouse::tests::routes_mouse_by_mode_and_gesture ... FAILED")
+    probe("mouse tracking bypass ignores Shift", "test", "crates/sumie-core/src/mouse.rs",
+          replace_once("modes.tracking && !event.modifiers.shift", "modes.tracking"),
+          "test mouse::tests::routes_mouse_by_mode_and_gesture ... FAILED")
     probe("unchanged settings request a contrast redraw", "test", "crates/sumie-config/src/changes.rs",
           replace_once("!= next.minimum_contrast().to_bits()",
                        "== next.minimum_contrast().to_bits()"),

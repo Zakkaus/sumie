@@ -48,22 +48,14 @@ pub enum WheelRoute {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub enum Dispatch {
     Ignore,
     Select(SelectStep),
-    Click(MouseEvent),
     Press(Button),
     Release(Button),
     Motion(Option<Button>),
     Wheel(WheelRoute, i32),
-}
-
-#[derive(Default)]
-enum Left {
-    #[default]
-    Idle,
-    Pending(MouseEvent),
-    Selecting,
 }
 
 #[derive(Default)]
@@ -93,7 +85,7 @@ impl Wheel {
 
 #[derive(Default)]
 pub struct MouseState {
-    left: Left,
+    selecting: bool,
     // Only buttons whose press was routed to the application belong in motion reports.
     held: [Option<Button>; 3],
     wheel: Wheel,
@@ -101,7 +93,7 @@ pub struct MouseState {
 
 impl MouseState {
     pub fn cancel_selection(&mut self) {
-        self.left = Left::Idle;
+        self.selecting = false;
     }
 
     /// Reset local gestures without forgetting buttons already reported to the terminal.
@@ -139,12 +131,12 @@ impl MouseState {
                     Dispatch::Wheel(route, steps)
                 }
             }
-            MousePhase::Press(button) => self.press(button, event, modes.tracking),
-            MousePhase::Release(Button::Left) if !matches!(self.left, Left::Idle) => {
-                match std::mem::take(&mut self.left) {
-                    Left::Pending(press) if press.cell == event.cell => Dispatch::Click(press),
-                    _ => Dispatch::Select(SelectStep::Finish),
-                }
+            MousePhase::Press(button) => {
+                self.press(button, modes.tracking && !event.modifiers.shift)
+            }
+            MousePhase::Release(Button::Left) if self.selecting => {
+                self.selecting = false;
+                Dispatch::Select(SelectStep::Finish)
             }
             MousePhase::Release(button) => {
                 if let Some(i) = self.held.iter().position(|&b| b == Some(button)) {
@@ -155,9 +147,16 @@ impl MouseState {
                     Dispatch::Ignore
                 }
             }
-            MousePhase::Motion => self.motion(event.cell, modes.tracking),
+            MousePhase::Motion if self.selecting => Dispatch::Select(SelectStep::Drag),
+            // Shift only chooses the route before a drag starts.
+            MousePhase::Motion
+                if modes.tracking && (self.any_button() || !event.modifiers.shift) =>
+            {
+                Dispatch::Motion(self.held[0])
+            }
+            MousePhase::Motion => Dispatch::Ignore,
             MousePhase::Cancel => {
-                let selecting = !matches!(self.left, Left::Idle);
+                let selecting = self.selecting;
                 *self = Self::default();
                 if selecting {
                     Dispatch::Select(SelectStep::Clear)
@@ -168,32 +167,18 @@ impl MouseState {
         }
     }
 
-    fn press(&mut self, button: Button, event: MouseEvent, tracking: bool) -> Dispatch {
-        let pass = event.modifiers.alt && !event.modifiers.control;
-        if button == Button::Left && !(tracking && pass) {
-            self.left = if tracking && !(event.modifiers.alt && event.modifiers.control) {
-                Left::Pending(event)
+    fn press(&mut self, button: Button, report: bool) -> Dispatch {
+        if report {
+            if self.held.contains(&Some(button)) {
+                Dispatch::Ignore
             } else {
-                Left::Selecting
-            };
-            return Dispatch::Select(SelectStep::Begin);
-        }
-        if tracking && !self.held.contains(&Some(button)) {
-            Dispatch::Press(button)
+                Dispatch::Press(button)
+            }
+        } else if button == Button::Left {
+            self.selecting = true;
+            Dispatch::Select(SelectStep::Begin)
         } else {
             Dispatch::Ignore
-        }
-    }
-
-    fn motion(&mut self, cell: CellPosition, tracking: bool) -> Dispatch {
-        match self.left {
-            Left::Pending(press) if press.cell == cell => Dispatch::Ignore,
-            Left::Pending(_) | Left::Selecting => {
-                self.left = Left::Selecting;
-                Dispatch::Select(SelectStep::Drag)
-            }
-            Left::Idle if tracking => Dispatch::Motion(self.held[0]),
-            Left::Idle => Dispatch::Ignore,
         }
     }
 }
@@ -220,52 +205,50 @@ mod tests {
                 alternate,
                 alternate_scroll,
             };
-            for (alt, control) in [(false, false), (true, false), (true, true)] {
+            for shift in [false, true] {
                 let mut state = MouseState::default();
-                let mut event = MouseEvent {
-                    phase: MousePhase::Wheel(120.0),
-                    cell: CellPosition { row: 0, column: 0 },
-                    pixel: [0.0; 2],
-                    modifiers: KeyModifiers {
-                        control,
-                        alt,
-                        ..KeyModifiers::default()
-                    },
+                let button = Button::Left;
+                let (hover, press, drag, release) = if tracking && !shift {
+                    (
+                        Dispatch::Motion(None),
+                        Dispatch::Press(button),
+                        Dispatch::Motion(Some(button)),
+                        Dispatch::Release(button),
+                    )
+                } else {
+                    (
+                        Dispatch::Ignore,
+                        Dispatch::Select(SelectStep::Begin),
+                        Dispatch::Select(SelectStep::Drag),
+                        Dispatch::Select(SelectStep::Finish),
+                    )
                 };
-                assert!(
-                    matches!(state.dispatch(event, modes), Dispatch::Wheel(r, _) if r == wheel)
-                );
-                let mut fire = |phase, col| {
-                    event.phase = phase;
-                    event.cell.column = col;
+                for (phase, column, expected) in [
+                    (
+                        MousePhase::Wheel(120.0),
+                        0,
+                        Dispatch::Wheel(wheel, if tracking { 1 } else { 3 }),
+                    ),
+                    (MousePhase::Motion, 0, hover),
+                    (MousePhase::Press(button), 0, press),
+                    (MousePhase::Motion, 1, drag),
+                    (MousePhase::Release(button), 1, release),
+                ] {
+                    let event = MouseEvent {
+                        phase,
+                        cell: CellPosition { row: 0, column },
+                        pixel: [0.0; 2],
+                        modifiers: KeyModifiers {
+                            shift,
+                            ..KeyModifiers::default()
+                        },
+                    };
                     let dispatch = state.dispatch(event, modes);
+                    assert_eq!(dispatch, expected, "tracking={tracking}, shift={shift}");
                     if let Dispatch::Press(button) = dispatch {
                         state.press_reported(button);
                     }
-                    dispatch
-                };
-                let pass = tracking && alt && !control;
-                let press = MousePhase::Press(Button::Left);
-                let release = MousePhase::Release(Button::Left);
-                assert_eq!(
-                    matches!(fire(press, 0), Dispatch::Press(Button::Left)),
-                    pass
-                );
-                assert_eq!(
-                    matches!(fire(release, 0), Dispatch::Click(_)),
-                    tracking && !alt
-                );
-                let _ = fire(press, 0);
-                let motion = fire(MousePhase::Motion, 1);
-                assert!(matches!(
-                    (pass, motion),
-                    (true, Dispatch::Motion(Some(Button::Left)))
-                        | (false, Dispatch::Select(SelectStep::Drag))
-                ));
-                assert_eq!(
-                    matches!(fire(release, 1), Dispatch::Select(SelectStep::Finish)),
-                    !pass
-                );
+                }
             }
         }
     }

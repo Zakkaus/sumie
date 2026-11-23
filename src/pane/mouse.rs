@@ -1,8 +1,6 @@
 use sumie_core::{
     PaneEffect,
-    mouse::{
-        Button, Dispatch, MouseEvent, MouseModes, MousePhase, MouseState, SelectStep, WheelRoute,
-    },
+    mouse::{Button, Dispatch, MouseEvent, MouseModes, MousePhase, MouseState, WheelRoute},
 };
 use sumie_vt::{
     KeyAction, KeyEvent, MouseAction, MouseButton, MouseEncoder, MouseReport, Terminal,
@@ -17,7 +15,6 @@ pub(super) struct Mouse {
     modes: MouseModes,
     grid: [u32; 2],
     cell: [u32; 2],
-    click: Vec<u8>,
 }
 
 fn modes(terminal: &Terminal) -> Result<MouseModes> {
@@ -39,7 +36,6 @@ impl Mouse {
             modes: modes(terminal)?,
             grid: grid.map(u32::from),
             cell,
-            click: Vec::new(),
         })
     }
 
@@ -61,12 +57,10 @@ impl Mouse {
         action: MouseAction,
         button: Option<MouseButton>,
     ) -> MouseReport {
-        let mut modifiers = event.modifiers;
-        modifiers.alt = false;
         MouseReport {
             action,
             button,
-            modifiers: modifier_bits(modifiers),
+            modifiers: modifier_bits(event.modifiers),
             position: event.pixel,
             cell: self.cell,
             grid: self.grid,
@@ -110,18 +104,6 @@ impl LocalPane {
         let (action, button) = match self.mouse.state.dispatch(event, modes) {
             Dispatch::Ignore => return Ok(PaneEffect::None),
             Dispatch::Select(step) => return Ok(PaneEffect::Select(step)),
-            Dispatch::Click(press) => {
-                // A full PTY queue must not admit just the press of a deferred click.
-                self.mouse.click.clear();
-                for action in [MouseAction::Press, MouseAction::Release] {
-                    let report = self.mouse.report(press, action, Some(MouseButton::Left));
-                    self.mouse
-                        .click
-                        .extend_from_slice(self.mouse.encoder.encode(report)?);
-                }
-                self.pty.enqueue_input(&self.mouse.click)?;
-                return Ok(PaneEffect::Select(SelectStep::Clear));
-            }
             Dispatch::Press(b) => (MouseAction::Press, Some(b)),
             Dispatch::Release(b) => (MouseAction::Release, Some(b)),
             Dispatch::Motion(b) => (MouseAction::Motion, b),
@@ -138,7 +120,12 @@ impl LocalPane {
         Ok(PaneEffect::None)
     }
 
-    fn wheel(&mut self, event: MouseEvent, route: WheelRoute, steps: i32) -> Result<PaneEffect> {
+    fn wheel(
+        &mut self,
+        mut event: MouseEvent,
+        route: WheelRoute,
+        steps: i32,
+    ) -> Result<PaneEffect> {
         let bytes = match route {
             WheelRoute::History => return self.scroll_history(steps),
             WheelRoute::Arrows => {
@@ -161,6 +148,7 @@ impl LocalPane {
                 } else {
                     MouseButton::WheelDown
                 };
+                event.modifiers.alt = false;
                 let report = self.mouse.report(event, MouseAction::Press, Some(button));
                 self.mouse.encoder.encode(report)?
             }

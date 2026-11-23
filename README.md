@@ -14,7 +14,7 @@ For bash, zsh and fish login shells, sumie installs scripts under `$XDG_DATA_HOM
 
 On Wayland, terminal programs can use OSC 52 to write up to 1 MiB of decoded data to the standard clipboard while the window has keyboard focus. Sumie denies OSC 52 reads and does not support primary selection. OSC 0 and OSC 2 update the window title; sumie does not support CSI 22/23 title push and pop.
 
-The wheel scrolls three history lines per notch. If the program tracks the mouse, it receives wheel reports instead. In alternate-screen programs such as `less`, the wheel sends three arrow keys per notch when mode 1007 is enabled (the default). With mouse tracking on, click to send a left click, drag to select terminal text, or hold Alt while dragging to send the drag to the program. Scrolling clears the selection; typing returns to the bottom.
+The wheel scrolls three history lines per notch. If the program tracks the mouse, it receives wheel reports instead. In alternate-screen programs such as `less`, the wheel sends three arrow keys per notch when mode 1007 is enabled (the default). With mouse tracking on, mouse clicks and drags go to the program. Hold Shift while dragging with the left button to select terminal text instead. Scrolling clears the selection; typing returns to the bottom.
 
 ## Build and checks
 
