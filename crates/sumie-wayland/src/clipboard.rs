@@ -37,11 +37,11 @@ pub(crate) struct Clipboard {
 
 struct ClipboardSource {
     source: CopyPasteSource,
-    text: Rc<String>,
+    bytes: Rc<Vec<u8>>,
 }
 
 impl State {
-    pub(crate) fn write_clipboard(&mut self, serial: u32, text: String) {
+    pub(crate) fn write_clipboard(&mut self, serial: u32, bytes: Option<Vec<u8>>) {
         let Some(manager) = &self.data_device_manager else {
             return;
         };
@@ -52,11 +52,16 @@ impl State {
         else {
             return;
         };
+        let Some(bytes) = bytes else {
+            device.unset_selection(serial);
+            self.clipboard.source = None;
+            return;
+        };
         let source = manager.create_copy_paste_source(&self.qh, TEXT_TYPES);
         source.set_selection(device, serial);
         self.clipboard.source = Some(ClipboardSource {
             source,
-            text: Rc::new(text),
+            bytes: Rc::new(bytes),
         });
     }
 
@@ -67,9 +72,9 @@ impl State {
         }
     }
 
-    fn queue_clipboard_write(&mut self, fd: WritePipe, text: Rc<String>) -> io::Result<()> {
+    fn queue_clipboard_write(&mut self, fd: WritePipe, bytes: Rc<Vec<u8>>) -> io::Result<()> {
         fcntl_setfl(&fd, fcntl_getfl(&fd)? | OFlags::NONBLOCK)?;
-        // Each requested fd keeps its own offset and the source text, even after replacement.
+        // Each requested fd keeps its own offset and source bytes, even after replacement.
         let mut offset = 0;
         let writes = &mut self.clipboard.writes;
         let slot = writes
@@ -79,12 +84,12 @@ impl State {
         let token = self
             .loop_handle
             .insert_source(fd, move |(), fd, state| {
-                let remaining = &text.as_bytes()[offset..];
+                let remaining = &bytes[offset..];
                 let action = match write(fd, &remaining[..remaining.len().min(CHUNK_BYTES)]) {
                     Ok(0) | Err(Errno::PIPE) => PostAction::Remove,
                     Ok(n) => {
                         offset += n;
-                        if offset == text.len() {
+                        if offset == bytes.len() {
                             PostAction::Remove
                         } else {
                             PostAction::Continue
@@ -224,13 +229,13 @@ impl DataSourceHandler for State {
             return;
         };
         if clipboard.source.inner() != source
-            || clipboard.text.is_empty()
+            || clipboard.bytes.is_empty()
             || !TEXT_TYPES.contains(&mime.as_str())
         {
             return;
         }
-        let text = Rc::clone(&clipboard.text);
-        if let Err(error) = self.queue_clipboard_write(fd, text) {
+        let bytes = Rc::clone(&clipboard.bytes);
+        if let Err(error) = self.queue_clipboard_write(fd, bytes) {
             tracing::warn!(%error, "could not start clipboard write");
         }
     }

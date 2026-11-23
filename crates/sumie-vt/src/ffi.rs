@@ -47,6 +47,55 @@ pub struct Str {
 }
 
 #[repr(C)]
+pub struct ClipboardContent {
+    pub mime: Str,
+    pub data: Str,
+}
+
+#[repr(C)]
+pub struct ClipboardWrite {
+    pub location: c_int,
+    pub contents: *const ClipboardContent,
+    pub contents_len: usize,
+    name: Str,
+    granted: bool,
+    can_remember: bool,
+    ctx: *const c_void,
+    pub reply: unsafe extern "C" fn(*const Self, *const ClipboardWriteReply),
+}
+
+#[repr(C)]
+pub struct ClipboardWriteReply {
+    pub size: usize,
+    pub result: c_int,
+    pub remember: bool,
+}
+
+#[repr(C)]
+pub struct ClipboardRead {
+    location: c_int,
+    mimes: *const Str,
+    mimes_len: usize,
+    list: bool,
+    name: Str,
+    granted: bool,
+    can_remember: bool,
+    ctx: *const c_void,
+    pub reply: unsafe extern "C" fn(*const Self, *const ClipboardReadReply),
+}
+
+#[repr(C)]
+pub struct ClipboardReadReply {
+    pub size: usize,
+    pub result: c_int,
+    pub contents: *const ClipboardContent,
+    pub contents_len: usize,
+    pub available: *const Str,
+    pub available_len: usize,
+    pub remember: bool,
+}
+
+#[repr(C)]
 pub struct TerminalModeConfig {
     pub mode: u16,
     pub value: bool,
@@ -120,8 +169,18 @@ pub const TERMINAL_OPT_COLOR_FOREGROUND: c_int = 12;
 pub const TERMINAL_OPT_COLOR_BACKGROUND: c_int = 13;
 pub const TERMINAL_OPT_COLOR_PALETTE: c_int = 15;
 pub const TERMINAL_OPT_TERMINFO_NAME: c_int = 38;
+pub const TERMINAL_OPT_TITLE_CHANGED: c_int = 6;
+pub const TERMINAL_OPT_CLIPBOARD_WRITE: c_int = 27;
+pub const TERMINAL_OPT_CLIPBOARD_READ: c_int = 39;
+pub const TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES: c_int = 40;
+pub const TERMINAL_DATA_TITLE: c_int = 12;
 pub const TERMINAL_DATA_COLOR_PALETTE: c_int = 21;
 pub const TERMINAL_DATA_MODE: c_int = 37;
+pub const CLIPBOARD_LOCATION_STANDARD: c_int = 0;
+pub const CLIPBOARD_WRITE_SUCCESS: c_int = 0;
+pub const CLIPBOARD_WRITE_DENIED: c_int = 1;
+pub const CLIPBOARD_WRITE_UNSUPPORTED: c_int = 2;
+pub const CLIPBOARD_READ_DENIED: c_int = 1;
 pub const MODE_BRACKETED_PASTE: u16 = 2004;
 pub const STYLE_INVERSE: u16 = 1 << 4;
 pub const STYLE_INVISIBLE: u16 = 1 << 5;

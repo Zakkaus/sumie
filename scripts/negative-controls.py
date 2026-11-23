@@ -157,6 +157,14 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")
+    probe("oversized OSC 52 clipboard write", "test", "crates/sumie-vt/src/effects.rs",
+          replace_once("if len > OUTPUT_LIMIT - self.clipboard_bytes {",
+                       "if len > OUTPUT_LIMIT + 1 - self.clipboard_bytes {"),
+          "test effects::tests::osc52_queues_only_bounded_standard_writes ... FAILED")
+    probe("missing title event", "test", "crates/sumie-vt/src/effects.rs",
+          replace_once(".chain(self.title.take().map(Event::Title))",
+                       ".chain(self.title.take().filter(|_| false).map(Event::Title))"),
+          "test effects::tests::osc2_queues_latest_title ... FAILED")
     probe("selection splits a wide glyph", "test", "crates/sumie-core/src/selection.rs",
           replace_once("end.column += 1;", "end.column += 0;"),
           "test selection::tests::drag_selects_whole_cell_groups ... FAILED")

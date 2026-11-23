@@ -1,14 +1,17 @@
 //! Owns the safe `libghostty-vt` wrapper. Does not draw, call platform code, or
 //! decide which shortcuts to handle.
 
+mod effects;
 mod ffi;
 mod identity;
 mod key;
 mod selection;
 
+pub use effects::Event;
 pub use key::{KeyAction, KeyEncoder, KeyEvent};
 
-use std::ffi::c_int;
+use effects::Effects;
+use std::ffi::{c_int, c_void};
 use std::fmt;
 use std::ptr::{from_mut, null, null_mut};
 
@@ -53,34 +56,6 @@ struct Colors {
 pub fn codepoint_width(ch: char) -> u8 {
     // SAFETY: Any Rust char is a valid Unicode scalar value.
     unsafe { ffi::ghostty_unicode_codepoint_width(u32::from(ch)) }
-}
-
-#[derive(Default)]
-struct Effects {
-    replies: Vec<u8>,
-    version: &'static str,
-}
-
-unsafe extern "C" fn queue_reply(
-    _: ffi::Terminal,
-    data: *mut std::ffi::c_void,
-    bytes: *const u8,
-    len: usize,
-) {
-    if len == 0 {
-        return;
-    }
-    // SAFETY: This callback runs synchronously during the exclusive terminal call. `data`
-    // points to its Effects box, and Ghostty provides `len` initialized bytes for the call.
-    let (queue, bytes) = unsafe {
-        (
-            &mut (*data.cast::<Effects>()).replies,
-            std::slice::from_raw_parts(bytes, len),
-        )
-    };
-    if len <= 1024 * 1024 - queue.len() {
-        queue.extend_from_slice(bytes);
-    }
 }
 
 /// An error reported by libghostty-vt.
@@ -151,10 +126,30 @@ impl Terminal {
                 ffi::TERMINAL_OPT_USERDATA,
                 terminal.effects.cast(),
             ))?;
+            for (option, callback) in [
+                (
+                    ffi::TERMINAL_OPT_WRITE_PTY,
+                    effects::queue_reply as *const c_void,
+                ),
+                (
+                    ffi::TERMINAL_OPT_CLIPBOARD_WRITE,
+                    effects::queue_clipboard as *const c_void,
+                ),
+                (
+                    ffi::TERMINAL_OPT_CLIPBOARD_READ,
+                    effects::deny_clipboard_read as *const c_void,
+                ),
+                (
+                    ffi::TERMINAL_OPT_TITLE_CHANGED,
+                    effects::queue_title as *const c_void,
+                ),
+            ] {
+                check(ffi::ghostty_terminal_set(terminal.raw, option, callback))?;
+            }
             check(ffi::ghostty_terminal_set(
                 terminal.raw,
-                ffi::TERMINAL_OPT_WRITE_PTY,
-                queue_reply as *const std::ffi::c_void,
+                ffi::TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,
+                std::ptr::from_ref(&effects::OUTPUT_LIMIT).cast(),
             ))?;
         }
         Ok(terminal)
@@ -168,12 +163,21 @@ impl Terminal {
 
     /// Consume protocol replies after writes or resizes, on the terminal owner thread.
     pub fn drain_replies(&mut self, consume: impl FnOnce(&[u8])) {
-        // SAFETY: This terminal owns the reply queue, and no callback can run here.
-        let replies = unsafe { &mut (*self.effects).replies };
+        let replies = &mut self.effects().replies;
         if !replies.is_empty() {
             consume(replies);
             replies.clear();
         }
+    }
+
+    /// Consume queued clipboard writes and the latest title on the terminal owner thread.
+    pub fn drain_events(&mut self) -> impl Iterator<Item = Event> + '_ {
+        self.effects().drain_events()
+    }
+
+    fn effects(&mut self) -> &mut Effects {
+        // SAFETY: This terminal uniquely owns the box, and no callback can run here.
+        unsafe { &mut *self.effects }
     }
 
     /// Encode a single paste for atomic admission to the PTY queue.

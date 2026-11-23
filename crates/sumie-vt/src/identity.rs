@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use crate::{Effects, Error, Terminal, check, ffi};
+use crate::{Error, Terminal, check, effects::Effects, ffi};
 
 impl Terminal {
     /// Set the answers to XTVERSION and the XTGETTCAP `TN` query.

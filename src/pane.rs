@@ -36,7 +36,7 @@ const PALETTE: [Rgb; 16] = [
 ];
 
 pub(crate) struct LocalPane {
-    terminal: Terminal,
+    pub(crate) terminal: Terminal,
     encoder: KeyEncoder,
     pub(crate) pty: Pty,
 }

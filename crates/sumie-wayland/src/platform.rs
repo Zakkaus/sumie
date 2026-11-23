@@ -179,7 +179,29 @@ impl Platform {
     /// Publish text from a recent key press or pointer release on the active seat.
     /// Does nothing without a clipboard data device. Transfers run through calloop.
     pub fn write_clipboard(&mut self, serial: u32, text: String) {
-        self.state.write_clipboard(serial, text);
+        self.state.write_clipboard(serial, Some(text.into_bytes()));
+    }
+
+    /// Publish a terminal write using the focused seat's serial, or clear on `None`.
+    /// Without keyboard focus, there is no serial and the request is discarded.
+    pub fn write_terminal_clipboard(&mut self, bytes: Option<Vec<u8>>) {
+        if let Some(serial) = self
+            .state
+            .keyboard
+            .as_ref()
+            .and_then(|key| key.selection_serial)
+        {
+            self.state.write_clipboard(serial, bytes);
+        }
+    }
+
+    /// Stage the latest title for the next committed frame.
+    pub fn queue_title(&mut self, mut title: String) {
+        // Wayland strings cannot contain embedded NULs.
+        if let Some(nul) = title.find('\0') {
+            title.truncate(nul);
+        }
+        self.state.pending_title = Some(title);
     }
 
     #[must_use]
@@ -271,6 +293,7 @@ pub(crate) struct State {
     logical: (u32, u32),
     configured: bool,
     frame_pending: bool,
+    pending_title: Option<String>,
     geometry_dirty: bool,
 }
 
@@ -330,6 +353,7 @@ impl State {
             logical: (800, 600),
             configured: false,
             frame_pending: false,
+            pending_title: None,
             geometry_dirty: true,
         })
     }
@@ -351,6 +375,9 @@ impl State {
     }
 
     fn arm_frame(&mut self) {
+        if let Some(title) = self.pending_title.take() {
+            self.window.window.set_title(title);
+        }
         if self.geometry_dirty {
             self.scale.apply(self.wl_surface(), self.logical);
             self.geometry_dirty = false;

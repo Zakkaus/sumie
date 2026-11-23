@@ -15,7 +15,7 @@ use crate::{Event, ime::TextInput, platform::State};
 pub(crate) struct Keyboard {
     seat: WlSeat,
     proxy: WlKeyboard,
-    focused: bool,
+    pub(crate) selection_serial: Option<u32>,
     modifiers: Modifiers,
     pub(crate) ime: Option<TextInput>,
     pub(crate) data_device: Option<DataDevice>,
@@ -60,7 +60,7 @@ impl State {
                         .map(|manager| TextInput::new(manager, &seat, qh)),
                     seat,
                     proxy,
-                    focused: false,
+                    selection_serial: None,
                     modifiers: Modifiers::default(),
                 });
             }
@@ -100,15 +100,18 @@ impl State {
         pressed: bool,
         repeat: bool,
     ) {
-        if let Some(keyboard) = &self.keyboard
-            && &keyboard.proxy == proxy
-            && keyboard.focused
+        if let Some(keyboard) = self.keyboard_mut(proxy)
+            && keyboard.selection_serial.is_some()
         {
+            if !repeat {
+                keyboard.selection_serial = Some(serial);
+            }
+            let modifiers = keyboard.modifiers;
             self.events.push_back(Event::Key {
                 physical: event.raw_code,
                 keysym: event.keysym.raw(),
                 utf8: event.utf8,
-                modifiers: keyboard.modifiers,
+                modifiers,
                 pressed,
                 repeat,
                 serial,
@@ -164,13 +167,13 @@ impl KeyboardHandler for State {
         _: &QueueHandle<Self>,
         proxy: &WlKeyboard,
         surface: &WlSurface,
-        _: u32,
+        serial: u32,
         _: &[u32],
         _: &[Keysym],
     ) {
         let focused = surface == self.wl_surface();
         if let Some(keyboard) = self.keyboard_mut(proxy) {
-            keyboard.focused = focused;
+            keyboard.selection_serial = focused.then_some(serial);
         }
     }
 
@@ -183,7 +186,7 @@ impl KeyboardHandler for State {
         _: u32,
     ) {
         if let Some(keyboard) = self.keyboard_mut(proxy) {
-            keyboard.focused = false;
+            keyboard.selection_serial = None;
             keyboard.modifiers = Modifiers::default();
             self.disable_text_input();
         }

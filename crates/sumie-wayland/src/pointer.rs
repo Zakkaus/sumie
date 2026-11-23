@@ -96,11 +96,15 @@ impl PointerHandler for State {
         else {
             return;
         };
-        self.events.extend(
-            events
-                .iter()
-                .filter(|event| &event.surface == surface)
-                .filter_map(|event| pointer.track(event)),
-        );
+        for event in events.iter().filter(|event| &event.surface == surface) {
+            if let PointerEventKind::Press { serial, .. } | PointerEventKind::Release { serial, .. } =
+                event.kind
+                && let Some(keyboard) = &mut self.keyboard
+                && keyboard.selection_serial.is_some()
+            {
+                keyboard.selection_serial = Some(serial);
+            }
+            self.events.extend(pointer.track(event));
+        }
     }
 }

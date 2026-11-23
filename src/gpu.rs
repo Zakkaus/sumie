@@ -78,6 +78,14 @@ impl Gpu {
         self.window.write_clipboard(serial, text);
     }
 
+    pub(crate) fn write_terminal_clipboard(&mut self, bytes: Option<Vec<u8>>) {
+        self.window.write_terminal_clipboard(bytes);
+    }
+
+    pub(crate) fn queue_title(&mut self, title: String) {
+        self.window.queue_title(title);
+    }
+
     pub(crate) fn dispatch(
         &mut self,
         received: &mut Vec<Event>,

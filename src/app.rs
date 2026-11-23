@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use sumie_core::{Pane, PaneCommand, Selection, Shortcuts};
 use sumie_render::{SurfaceError, SurfaceFrame};
+use sumie_vt::Event as TerminalEvent;
 use sumie_vt::Snapshot;
 use sumie_wayland::{Event, PointerPhase, SourceHandle};
 
@@ -72,7 +73,7 @@ impl App {
                 .unwrap()
                 .dispatch(&mut self.events, timeout)?;
             if let Some(session) = &mut self.session
-                && session.service_pty()?
+                && session.service_pty(self.gpu.as_mut().unwrap())?
             {
                 return Ok(());
             }
@@ -225,7 +226,7 @@ impl Session {
         matches!(phase, PointerPhase::Release) && self.selection.release().is_some()
     }
 
-    fn service_pty(&mut self) -> Result<bool> {
+    fn service_pty(&mut self, gpu: &mut Gpu) -> Result<bool> {
         let sources = self.sources.as_mut().unwrap();
         let ready = sources.take_ready();
         if ready.exit() {
@@ -237,6 +238,15 @@ impl Session {
         if ready.output() {
             let (dirty, eof) = self.pane.drain_output()?;
             self.snapshot_dirty |= dirty;
+            for event in self.pane.terminal.drain_events() {
+                match event {
+                    TerminalEvent::Clipboard(bytes) => gpu.write_terminal_clipboard(bytes),
+                    TerminalEvent::Title(title) => {
+                        gpu.queue_title(title);
+                        self.frame_dirty = true;
+                    }
+                }
+            }
             if eof {
                 sources.remove_output();
             }

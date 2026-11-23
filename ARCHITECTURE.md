@@ -40,6 +40,8 @@ On Linux, core matches Ctrl+Shift+V by evdev position or keysym before key encod
 
 The core `selection` module tracks an inclusive viewport range, using the grid's stored widths to include both cells of a wide character. It does not read terminal text. The GUI maps surface coordinates to grid cells and inverts the selected cells in its draw list. On release or a copy shortcut, the pane resolves the range with the VT plain-text formatter; neither command writes to the PTY. The Wayland pointer adapter handles the active seat's left button, and `clipboard` serves the resulting immutable text through nonblocking calloop writes. It does not publish a primary selection.
 
+Terminal clipboard writes reuse this data source on the main thread. The adapter uses the keyboard seat's last focus or input serial and discards the request without keyboard focus. A terminal can write or clear the standard clipboard. The app stages the latest terminal title, and Wayland applies it just before the next frame commit.
+
 The GUI clears the range and its drag anchor on resize or when output changes any row they cover. Before handling pointer input or resolving a copy, it refreshes a dirty snapshot so the highlight and formatter use the same viewport.
 
 If surface acquisition times out, reports occlusion, or needs reconfiguration, the app retains the dirty frame and retries on a deadline. An idle or suspended surface has no retry deadline. Runtime font errors leave affected cells blank if no replacement glyph can be drawn; the view logs each error variant once without logging the input text.
@@ -50,7 +52,9 @@ For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actu
 
 ## Terminal core (`sumie-vt`)
 
-`Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. The PTY reply callback only appends bytes to a bounded buffer on that thread. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. It includes resolved foreground and background colors and the viewport cursor. No handles or borrowed native data escape the crate.
+`Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. It includes resolved foreground and background colors and the viewport cursor. No handles or borrowed native data escape the crate.
+
+The VT `effects` module owns the synchronous callback queues. PTY replies and pending decoded clipboard writes each have a 1 MiB limit. The clipboard read callback replies with denial; the write callback replies after admitting a supported write. The title callback copies the latest title. None of these callbacks call platform code or log payloads. PTY output readiness wakes the owner thread before feeding VT, so that same dispatch can drain effects without a second wakeup. VT 1.0.1 parses CSI 22/23 but ignores those actions in its C terminal handler.
 
 Before PTY spawn, `pane` sets the VT identity from the child environment. The VT `identity` module configures Ghostty's query replies on the terminal owner thread; it does not read the environment or install terminfo. It passes the name to Ghostty for XTGETTCAP `TN` and serves the static application version through the XTVERSION callback. XTGETTCAP `RGB` comes from Ghostty's fixed query table, not the bundled terminfo source.
 
