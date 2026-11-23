@@ -165,7 +165,7 @@ const GRID: DrawList<'static> = DrawList {
                 size: CELL,
             },
             cell: [2, 1],
-            ..glyph(2, 18, FULL, [250, 80, 40, 255])
+            ..glyph(2, 18, FULL, [250, 80, 40, 128])
         },
         GlyphQuad {
             atlas: AtlasRect {
@@ -204,8 +204,8 @@ fn assert_grid(pixels: &[u8], [lightened, darkened]: [u8; 2]) {
         ([33, 16], [darkened, darkened, darkened, 255], 1),
         ([34, 16], [0, 0, 0, 0], 0),
         ([2, 17], [65, 112, 94, 255], 1),
-        // Both cells of a wide cursor keep their own background as text color.
-        ([18, 17], [22, 18, 40, 255], 1),
+        // Cursor glyphs use the cell's background RGB but keep the glyph alpha.
+        ([18, 17], [188, 188, 189, 255], 1),
         ([26, 17], [236, 231, 242, 255], 1),
         ([33, 18], [255; 4], 1),
     ];

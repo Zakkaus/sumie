@@ -30,7 +30,7 @@ use std::ptr::{from_mut, null, null_mut};
 pub struct Cell {
     /// The full grapheme cluster, or empty text for a blank or continuation.
     pub text: String,
-    /// Display columns: 1 for a regular cell, 2 for a wide cell, and 0 for its trailing cell.
+    /// Display columns: 1 for a regular cell or wrap spacer, 2 for a wide cell, and 0 for its tail.
     pub width: u8,
     /// Empty cell at the end of a row where a wide glyph wrapped to the next row.
     pub wide_wrap_spacer: bool,
@@ -372,24 +372,28 @@ impl Terminal {
     }
 
     fn snapshot_row(&mut self, cols: u16, colors: &mut Colors) -> Result<Vec<Cell>, Error> {
-        // SAFETY: The row iterator is positioned on a live row, and CELLS takes a pointer to
-        // a preallocated cell iterator handle.
-        check(unsafe {
-            ffi::ghostty_render_state_row_get(
+        let row_may_have_hyperlinks = self.row_may_have_hyperlinks()?;
+        // SAFETY: The row iterator is positioned on a live row; CELLS fills the existing iterator.
+        unsafe {
+            check(ffi::ghostty_render_state_row_get(
                 self.row_iter,
                 ffi::RENDER_STATE_ROW_DATA_CELLS,
                 from_mut(&mut self.cell_iter).cast(),
-            )
-        })?;
+            ))?;
+        }
         let mut row = Vec::with_capacity(usize::from(cols));
         // SAFETY: The cell iterator was populated above and does not outlive the captured row.
         while unsafe { ffi::ghostty_render_state_row_cells_next(self.cell_iter) } {
-            row.push(self.snapshot_cell(colors)?);
+            row.push(self.snapshot_cell(colors, row_may_have_hyperlinks)?);
         }
         Ok(row)
     }
 
-    fn snapshot_cell(&self, colors: &mut Colors) -> Result<Cell, Error> {
+    fn snapshot_cell(
+        &self,
+        colors: &mut Colors,
+        row_may_have_hyperlinks: bool,
+    ) -> Result<Cell, Error> {
         let mut cell: ffi::Cell = 0;
         let mut wide: c_int = 0;
         // SAFETY: The cell iterator is positioned on a live cell. RAW writes a GhosttyCell;
@@ -428,7 +432,11 @@ impl Terminal {
         if style.flags & ffi::STYLE_INVERSE != 0 {
             std::mem::swap(&mut foreground, &mut background);
         }
-        let text = if style.flags & ffi::STYLE_INVISIBLE == 0 {
+        let is_spacer = matches!(
+            wide,
+            ffi::CELL_WIDE_SPACER_HEAD | ffi::CELL_WIDE_SPACER_TAIL
+        );
+        let text = if !is_spacer && style.flags & ffi::STYLE_INVISIBLE == 0 {
             self.cell_text()?
         } else {
             String::new()
@@ -439,7 +447,12 @@ impl Terminal {
             wide_wrap_spacer: wide == ffi::CELL_WIDE_SPACER_HEAD,
             foreground,
             background,
-            style: self.cell_style(cell, &style, &mut colors.palette)?,
+            // Ghostty copies the current SGR onto spacers, but only the wide cell draws ink.
+            style: if is_spacer {
+                CellStyle::default()
+            } else {
+                self.cell_style(cell, row_may_have_hyperlinks, &style, &mut colors.palette)?
+            },
         })
     }
 

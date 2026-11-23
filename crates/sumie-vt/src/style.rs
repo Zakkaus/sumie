@@ -32,9 +32,29 @@ pub struct CellStyle {
 }
 
 impl Terminal {
+    pub(super) fn row_may_have_hyperlinks(&self) -> Result<bool, Error> {
+        let mut raw: ffi::Row = 0;
+        let mut linked = false;
+        // SAFETY: RAW writes the live iterator's GhosttyRow; HYPERLINK reads it and writes a bool.
+        unsafe {
+            check(ffi::ghostty_render_state_row_get(
+                self.row_iter,
+                ffi::RENDER_STATE_ROW_DATA_RAW,
+                from_mut(&mut raw).cast(),
+            ))?;
+            check(ffi::ghostty_row_get(
+                raw,
+                ffi::ROW_DATA_HYPERLINK,
+                from_mut(&mut linked).cast(),
+            ))?;
+        }
+        Ok(linked)
+    }
+
     pub(super) fn cell_style(
         &self,
         cell: ffi::Cell,
+        row_may_have_hyperlinks: bool,
         native: &ffi::Style,
         palette: &mut Option<[Rgb; 256]>,
     ) -> Result<CellStyle, Error> {
@@ -59,7 +79,7 @@ impl Terminal {
             ffi::SGR_UNDERLINE_DASHED => Underline::Dashed,
             _ => return Err(Error(ffi::INVALID_VALUE)),
         };
-        if style.underline == Underline::None && has_hyperlink(cell)? {
+        if style.underline == Underline::None && row_may_have_hyperlinks && has_hyperlink(cell)? {
             style.underline = Underline::Single;
         }
         style.underline_color = self.underline_color(native.underline_color, palette)?;

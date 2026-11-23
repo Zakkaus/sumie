@@ -22,6 +22,9 @@ impl Ink {
     }
 }
 
+#[derive(Default)]
+pub(super) struct Decorations([Option<AtlasGlyph>; Decoration::Overline as usize + 1]);
+
 impl View {
     pub(super) fn finish_run(&mut self, origin: [u32; 2], ink: Ink) {
         self.line.trim_spaces();
@@ -35,8 +38,10 @@ impl View {
         );
         self.line.clear();
     }
+}
 
-    pub(super) fn draw_decorations(&mut self, pos: [u32; 2], cell: &Cell, fg: Rgba) {
+impl Decorations {
+    pub(super) fn draw(&mut self, view: &mut View, pos: [u32; 2], cell: &Cell, fg: Rgba) {
         let style = cell.style;
         let underline = match style.underline {
             Underline::None => None,
@@ -50,26 +55,39 @@ impl View {
             let color = style
                 .underline_color
                 .map_or(fg, |[r, g, b]| [r, g, b, fg[3]]);
-            self.draw_mark(pos, cell.width, mark, color);
+            self.draw_mark(view, pos, cell.width, mark, color);
         }
         if style.overline {
-            self.draw_mark(pos, cell.width, Decoration::Overline, fg);
+            self.draw_mark(view, pos, cell.width, Decoration::Overline, fg);
         }
         if style.strikethrough {
-            self.draw_mark(pos, cell.width, Decoration::Strikethrough, fg);
+            self.draw_mark(view, pos, cell.width, Decoration::Strikethrough, fg);
         }
     }
 
-    fn draw_mark(&mut self, [col, row]: [u32; 2], width: u8, mark: Decoration, color: Rgba) {
-        match self.font.decoration(mark) {
-            Ok(image) => {
-                for column in col..col + u32::from(width) {
-                    let cell = [column, row];
-                    self.glyphs
-                        .push(glyph_quad(image, self.origin(cell), cell, color));
+    fn draw_mark(
+        &mut self,
+        view: &mut View,
+        [col, row]: [u32; 2],
+        width: u8,
+        mark: Decoration,
+        color: Rgba,
+    ) {
+        let slot = &mut self.0[mark as usize];
+        let image = match *slot {
+            Some(image) => image,
+            None => match view.font.decoration(mark) {
+                Ok(image) => *slot.insert(image),
+                Err(error) => {
+                    view.font_errors.warn(&error);
+                    return;
                 }
-            }
-            Err(error) => self.font_errors.warn(&error),
+            },
+        };
+        for column in col..col + u32::from(width) {
+            let cell = [column, row];
+            view.glyphs
+                .push(glyph_quad(image, view.origin(cell), cell, color));
         }
     }
 }

@@ -1,4 +1,9 @@
-use harfrust::{Buffer, BufferFlags, Direction, Feature, GlyphInfo, GlyphPosition, ShapeOptions};
+use std::collections::HashMap;
+
+use harfrust::{
+    Buffer, BufferFlags, Direction, Feature, GlyphInfo, GlyphPosition, Script, ShapeOptions,
+    ShapePlan, ShaperFont,
+};
 use skrifa::{Font, GlyphId, Tag};
 use zeno::{Bounds, Point};
 
@@ -19,7 +24,7 @@ pub struct ShapedGlyph {
     pub y: i32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ShapedRun {
     pub cells: u32,
     pub glyphs: Vec<ShapedGlyph>,
@@ -38,6 +43,8 @@ struct Input {
 pub(crate) struct Layout {
     buffer: Buffer,
     input: Vec<Input>,
+    // Face IDs distinguish variation instances; direction, language and features are fixed.
+    plans: HashMap<(FaceId, Option<Script>), ShapePlan>,
 }
 
 impl FontSystem {
@@ -65,6 +72,24 @@ impl FontSystem {
         widths: &[u8],
         style: FontStyle,
     ) -> Result<ShapedRun, FontError> {
+        let mut output = ShapedRun::default();
+        self.shape_styled_into(text, widths, style, &mut output)?;
+        Ok(output)
+    }
+
+    /// Shapes a styled run into reusable output, replacing its previous contents.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::shape_styled`] and leaves `output` empty on error.
+    pub fn shape_styled_into(
+        &mut self,
+        text: &str,
+        widths: &[u8],
+        style: FontStyle,
+        output: &mut ShapedRun,
+    ) -> Result<(), FontError> {
+        output.cells = 0;
+        output.glyphs.clear();
         u32::try_from(text.len()).map_err(|_| FontError::RunTooLong)?;
         if widths.first() == Some(&0) || widths.len() != text.chars().count() {
             return Err(FontError::InvalidWidths);
@@ -103,13 +128,18 @@ impl FontSystem {
         if i64::from(columns) * i64::from(self.metrics.width) > i64::from(i32::MAX / 2) {
             return Err(FontError::RunTooLong);
         }
-        self.layout.shape(
-            &self.faces,
-            self.metrics,
-            columns,
-            &mut self.rasterizer,
-            &self.atlas,
-        )
+        self.layout
+            .shape(
+                &self.faces,
+                self.metrics,
+                columns,
+                &mut self.rasterizer,
+                &self.atlas,
+                &mut output.glyphs,
+            )
+            .inspect_err(|_| output.glyphs.clear())?;
+        output.cells = columns;
+        Ok(())
     }
 
     fn face_for_continuation(
@@ -158,8 +188,9 @@ impl Layout {
         columns: u32,
         rasterizer: &mut Rasterizer,
         atlas: &Atlas,
-    ) -> Result<ShapedRun, FontError> {
-        let mut glyphs = Vec::with_capacity(self.input.len());
+        glyphs: &mut Vec<ShapedGlyph>,
+    ) -> Result<(), FontError> {
+        glyphs.reserve(self.input.len());
         let mut start = 0;
         while start < self.input.len() {
             let first = &self.input[start];
@@ -190,7 +221,8 @@ impl Layout {
                     })
                     .count();
             let face = &faces[first.face.0];
-            shape_segment(&mut self.buffer, &face.font, &self.input[start..end])?;
+            let input = &self.input[start..end];
+            shape_segment(&mut self.buffer, &mut self.plans, &face.font, input)?;
             let end_column = self.input.get(end).map_or(columns, |next| {
                 // A run of detached marks starts in the preceding run's last cell.
                 next.column + u32::from(next.continuation) * u32::from(next.width)
@@ -201,22 +233,19 @@ impl Layout {
                 rasterizer,
                 atlas,
             };
-            placement.place(
-                &self.buffer,
-                &self.input[start..end],
-                end_column,
-                &mut glyphs,
-            )?;
+            placement.place(&self.buffer, input, end_column, glyphs)?;
             start = end;
         }
-        Ok(ShapedRun {
-            cells: columns,
-            glyphs,
-        })
+        Ok(())
     }
 }
 
-fn shape_segment(buffer: &mut Buffer, font: &Font, input: &[Input]) -> Result<(), FontError> {
+fn shape_segment(
+    buffer: &mut Buffer,
+    plans: &mut HashMap<(FaceId, Option<Script>), ShapePlan>,
+    font: &Font,
+    input: &[Input],
+) -> Result<(), FontError> {
     buffer.clear();
     buffer.set_direction(Direction::LeftToRight);
     let mut flags = BufferFlags::REMOVE_DEFAULT_IGNORABLES;
@@ -236,9 +265,22 @@ fn shape_segment(buffer: &mut Buffer, font: &Font, input: &[Input]) -> Result<()
         Feature::new(Tag::new(b"calt"), 1, ..),
         Feature::new(Tag::new(b"liga"), 1, ..),
     ];
-    let font = harfrust::ShaperFont::new(font);
-    harfrust::shape(&font, buffer, ShapeOptions::new().features(&features))
-        .map_err(FontError::Shape)
+    let script = buffer.script();
+    let plan = plans.entry((input[0].face, script)).or_insert_with(|| {
+        ShapePlan::new(
+            font,
+            buffer.direction(),
+            script,
+            buffer.language(),
+            &features,
+        )
+    });
+    harfrust::shape(
+        &ShaperFont::new(font),
+        buffer,
+        ShapeOptions::new().plan(Some(plan)).features(&features),
+    )
+    .map_err(FontError::Shape)
 }
 
 struct Segment<'a> {

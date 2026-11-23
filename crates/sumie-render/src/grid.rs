@@ -131,7 +131,7 @@ impl Instance {
         let mut instance = Self::glyph(glyph, fill);
         // Atlas coordinates never use the high bit; the shader uses it to skip contrast correction.
         instance.atlas_origin[0] |= 1 << 31;
-        instance.color = text;
+        instance.color[..3].copy_from_slice(&text[..3]);
         instance
     }
 }

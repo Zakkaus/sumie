@@ -178,7 +178,7 @@ fn rank(matched: &Match, ch: Option<char>) -> Option<(bool, bool, f32)> {
     let attrs = matched.attributes(&font, matched.overrides(&font));
     Some((
         matched.request.style.italic != (attrs.style != Style::Normal),
-        matched.request.synthetic(attrs).bold,
+        matched.request.synthetic_bold(attrs.weight, None),
         (f32::from(matched.request.weight.unwrap_or(400)) - attrs.weight.value()).abs(),
     ))
 }

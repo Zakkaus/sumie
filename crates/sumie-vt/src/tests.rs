@@ -26,13 +26,19 @@ fn paste_filters_controls_in_both_modes() {
 
 #[test]
 fn snapshot_keeps_wide_cells_whole() {
+    use super::Underline::{None, Single};
+
     let mut terminal = Terminal::new(5, 2).unwrap();
-    terminal.write("hello\r\n中文".as_bytes());
+    terminal.write("hel\x1b[4m 中文".as_bytes());
     let screen = terminal.snapshot().unwrap();
     let expected = [
-        [("h", 1), ("e", 1), ("l", 1), ("l", 1), ("o", 1)],
+        [("h", 1), ("e", 1), ("l", 1), (" ", 1), ("", 1)],
         [("中", 2), ("", 0), ("文", 2), ("", 0), ("", 1)],
     ];
+    assert_eq!(
+        [(0, 3), (0, 4), (1, 0)].map(|(y, x)| screen[y][x].style.underline),
+        [Single, None, Single],
+    );
     assert_eq!(screen.len(), expected.len());
     for (row, expected) in screen.iter().zip(expected) {
         assert_eq!(row.len(), expected.len());

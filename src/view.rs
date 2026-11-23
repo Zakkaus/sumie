@@ -16,7 +16,7 @@ use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 use sumie_wayland::CursorRect;
 
 use crate::Result;
-use attributes::{Ink, glyph_quad};
+use attributes::{Decorations, Ink, glyph_quad};
 
 mod overlays;
 
@@ -48,6 +48,7 @@ pub(crate) struct View {
 struct Line {
     text: String,
     widths: Vec<u8>,
+    shaped: sumie_font::ShapedRun,
 }
 
 #[derive(Default)]
@@ -229,6 +230,7 @@ impl View {
         overlay: Option<(u32, u32, u32)>,
         visible: std::ops::Range<usize>,
     ) {
+        let mut decorations = Decorations::default();
         let rows = (0..).zip(snapshot.rows.iter().take(visible.end));
         for (row, cells) in rows.skip(visible.start) {
             let selected = selection.and_then(|range| range.columns(row));
@@ -272,7 +274,7 @@ impl View {
                     columns.start < column + u32::from(cell.width) && column < columns.end
                 });
                 if !intersects {
-                    self.draw_decorations([column, row], cell, ink.color);
+                    decorations.draw(self, [column, row], cell, ink.color);
                 }
                 self.line
                     .push(if intersects { "" } else { &cell.text }, cell.width);
@@ -456,9 +458,9 @@ impl Line {
         if self.text.is_empty() {
             return;
         }
-        let run = loop {
-            match font.shape_styled(&self.text, &self.widths, face) {
-                Ok(run) => break run,
+        loop {
+            match font.shape_styled_into(&self.text, &self.widths, face, &mut self.shaped) {
+                Ok(()) => break,
                 Err(error) => {
                     errors.warn(&error);
                     let FontError::MissingGlyph(value) = error else {
@@ -470,11 +472,11 @@ impl Line {
                     self.text = self.text.replace(ch, "\u{fffd}");
                 }
             }
-        };
+        }
         let metrics = font.metrics();
         let x = (col * metrics.width).cast_signed();
         let y = (row * metrics.height).cast_signed();
-        for glyph in run.glyphs {
+        for glyph in &self.shaped.glyphs {
             let image = match font.rasterize(glyph.key) {
                 Ok(image) => image,
                 Err(error) => {

@@ -208,7 +208,7 @@ mod linux {
             let matched = discovery.find(None, FontStyle::default()).unwrap();
             if matched.family != fixture
                 || matched
-                    .load(&[])
+                    .load(&[], None)
                     .unwrap()
                     .0
                     .charmap()
@@ -308,33 +308,17 @@ mod linux {
 }
 
 #[test]
-fn bold_shape_uses_a_real_face_on_the_same_grid() {
+fn bold_shape_uses_a_heavier_face_or_synthesizes_on_the_same_grid() {
     use crate::{FontOptions, FontStyle, FontSystem};
 
     #[cfg(target_os = "linux")]
-    let family = "JetBrains Mono";
+    let cases = [
+        ("JetBrains Mono", 500, false),
+        ("Liberation Mono", 400, false),
+        ("Liberation Mono", 700, true),
+    ];
     #[cfg(target_os = "macos")]
-    let family = "Menlo";
-    let mut fonts = FontSystem::new(family, 24.0, 1.0, FontOptions::default()).unwrap();
-    if fonts.family(fonts.primary_face()) != Some(family) {
-        eprintln!("skipped: {family} is not installed");
-        return;
-    }
-    let bold = FontStyle {
-        bold: true,
-        italic: false,
-    };
-    let regular = fonts.shape("H", &[1]).unwrap().glyphs[0];
-    let styled = fonts.shape_styled("H", &[1], bold).unwrap().glyphs[0];
-    assert_eq!(
-        (regular.column, regular.cells, regular.x, regular.y),
-        (styled.column, styled.cells, styled.x, styled.y)
-    );
-    assert_ne!(styled.key.face(), regular.key.face());
-    assert_eq!(
-        fonts.faces[styled.key.face().0].synthetic,
-        FontStyle::default()
-    );
+    let cases = [("Menlo", 400, false), ("Menlo", 700, true)];
 
     let coverage = |fonts: &mut FontSystem, key| -> u32 {
         let rect = fonts.rasterize(key).unwrap().rect;
@@ -351,7 +335,42 @@ fn bold_shape_uses_a_real_face_on_the_same_grid() {
             .map(|&coverage| u32::from(coverage))
             .sum()
     };
-    assert!(coverage(&mut fonts, styled.key) > coverage(&mut fonts, regular.key));
+
+    for (family, weight, synthetic) in cases {
+        let options = FontOptions {
+            weight: Some(weight),
+            ..FontOptions::default()
+        };
+        let mut fonts = FontSystem::new(family, 24.0, 1.0, options).unwrap();
+        if fonts.family(fonts.primary_face()) != Some(family) {
+            eprintln!("skipped: {family} is not installed");
+            continue;
+        }
+        let bold = FontStyle {
+            bold: true,
+            italic: false,
+        };
+        let regular = fonts.shape("H", &[1]).unwrap().glyphs[0];
+        let styled = fonts.shape_styled("H", &[1], bold).unwrap().glyphs[0];
+        assert_eq!(
+            (regular.column, regular.cells, regular.x, regular.y),
+            (styled.column, styled.cells, styled.x, styled.y),
+            "{family} {weight}"
+        );
+        assert_ne!(styled.key.face(), regular.key.face());
+        assert_eq!(
+            fonts.faces[styled.key.face().0].synthetic,
+            FontStyle {
+                bold: synthetic,
+                italic: false,
+            },
+            "{family} {weight}"
+        );
+        assert!(
+            coverage(&mut fonts, styled.key) > coverage(&mut fonts, regular.key),
+            "{family} {weight}"
+        );
+    }
 }
 
 #[test]

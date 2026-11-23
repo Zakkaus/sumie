@@ -38,14 +38,11 @@ pub(super) fn assert_decorations(
     let mut single_y = 0;
     for (column, (name, _)) in CASES.into_iter().enumerate() {
         let red = |x, y| pixels[4 * (y * pitch + column * w + x)];
-        let extent = h + h / 4;
-        let rows: Vec<_> = (0..extent)
-            .filter(|&y| (0..w).any(|x| red(x, y) > 32))
-            .collect();
+        let rows: Vec<_> = (0..h).filter(|&y| (0..w).any(|x| red(x, y) > 32)).collect();
         let first = *rows.first().unwrap_or_else(|| panic!("missing {name}"));
         let last = *rows.last().unwrap();
         let gaps = rows.windows(2).filter(|r| r[1] > r[0] + 1).count();
-        let top_at = |x| (0..extent).find(|&y| red(x, y) > 32);
+        let top_at = |x| (0..h).find(|&y| red(x, y) > 32);
         let middle = top_at(w / 2);
         match name {
             "single" => {
@@ -58,11 +55,14 @@ pub(super) fn assert_decorations(
                 );
             }
             "double" => assert!(first < single_y && last > single_y && gaps == 1),
-            "curly" => assert!(
-                middle.is_some_and(|y| y.abs_diff(single_y) <= 1)
-                    && top_at(0) > middle
-                    && top_at(w - 1) > middle
-            ),
+            "curly" => {
+                assert!(middle.is_some() && top_at(0) > middle && top_at(w - 1) > middle);
+                let bg = view.draw_list(true).backgrounds[usize::from(size.cols) + column];
+                assert!(
+                    (h..2 * h).all(|y| (0..w).all(|x| red(x, y) == bg[0])),
+                    "underline entered the next row"
+                );
+            }
             "dotted" => assert!(
                 (0..w).any(|x| top_at(x).is_none())
                     && (first..=last).any(|y| (0..w).any(|x| (1..255).contains(&red(x, y))))

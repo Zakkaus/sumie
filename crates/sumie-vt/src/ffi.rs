@@ -160,6 +160,7 @@ pub type KeyEncoder = *mut c_void;
 pub type KeyEvent = *mut c_void;
 
 pub type Cell = u64;
+pub type Row = u64;
 pub const SUCCESS: c_int = 0;
 pub const INVALID_VALUE: c_int = -2;
 pub const OUT_OF_SPACE: c_int = -3;
@@ -212,6 +213,7 @@ pub const CELL_WIDE_NARROW: c_int = 0;
 pub const CELL_WIDE_WIDE: c_int = 1;
 pub const CELL_WIDE_SPACER_TAIL: c_int = 2;
 pub const CELL_WIDE_SPACER_HEAD: c_int = 3;
+pub const ROW_DATA_HYPERLINK: c_int = 5;
 pub const RENDER_STATE_DATA_COLS: c_int = 1;
 pub const RENDER_STATE_DATA_ROWS: c_int = 2;
 pub const RENDER_STATE_DATA_ROW_ITERATOR: c_int = 4;
@@ -230,6 +232,7 @@ pub const CURSOR_STYLE_BAR: c_int = 0;
 pub const CURSOR_STYLE_BLOCK: c_int = 1;
 pub const CURSOR_STYLE_UNDERLINE: c_int = 2;
 pub const CURSOR_STYLE_BLOCK_HOLLOW: c_int = 3;
+pub const RENDER_STATE_ROW_DATA_RAW: c_int = 2;
 pub const RENDER_STATE_ROW_DATA_CELLS: c_int = 3;
 pub const RENDER_STATE_ROW_CELLS_DATA_RAW: c_int = 1;
 pub const RENDER_STATE_ROW_CELLS_DATA_STYLE: c_int = 2;
@@ -323,4 +326,5 @@ unsafe extern "C" {
         out: *mut c_void,
     ) -> c_int;
     pub fn ghostty_cell_get(cell: Cell, data: c_int, out: *mut c_void) -> c_int;
+    pub fn ghostty_row_get(row: Row, data: c_int, out: *mut c_void) -> c_int;
 }

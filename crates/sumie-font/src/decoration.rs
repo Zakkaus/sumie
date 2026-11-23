@@ -89,7 +89,10 @@ impl Decoration {
             }
             Self::Curly => {
                 let offset = (t / 2.0).ceil();
-                let low = offset + w / PI;
+                // Preserve the font's underline position when the descender space is short.
+                let descent = metrics.height.saturating_sub(line.top) as f32;
+                let amplitude = (w / PI).min((descent - t * 0.5).max(t));
+                let low = offset + amplitude;
                 // Ghostty uses two cubic segments per column, with a crest at its center.
                 path.move_to([0.0, low])
                     .curve_to([0.2 * w, low], [0.3 * w, offset], [0.5 * w, offset])
@@ -98,17 +101,11 @@ impl Decoration {
                 (offset as u32, low + 0.5 * t)
             }
         };
-        // Ghostty allows underline descenders a quarter-cell below the row. Clamping a
-        // wave to the cell instead would raise its crest into the letters at 1.25×.
-        let extent = match self {
-            Self::Strikethrough | Self::Overline => metrics.height,
-            _ => metrics.height + metrics.height / 4,
-        };
-        let height = (height.ceil() as u32).min(extent);
+        let height = (height.ceil() as u32).min(metrics.height);
         let top = if self == Self::Overline {
             0
         } else {
-            line.top.saturating_sub(offset).min(extent - height)
+            line.top.saturating_sub(offset).min(metrics.height - height)
         };
         let placement = Placement {
             left: 0,

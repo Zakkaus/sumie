@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use skrifa::font::{
     Source,
-    attribute::{Attributes, Style},
+    attribute::{Attributes, Style, Weight},
 };
 use skrifa::{Font, FontRef, Tag};
 
@@ -24,13 +24,11 @@ impl Request {
         Self { style, weight }
     }
 
-    fn synthetic(self, attributes: Attributes) -> FontStyle {
-        FontStyle {
-            // A real semibold can stand in for bold when the requested weight is unavailable.
-            bold: self.style.bold
-                && attributes.weight.value() < f32::from(self.weight.unwrap_or(700).min(600)),
-            italic: self.style.italic && attributes.style == Style::Normal,
-        }
+    fn synthetic_bold(self, weight: Weight, regular_weight: Option<Weight>) -> bool {
+        // A real semibold can stand in for bold, but only if it is heavier than the base face.
+        self.style.bold
+            && (weight.value() < f32::from(self.weight.unwrap_or(700).min(600))
+                || regular_weight.is_some_and(|regular| weight <= regular))
     }
 }
 
@@ -45,7 +43,11 @@ pub(crate) struct Match {
 }
 
 impl Match {
-    pub fn load(&self, faces: &[Face]) -> Result<(Font, FontStyle), FontError> {
+    pub fn load(
+        &self,
+        faces: &[Face],
+        regular_weight: Option<Weight>,
+    ) -> Result<(Font, Weight, FontStyle), FontError> {
         // Different faces of a collection share its file bytes.
         let source = if let Some(face) = faces.iter().find(|face| face.matched.path == self.path) {
             face.font.source().clone()
@@ -67,10 +69,12 @@ impl Match {
         let font = Font::new(source, self.face_index())
             .ok_or_else(|| FontError::InvalidFont(self.path.clone()))?;
         let overrides = self.overrides(&font);
-        let synthetic = if self.request.style == FontStyle::default() {
-            FontStyle::default()
-        } else {
-            self.request.synthetic(self.attributes(&font, overrides))
+        let attributes = self.attributes(&font, overrides);
+        let synthetic = FontStyle {
+            bold: self
+                .request
+                .synthetic_bold(attributes.weight, regular_weight),
+            italic: self.request.style.italic && attributes.style == Style::Normal,
         };
         let named = self.named_instance();
         let font = if let Some(index) = named {
@@ -84,7 +88,7 @@ impl Match {
         } else {
             font
         };
-        Ok((font, synthetic))
+        Ok((font, attributes.weight, synthetic))
     }
 
     fn overrides(&self, font: &Font) -> [Option<(Tag, f32)>; 2] {
@@ -136,16 +140,18 @@ impl Match {
 pub(crate) struct Face {
     pub matched: Match,
     pub font: Font,
+    pub weight: Weight,
     pub ppem: f32,
     pub baseline: i32,
     pub synthetic: FontStyle,
 }
 
 impl Face {
-    pub fn matches(&self, matched: &Match) -> bool {
+    pub fn matches(&self, matched: &Match, regular_weight: Option<Weight>) -> bool {
         self.matched.path == matched.path
             && self.matched.index == matched.index
             && self.matched.request == matched.request
+            && self.synthetic.bold == matched.request.synthetic_bold(self.weight, regular_weight)
     }
 
     pub fn sfnt(&self) -> Option<FontRef<'_>> {

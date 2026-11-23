@@ -18,7 +18,7 @@ mod tests;
 use std::{collections::HashMap, path::PathBuf};
 
 use discovery::{Discovery, Face};
-use skrifa::GlyphId;
+use skrifa::{GlyphId, font::attribute::Weight};
 use thiserror::Error;
 
 pub use atlas::{Atlas, AtlasGlyph, Rect};
@@ -178,13 +178,14 @@ impl FontSystem {
         }
         let mut discovery = Discovery::new(family, options.weight)?;
         let matched = discovery.find(None, FontStyle::default())?;
-        let (font, synthetic) = matched.load(&[])?;
+        let (font, weight, synthetic) = matched.load(&[], None)?;
         let metrics = CellMetrics::measure(&font, ppem)?;
         Ok(Self {
             discovery,
             faces: vec![Face {
                 matched,
                 font,
+                weight,
                 ppem,
                 baseline: metrics.baseline,
                 synthetic,
@@ -221,11 +222,13 @@ impl FontSystem {
             return Ok(face);
         }
         let matched = self.discovery.find(None, style)?;
-        let (font, synthetic) = matched.load(&self.faces)?;
+        let regular_weight = self.non_bold_weight(None, style);
+        let (font, weight, synthetic) = matched.load(&self.faces, regular_weight)?;
         let id = FaceId(self.faces.len());
         self.faces.push(Face {
             matched,
             font,
+            weight,
             ppem: self.faces[0].ppem,
             baseline: self.metrics.baseline,
             synthetic,
@@ -247,14 +250,18 @@ impl FontSystem {
         {
             return Ok(primary);
         }
-        let fallback = &mut self.fallback[style.index()];
-        if let Some(&face) = fallback.get(&ch) {
+        if let Some(&face) = self.fallback[style.index()].get(&ch) {
             return Ok(face);
         }
 
         let matched = self.discovery.find(Some(ch), style)?;
+        let regular_weight = self.non_bold_weight(Some(ch), style);
         let missing = FontError::MissingGlyph(u32::from(ch));
-        let face = if let Some(index) = self.faces.iter().position(|face| face.matches(&matched)) {
+        let face = if let Some(index) = self
+            .faces
+            .iter()
+            .position(|face| face.matches(&matched, regular_weight))
+        {
             self.faces[index]
                 .font
                 .charmap()
@@ -262,7 +269,7 @@ impl FontSystem {
                 .ok_or(missing)?;
             FaceId(index)
         } else {
-            let (font, synthetic) = matched.load(&self.faces)?;
+            let (font, weight, synthetic) = matched.load(&self.faces, regular_weight)?;
             font.charmap().map_unicode(ch).ok_or(missing)?;
             let ppem = self.metrics.fallback_ppem(&font, self.faces[0].ppem);
             let id = FaceId(self.faces.len());
@@ -270,13 +277,31 @@ impl FontSystem {
                 baseline: self.metrics.fallback_baseline(&font, ppem),
                 matched,
                 font,
+                weight,
                 ppem,
                 synthetic,
             });
             id
         };
-        fallback.insert(ch, face);
+        self.fallback[style.index()].insert(ch, face);
         Ok(face)
+    }
+
+    fn non_bold_weight(&mut self, ch: Option<char>, style: FontStyle) -> Option<Weight> {
+        if !style.bold {
+            return None;
+        }
+        let style = FontStyle {
+            bold: false,
+            ..style
+        };
+        // A bold match can still be usable if its non-bold counterpart fails to load.
+        let face = match ch {
+            Some(ch) => self.face_for(ch, style),
+            None => self.styled_primary(style),
+        }
+        .ok()?;
+        Some(self.faces[face.0].weight)
     }
 
     /// Rasterizes a shaped glyph from this font system, or returns its cached atlas entry.
