@@ -43,8 +43,8 @@ pub(crate) enum SearchTarget {
 pub(crate) struct Routing {
     shortcuts: Shortcuts,
     pub(crate) generation: u64,
-    // Only the current input generation can own a PTY key press.
-    terminal_presses: Vec<u32>,
+    // Physical key, owning pane, and generation in which repeats are allowed.
+    terminal_presses: Vec<(u32, u64, u64)>,
     repeating_search_key: Option<u32>,
     search_presses: [Option<SearchTarget>; 3],
 }
@@ -52,7 +52,6 @@ pub(crate) struct Routing {
 impl Routing {
     pub(crate) fn change_recipient(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1);
-        self.terminal_presses.clear();
         self.repeating_search_key = None;
         // Keep ownership until release, but never activate a button in a reopened search.
         for pressed in self.search_presses.iter_mut().flatten() {
@@ -65,18 +64,36 @@ impl Routing {
         self.search_presses.fill(None);
     }
 
-    fn terminal_key(&mut self, physical: u32, action: KeyAction) -> bool {
-        let held = self
-            .terminal_presses
+    pub(crate) fn release_owner(&self, event: &Event) -> Option<u64> {
+        let Event::Key {
+            physical,
+            pressed: false,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        self.terminal_presses
             .iter()
-            .position(|&key| key == physical);
+            .find(|p| p.0 == *physical)
+            .map(|p| p.1)
+    }
+
+    pub(crate) fn forget_pane(&mut self, id: u64) {
+        self.terminal_presses.retain(|p| p.1 != id);
+    }
+
+    fn terminal_key(&mut self, physical: u32, id: u64, action: KeyAction) -> bool {
+        let held = self.terminal_presses.iter().position(|p| p.0 == physical);
+        let press = (physical, id, self.generation);
         match (action, held) {
-            (KeyAction::Press, None) => self.terminal_presses.push(physical),
-            (KeyAction::Release, Some(i)) => {
+            (KeyAction::Press, None) => self.terminal_presses.push(press),
+            (KeyAction::Press, Some(i)) => self.terminal_presses[i] = press,
+            (KeyAction::Repeat, Some(i)) => return self.terminal_presses[i] == press,
+            (KeyAction::Release, Some(i)) if self.terminal_presses[i].1 == id => {
                 self.terminal_presses.swap_remove(i);
             }
-            (KeyAction::Repeat | KeyAction::Release, None) => return false,
-            _ => (),
+            _ => return false,
         }
         true
     }
@@ -118,11 +135,12 @@ impl Routing {
 }
 
 pub(crate) fn route(
-    recipient: u64,
+    (id, recipient): (u64, u64),
     pane: &mut impl Pane<Error = Error>,
     routing: &mut Routing,
     searching: bool,
     event: Event,
+    perform: impl FnOnce(sumie_core::splits::Direction, bool) -> bool,
 ) -> Result<Effect> {
     if matches!(
         &event,
@@ -134,6 +152,7 @@ pub(crate) fn route(
         return Ok(Effect::None);
     }
     let key_text;
+    let search_owns_key = searching && routing.release_owner(&event) != Some(id);
     let command = match event {
         Event::ImePreedit { text, .. } => return Ok(Effect::Preedit(text)),
         Event::ImeCommit { text, .. } | Event::ClipboardText { text, .. } if searching => {
@@ -161,12 +180,12 @@ pub(crate) fn route(
             let symbol = xkeysym::Keysym::new(keysym).key_char();
             let shortcut = routing
                 .shortcuts
-                .match_key(physical, symbol, modifiers, action);
+                .match_key(physical, symbol, modifiers, action, perform);
             match shortcut {
                 Some(Shortcut::Tab(action)) => return Ok(Effect::Tab(action)),
                 Some(Shortcut::Pane(action)) => return Ok(Effect::Pane(action)),
                 Some(Shortcut::Zoom(action)) => return Ok(Effect::Zoom(action)),
-                shortcut if searching => {
+                shortcut if search_owns_key => {
                     return Ok(
                         routing.search_key(physical, keysym, modifiers, utf8, action, shortcut)
                     );
@@ -175,7 +194,7 @@ pub(crate) fn route(
                 Some(Shortcut::Paste) => return Ok(Effect::ReadClipboard),
                 Some(Shortcut::Search) => return Ok(Effect::Search(SearchAction::Open)),
                 Some(Shortcut::Consume) => return Ok(Effect::None),
-                None if !routing.terminal_key(physical, action) => return Ok(Effect::None),
+                None if !routing.terminal_key(physical, id, action) => return Ok(Effect::None),
                 None => (),
             }
             key_text = utf8;

@@ -1,3 +1,5 @@
+mod keyboard;
+
 use std::ffi::{OsStr, OsString};
 use std::time::{Duration, Instant};
 
@@ -19,7 +21,7 @@ fn local_pane_executes_committed_input_without_preedit() {
     env.insert("PS1".into(), "".into());
     let mut pane = ready_pane("stty -echo; printf 'READY\\n'; exec /bin/sh -i", &env);
     input::route(
-        0,
+        (0, 0),
         &mut pane,
         &mut input::Routing::default(),
         false,
@@ -28,6 +30,7 @@ fn local_pane_executes_committed_input_without_preedit() {
             cursor: None,
             generation: 0,
         },
+        |_, _| false,
     )
     .unwrap();
     pane.command(PaneCommand::Text(b"echo hi")).unwrap();
@@ -43,31 +46,6 @@ fn local_pane_executes_committed_input_without_preedit() {
     wait_for_line(&mut pane, "hi");
     pane.command(PaneCommand::Close).unwrap();
     crate::sources::reap(&mut pane.pty).unwrap();
-}
-
-#[test]
-fn held_enter_never_reaches_the_next_pty() {
-    use KeyAction::{Press, Release, Repeat};
-    let open = || {
-        ready_pane(
-            "printf '\\033[>11uREADY\\n'; exec cat",
-            &request_environment(),
-        )
-    };
-    let (mut first, mut next) = (open(), open());
-    let mut routing = input::Routing::default();
-    let enter = |action| key_event(28, xkeysym::key::Return, action, Modifiers::default());
-    input::route(0, &mut first, &mut routing, false, enter(Press)).unwrap();
-    assert!(first.pty.input_fd().is_some());
-    let recipient = routing.change_recipient();
-    for action in [Repeat, Release] {
-        input::route(recipient, &mut next, &mut routing, false, enter(action)).unwrap();
-        assert!(next.pty.input_fd().is_none());
-    }
-    for mut pane in [first, next] {
-        pane.command(PaneCommand::Close).unwrap();
-        crate::sources::reap(&mut pane.pty).unwrap();
-    }
 }
 
 #[test]
@@ -122,7 +100,7 @@ fn matched_shortcuts_never_reach_the_pty() {
     ] {
         for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
             let effect = input::route(
-                0,
+                (0, 0),
                 &mut pane,
                 &mut routing,
                 false,
@@ -139,6 +117,7 @@ fn matched_shortcuts_never_reach_the_pty() {
                     repeat,
                     serial: u32::from(!repeat),
                 },
+                |_, _| false,
             )
             .unwrap();
             match (physical, pressed, repeat) {
@@ -218,7 +197,7 @@ fn window_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut inpu
                 let event = key_event(physical, symbol, action, modifiers);
                 let searching = searching && !matches!(action, Release);
                 assert_eq!(
-                    &input::route(0, pane, routing, searching, event).unwrap(),
+                    &input::route((0, 0), pane, routing, searching, event, |_, _| true).unwrap(),
                     expected
                 );
                 assert!(pane.pty.input_fd().is_none(), "matched key: {physical}");
@@ -262,6 +241,23 @@ fn pane_chords(
     .into_iter()
 }
 
+fn search_event(
+    pane: &mut LocalPane,
+    routing: &mut input::Routing,
+    searching: bool,
+    event: Event,
+) -> input::Effect {
+    input::route(
+        (0, routing.generation),
+        pane,
+        routing,
+        searching,
+        event,
+        |_, _| false,
+    )
+    .unwrap()
+}
+
 fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
     use KeyAction::{Press, Release, Repeat};
     use input::{Effect, SearchAction};
@@ -275,7 +271,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
                 ..Default::default()
             };
             let event = key_event(28, symbol, Press, modifiers);
-            let effect = input::route(routing.generation, pane, routing, true, event).unwrap();
+            let effect = search_event(pane, routing, true, event);
             assert_eq!(effect, Effect::Search(SearchAction::Navigate { newer }));
         }
     }
@@ -332,7 +328,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
         (paste(1), Effect::None),
         (commit(3), insert("水")),
     ] {
-        let effect = input::route(routing.generation, pane, routing, searching, event).unwrap();
+        let effect = search_event(pane, routing, searching, event);
         assert!(pane.pty.input_fd().is_none());
         assert_eq!(effect, expected);
         if let Effect::Search(SearchAction::Open | SearchAction::Close) = effect {

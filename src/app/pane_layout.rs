@@ -16,7 +16,7 @@ impl PaneTab {
     }
 
     // IDs increase at spawn; removal preserves their order.
-    fn index(&self, id: u64) -> usize {
+    pub(super) fn index(&self, id: u64) -> usize {
         self.panes
             .binary_search_by_key(&id, |pane| pane.id)
             .expect("live leaf")
@@ -130,20 +130,20 @@ impl Session {
     pub(super) fn pane_action(
         &mut self,
         command: PaneAction,
+        previous: u64,
         gpu: &mut Gpu,
         config: &sumie_config::Config,
     ) -> Result<()> {
         let tab = self.tabs.active_mut().unwrap();
-        let old = tab.tree.focused();
         match command {
             PaneAction::Split(axis) => return self.split(axis, gpu, config),
-            PaneAction::Focus(dir) => {
-                if tab.tree.focus_neighbor(dir, &tab.layout) {
-                    self.focus_changed(Some((self.tabs.active_index().unwrap(), old)), gpu, false)?;
-                }
-                return Ok(());
+            PaneAction::Focus(_) => {
+                return self.focus_changed(
+                    Some((self.tabs.active_index().unwrap(), previous)),
+                    gpu,
+                    false,
+                );
             }
-            PaneAction::Resize(dir) if !tab.tree.resize(dir, &tab.layout) => return Ok(()),
             PaneAction::Resize(_) => (),
             PaneAction::Zoom => tab.tree.toggle_zoom(),
         }

@@ -13,7 +13,7 @@ use super::{
 #[derive(Clone, Copy)]
 pub(super) enum Action {
     Key(TabAction),
-    Pane(PaneAction),
+    Pane(PaneAction, u64),
     Close(usize),
 }
 
@@ -269,6 +269,16 @@ impl Session {
     }
 
     pub(super) fn input_target(&self, event: &Event) -> Option<(usize, u64, u64)> {
+        if let Some(id) = self.routing.release_owner(event)
+            && id != self.active().id
+        {
+            let index = self
+                .tabs
+                .as_slice()
+                .iter()
+                .position(|tab| tab.panes.binary_search_by_key(&id, |p| p.id).is_ok())?;
+            return Some((index, id, self.routing.generation));
+        }
         if let Event::ClipboardText { generation, .. } = event {
             return self
                 .tabs
@@ -326,7 +336,7 @@ impl Session {
             Action::Key(TabAction::Open) => self.open_tab(gpu, config)?,
             Action::Close(i) => self.close_tab(i, gpu)?,
             Action::Key(TabAction::Close) => self.close_pane(index, old, gpu)?,
-            Action::Pane(command) => self.pane_action(command, gpu, config)?,
+            Action::Pane(command, previous) => self.pane_action(command, previous, gpu, config)?,
             Action::Key(nav) if self.tabs.navigate(nav) => {
                 if matches!(nav, TabAction::MoveLeft | TabAction::MoveRight) {
                     self.view.reset_hits();
@@ -394,6 +404,7 @@ impl Session {
     }
 
     fn retire(&mut self, mut tab: PaneState) -> Result<()> {
+        self.routing.forget_pane(tab.id);
         tab.pane.pty.close()?;
         if tab.pane.pty.exit_fd().is_some() {
             tab.sources.remove_output();

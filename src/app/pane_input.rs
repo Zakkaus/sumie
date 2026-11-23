@@ -173,7 +173,9 @@ impl Session {
         let Some((index, id, recipient)) = self.input_target(&event) else {
             return Ok(None);
         };
-        let pane = self.tabs.as_mut_slice()[index].get_mut(id);
+        let tab = &mut self.tabs.as_mut_slice()[index];
+        let slot = tab.index(id);
+        let pane = &mut tab.panes[slot];
         if let Event::ModifiersChanged(modifiers) = event {
             pane.pane
                 .pointer_modifiers_changed(input::key_modifiers(modifiers));
@@ -187,14 +189,21 @@ impl Session {
         }
         let searching = pane.search.is_some();
         match input::route(
-            recipient,
+            (id, recipient),
             &mut pane.pane,
             &mut self.routing,
             searching,
             event,
+            |dir, resize| {
+                if resize {
+                    tab.tree.resize(dir, &tab.layout)
+                } else {
+                    tab.tree.focus_neighbor(dir, &tab.layout)
+                }
+            },
         )? {
             Effect::Tab(action) => return Ok(Some(tabs::Action::Key(action))),
-            Effect::Pane(action) => return Ok(Some(tabs::Action::Pane(action))),
+            Effect::Pane(action) => return Ok(Some(tabs::Action::Pane(action, id))),
             Effect::Zoom(action) => self.zoom(action)?,
             effect => apply_pane_effect(
                 pane,

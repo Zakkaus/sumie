@@ -86,12 +86,15 @@ impl Shortcuts {
 
     /// Match before encoding. A captured press owns its repeats and release even
     /// if the user releases a modifier first or the layout changes.
+    /// `perform(direction, resize)` attempts a directional binding. Only a move
+    /// that changes focus or geometry captures the key.
     pub fn match_key(
         &mut self,
         evdev: u32,
         symbol: Option<char>,
         modifiers: KeyModifiers,
         action: KeyAction,
+        perform: impl FnOnce(Direction, bool) -> bool,
     ) -> Option<Shortcut> {
         if let Some(index) = self.consumed.iter().position(|&held| held == evdev) {
             if !matches!(action, KeyAction::Repeat) {
@@ -106,7 +109,7 @@ impl Shortcuts {
         }
         let shortcut = match (modifiers.control, modifiers.alt, modifiers.shift) {
             (true, false, shift) => control_shortcut(evdev, symbol, shift),
-            (true, true, shift) => directional_shortcut(evdev, shift),
+            (true, true, shift) => directional_shortcut(evdev, shift, perform),
             (false, true, false) => alt_tab_shortcut(evdev, symbol).map(Shortcut::Tab),
             _ => None,
         }?;
@@ -177,7 +180,11 @@ fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Sho
     Some(Shortcut::Tab(action))
 }
 
-fn directional_shortcut(evdev: u32, resize: bool) -> Option<Shortcut> {
+fn directional_shortcut(
+    evdev: u32,
+    resize: bool,
+    perform: impl FnOnce(Direction, bool) -> bool,
+) -> Option<Shortcut> {
     const KEY_UP: u32 = 103;
     const KEY_LEFT: u32 = 105;
     const KEY_RIGHT: u32 = 106;
@@ -189,6 +196,9 @@ fn directional_shortcut(evdev: u32, resize: bool) -> Option<Shortcut> {
         KEY_DOWN => Direction::Down,
         _ => return None,
     };
+    if !perform(direction, resize) {
+        return None;
+    }
     Some(Shortcut::Pane(if resize {
         PaneAction::Resize(direction)
     } else {
