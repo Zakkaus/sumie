@@ -154,6 +154,7 @@ pub struct Layout {
     pub panes: Vec<(u64, Rect)>,
     /// Unzoomed sizes of the panes hidden behind the zoomed pane.
     pub hidden: Vec<(u64, Rect)>,
+    zoom_origin: Option<Rect>,
     pub dividers: Vec<Divider>,
 }
 
@@ -251,18 +252,19 @@ impl SplitTree {
     /// edge, then the closest center on that edge, then layout order.
     /// Use a layout from this tree's current geometry.
     pub fn focus_neighbor(&mut self, direction: Direction, layout: &Layout) -> bool {
-        if self.zoomed {
-            return false;
-        }
-        let Some(pane) = layout.pane(self.focused) else {
+        let (origin, candidates) = if self.zoomed {
+            (layout.zoom_origin, &layout.hidden)
+        } else {
+            (layout.pane(self.focused), &layout.panes)
+        };
+        let Some(pane) = origin else {
             return false;
         };
         let axis = direction.axis();
         let along = pane.span(axis);
         let across = pane.span(axis.cross());
         let forward = direction.forward();
-        let neighbor = layout
-            .panes
+        let neighbor = candidates
             .iter()
             .filter_map(|&(id, rect)| {
                 neighbor_score(rect, axis, along, across, forward).map(|score| (score, id))
@@ -324,6 +326,7 @@ impl SplitTree {
     pub fn layout(&self, bounds: Rect, cell: [u32; 2], layout: &mut Layout) {
         layout.panes.clear();
         layout.hidden.clear();
+        layout.zoom_origin = None;
         layout.dividers.clear();
         let bounds = bounds.clipped();
         self.root
@@ -505,7 +508,7 @@ impl Node {
         match self {
             Self::Leaf(id) if zoom.is_none() => layout.panes.push((*id, rect)),
             Self::Leaf(id) if zoom != Some(*id) => layout.hidden.push((*id, rect)),
-            Self::Leaf(_) => (),
+            Self::Leaf(_) => layout.zoom_origin = Some(rect),
             Self::Split(branch) => branch.layout(rect, cell, layout, zoom),
         }
     }

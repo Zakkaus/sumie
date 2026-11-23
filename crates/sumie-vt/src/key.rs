@@ -49,6 +49,23 @@ impl Drop for ClearKeyText {
     }
 }
 
+impl Terminal {
+    /// Whether the active screen requests Kitty key releases.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the active keyboard flags.
+    pub fn reports_key_events(&self) -> Result<bool, Error> {
+        const KITTY_KEYBOARD_FLAGS: c_int = 8;
+        const REPORT_EVENTS: u8 = 1 << 1;
+        let mut flags = 0_u8;
+        // SAFETY: KITTY_KEYBOARD_FLAGS writes a uint8_t to the provided output slot.
+        check(unsafe {
+            ffi::ghostty_terminal_get(self.raw, KITTY_KEYBOARD_FLAGS, (&raw mut flags).cast())
+        })?;
+        Ok(flags & REPORT_EVENTS != 0)
+    }
+}
+
 impl KeyEncoder {
     /// # Errors
     /// Returns an error if Ghostty cannot allocate the encoder or event.

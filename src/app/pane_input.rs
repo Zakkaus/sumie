@@ -174,6 +174,7 @@ impl Session {
             return Ok(None);
         };
         let tab = &mut self.tabs.as_mut_slice()[index];
+        let has_splits = tab.panes.len() > 1;
         let slot = tab.index(id);
         let pane = &mut tab.panes[slot];
         if let Event::ModifiersChanged(modifiers) = event {
@@ -194,16 +195,10 @@ impl Session {
             &mut self.routing,
             searching,
             event,
-            |dir, resize| {
-                if resize {
-                    tab.tree.resize(dir, &tab.layout)
-                } else {
-                    tab.tree.focus_neighbor(dir, &tab.layout)
-                }
-            },
+            has_splits,
         )? {
             Effect::Tab(action) => return Ok(Some(tabs::Action::Key(action))),
-            Effect::Pane(action) => return Ok(Some(tabs::Action::Pane(action, id))),
+            Effect::Pane(action) => return Ok(Some(tabs::Action::Pane(action))),
             Effect::Zoom(action) => self.zoom(action)?,
             effect => apply_pane_effect(
                 pane,

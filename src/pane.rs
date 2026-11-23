@@ -167,7 +167,21 @@ impl Pane for LocalPane {
                 let bytes = self.encoder.encode(&self.terminal, &event)?;
                 if !bytes.is_empty() {
                     self.pty.enqueue_input(bytes)?;
-                    return self.follow_input();
+                    if matches!(action, KeyAction::Release) {
+                        return Ok(PaneEffect::None);
+                    }
+                    // Ghostty emits printable text literally and Kitty key reports as CSI.
+                    let reported = matches!(action, KeyAction::Press)
+                        && bytes.starts_with(b"\x1b[")
+                        && self.terminal.reports_key_events()?;
+                    let effect = self.follow_input()?;
+                    return Ok(if reported {
+                        PaneEffect::ReportedPress {
+                            viewport_changed: matches!(effect, PaneEffect::ViewportChanged),
+                        }
+                    } else {
+                        effect
+                    });
                 }
             }
             PaneCommand::Mouse(event) => return self.pointer(event),

@@ -260,11 +260,11 @@ fn zoom_preserves_split_ratios_and_hidden_pty_sizes() {
     assert_eq!(layout.panes, [(2, BOUNDS)]);
     assert_eq!(layout.hidden, [hidden]);
     assert_eq!(layout.dividers, []);
-    assert!(!tree.focus_neighbor(Direction::Left, &layout));
     assert!(!tree.resize(Direction::Right, &layout));
     assert!(!tree.drag(id, [60, 20], &layout));
 
-    tree.toggle_zoom();
+    assert!(tree.focus_neighbor(Direction::Left, &layout));
+    assert_eq!(tree.focused(), 1);
     tree.layout(BOUNDS, [1; 2], &mut layout);
     assert_eq!(layout.dividers, [unzoomed]);
     assert_eq!(layout.hidden, []);

@@ -21,7 +21,7 @@ fn held_enter_never_reaches_the_next_pty() {
         &mut routing,
         false,
         enter(KeyAction::Press),
-        |_, _| false,
+        false,
     )
     .unwrap();
     assert!(first.pty.input_fd().is_some());
@@ -33,7 +33,7 @@ fn held_enter_never_reaches_the_next_pty() {
             &mut routing,
             false,
             enter(action),
-            |_, _| false,
+            false,
         )
         .unwrap();
         assert!(next.pty.input_fd().is_none());
@@ -62,9 +62,14 @@ fn held_keys_keep_their_release_but_not_their_repeat_across_focus() {
         &mut routing,
         false,
         ctrl(KeyAction::Press),
-        |_, _| false,
+        false,
     )
     .unwrap();
+    for _ in 0..20 {
+        panes[0].terminal.write(b"\r\n");
+    }
+    panes[0].terminal.scroll_rows(-3).unwrap();
+    assert!(!panes[0].terminal.at_bottom().unwrap());
     let generation = routing.change_recipient();
     for action in [KeyAction::Repeat, KeyAction::Release] {
         let event = ctrl(action);
@@ -74,16 +79,9 @@ fn held_keys_keep_their_release_but_not_their_repeat_across_focus() {
         } else {
             &mut panes[1]
         };
-        input::route(
-            (owner, generation),
-            pane,
-            &mut routing,
-            false,
-            event,
-            |_, _| false,
-        )
-        .unwrap();
+        input::route((owner, generation), pane, &mut routing, false, event, false).unwrap();
     }
+    assert!(!panes[0].terminal.at_bottom().unwrap());
     assert!(panes[1].pty.input_fd().is_none());
     panes[0].command(PaneCommand::Text(b"\n")).unwrap();
     panes[0].pty.flush_input().unwrap();
@@ -94,19 +92,40 @@ fn held_keys_keep_their_release_but_not_their_repeat_across_focus() {
 }
 
 #[test]
+fn rerouted_release_requires_a_reported_press() {
+    let mut pane = ready_pane("printf 'READY\\n'; exec cat", &request_environment());
+    for (mode, physical, symbol) in [(b"\x1b[>0u", 29, key::Control_L), (b"\x1b[>3u", 30, key::a)] {
+        pane.terminal.write(mode);
+        let event = |action| key_event(physical, symbol, action, Modifiers::default());
+        let mut routing = input::Routing::default();
+        input::route(
+            (0, 0),
+            &mut pane,
+            &mut routing,
+            false,
+            event(KeyAction::Press),
+            false,
+        )
+        .unwrap();
+        pane.pty.flush_input().unwrap();
+        let generation = routing.change_recipient();
+        pane.terminal.write(b"\x1b[>11u");
+        input::route(
+            (0, generation),
+            &mut pane,
+            &mut routing,
+            false,
+            event(KeyAction::Release),
+            false,
+        )
+        .unwrap();
+        assert!(pane.pty.input_fd().is_none());
+    }
+    close(pane);
+}
+
+#[test]
 fn unavailable_directional_chords_reach_the_pty() {
-    use sumie_core::splits::{Layout, Rect, SplitTree};
-    let mut tree = SplitTree::new(0);
-    let mut layout = Layout::default();
-    tree.layout(
-        Rect {
-            width: 480,
-            height: 240,
-            ..Rect::default()
-        },
-        [12, 24],
-        &mut layout,
-    );
     let mut pane = ready_pane("printf 'READY\\n'; exec cat", &request_environment());
     let mut routing = input::Routing::default();
     for shift in [false, true] {
@@ -118,21 +137,8 @@ fn unavailable_directional_chords_reach_the_pty() {
         };
         for action in [KeyAction::Press, KeyAction::Repeat, KeyAction::Release] {
             let event = key_event(105, key::Left, action, modifiers);
-            let effect = input::route(
-                (0, 0),
-                &mut pane,
-                &mut routing,
-                false,
-                event,
-                |dir, resize| {
-                    if resize {
-                        tree.resize(dir, &layout)
-                    } else {
-                        tree.focus_neighbor(dir, &layout)
-                    }
-                },
-            )
-            .unwrap();
+            let effect =
+                input::route((0, 0), &mut pane, &mut routing, false, event, false).unwrap();
             assert_eq!(effect, input::Effect::None);
             if !matches!(action, KeyAction::Release) {
                 assert!(pane.pty.input_fd().is_some());

@@ -30,7 +30,7 @@ fn local_pane_executes_committed_input_without_preedit() {
             cursor: None,
             generation: 0,
         },
-        |_, _| false,
+        false,
     )
     .unwrap();
     pane.command(PaneCommand::Text(b"echo hi")).unwrap();
@@ -117,7 +117,7 @@ fn matched_shortcuts_never_reach_the_pty() {
                     repeat,
                     serial: u32::from(!repeat),
                 },
-                |_, _| false,
+                false,
             )
             .unwrap();
             match (physical, pressed, repeat) {
@@ -197,7 +197,7 @@ fn window_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut inpu
                 let event = key_event(physical, symbol, action, modifiers);
                 let searching = searching && !matches!(action, Release);
                 assert_eq!(
-                    &input::route((0, 0), pane, routing, searching, event, |_, _| true).unwrap(),
+                    &input::route((0, 0), pane, routing, searching, event, true).unwrap(),
                     expected
                 );
                 assert!(pane.pty.input_fd().is_none(), "matched key: {physical}");
@@ -253,7 +253,7 @@ fn search_event(
         routing,
         searching,
         event,
-        |_, _| false,
+        false,
     )
     .unwrap()
 }

@@ -137,13 +137,20 @@ impl Session {
         let tab = self.tabs.active_mut().unwrap();
         match command {
             PaneAction::Split(axis) => return self.split(axis, gpu, config),
-            PaneAction::Focus(_) => {
+            PaneAction::Focus(dir) => {
+                if !tab.tree.focus_neighbor(dir, &tab.layout) {
+                    return Ok(());
+                }
+                if !tab.layout.hidden.is_empty() {
+                    tab.resize_grid(&self.view)?;
+                }
                 return self.focus_changed(
                     Some((self.tabs.active_index().unwrap(), previous)),
                     gpu,
                     false,
                 );
             }
+            PaneAction::Resize(dir) if !tab.tree.resize(dir, &tab.layout) => return Ok(()),
             PaneAction::Resize(_) => (),
             PaneAction::Zoom => tab.tree.toggle_zoom(),
         }

@@ -13,7 +13,7 @@ use super::{
 #[derive(Clone, Copy)]
 pub(super) enum Action {
     Key(TabAction),
-    Pane(PaneAction, u64),
+    Pane(PaneAction),
     Close(usize),
 }
 
@@ -336,7 +336,7 @@ impl Session {
             Action::Key(TabAction::Open) => self.open_tab(gpu, config)?,
             Action::Close(i) => self.close_tab(i, gpu)?,
             Action::Key(TabAction::Close) => self.close_pane(index, old, gpu)?,
-            Action::Pane(command, previous) => self.pane_action(command, previous, gpu, config)?,
+            Action::Pane(command) => self.pane_action(command, old, gpu, config)?,
             Action::Key(nav) if self.tabs.navigate(nav) => {
                 if matches!(nav, TabAction::MoveLeft | TabAction::MoveRight) {
                     self.view.reset_hits();

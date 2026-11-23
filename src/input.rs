@@ -39,12 +39,18 @@ pub(crate) enum SearchTarget {
     Close,
 }
 
+struct HeldKey {
+    physical: u32,
+    pane: u64,
+    generation: u64,
+    reported: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct Routing {
     shortcuts: Shortcuts,
     pub(crate) generation: u64,
-    // Physical key, owning pane, and generation in which repeats are allowed.
-    terminal_presses: Vec<(u32, u64, u64)>,
+    terminal_presses: Vec<HeldKey>,
     repeating_search_key: Option<u32>,
     search_presses: [Option<SearchTarget>; 3],
 }
@@ -75,23 +81,31 @@ impl Routing {
         };
         self.terminal_presses
             .iter()
-            .find(|p| p.0 == *physical)
-            .map(|p| p.1)
+            .find(|p| p.physical == *physical)
+            .map(|p| p.pane)
     }
 
     pub(crate) fn forget_pane(&mut self, id: u64) {
-        self.terminal_presses.retain(|p| p.1 != id);
+        self.terminal_presses.retain(|p| p.pane != id);
     }
 
     fn terminal_key(&mut self, physical: u32, id: u64, action: KeyAction) -> bool {
-        let held = self.terminal_presses.iter().position(|p| p.0 == physical);
-        let press = (physical, id, self.generation);
+        let held = self
+            .terminal_presses
+            .iter()
+            .position(|p| p.physical == physical);
         match (action, held) {
-            (KeyAction::Press, None) => self.terminal_presses.push(press),
-            (KeyAction::Press, Some(i)) => self.terminal_presses[i] = press,
-            (KeyAction::Repeat, Some(i)) => return self.terminal_presses[i] == press,
-            (KeyAction::Release, Some(i)) if self.terminal_presses[i].1 == id => {
+            (KeyAction::Press, Some(i)) => {
                 self.terminal_presses.swap_remove(i);
+            }
+            (KeyAction::Press, None) => (),
+            (KeyAction::Repeat, Some(i)) => {
+                let press = &self.terminal_presses[i];
+                return press.pane == id && press.generation == self.generation;
+            }
+            (KeyAction::Release, Some(i)) if self.terminal_presses[i].pane == id => {
+                let press = self.terminal_presses.swap_remove(i);
+                return press.generation == self.generation || press.reported;
             }
             _ => return false,
         }
@@ -140,7 +154,7 @@ pub(crate) fn route(
     routing: &mut Routing,
     searching: bool,
     event: Event,
-    perform: impl FnOnce(sumie_core::splits::Direction, bool) -> bool,
+    has_splits: bool,
 ) -> Result<Effect> {
     if matches!(
         &event,
@@ -180,7 +194,7 @@ pub(crate) fn route(
             let symbol = xkeysym::Keysym::new(keysym).key_char();
             let shortcut = routing
                 .shortcuts
-                .match_key(physical, symbol, modifiers, action, perform);
+                .match_key(physical, symbol, modifiers, action, has_splits);
             match shortcut {
                 Some(Shortcut::Tab(action)) => return Ok(Effect::Tab(action)),
                 Some(Shortcut::Pane(action)) => return Ok(Effect::Pane(action)),
@@ -211,8 +225,37 @@ pub(crate) fn route(
         }
         _ => return Ok(Effect::None),
     };
-    match send(pane, command)? {
-        PaneEffect::ViewportChanged => Ok(Effect::ViewportChanged),
+    send_input(pane, routing, id, command)
+}
+
+fn send_input(
+    pane: &mut impl Pane<Error = Error>,
+    routing: &mut Routing,
+    id: u64,
+    command: PaneCommand<'_>,
+) -> Result<Effect> {
+    let press = match command {
+        PaneCommand::Key {
+            physical,
+            action: KeyAction::Press,
+            ..
+        } => Some(physical),
+        _ => None,
+    };
+    let effect = send(pane, command)?;
+    if let Some(physical) = press {
+        routing.terminal_presses.push(HeldKey {
+            physical,
+            pane: id,
+            generation: routing.generation,
+            reported: matches!(effect, PaneEffect::ReportedPress { .. }),
+        });
+    }
+    match effect {
+        PaneEffect::ViewportChanged
+        | PaneEffect::ReportedPress {
+            viewport_changed: true,
+        } => Ok(Effect::ViewportChanged),
         _ => Ok(Effect::None),
     }
 }
