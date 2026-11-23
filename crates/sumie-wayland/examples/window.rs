@@ -57,6 +57,7 @@ impl fmt::Debug for EventMetadata<'_> {
             Event::Configured {
                 logical,
                 activated,
+                suspended,
                 maximized,
                 fullscreen,
                 server_decorated,
@@ -64,6 +65,7 @@ impl fmt::Debug for EventMetadata<'_> {
                 .debug_struct("Configured")
                 .field("logical", logical)
                 .field("activated", activated)
+                .field("suspended", suspended)
                 .field("maximized", maximized)
                 .field("fullscreen", fullscreen)
                 .field("server_decorated", server_decorated)

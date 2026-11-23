@@ -169,6 +169,14 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("hollow cursor border widened", "test", "crates/sumie-render/src/grid.rs",
           replace_once("solid([x, y + 1], [1, h - 2]);", "solid([x, y + 1], [2, h - 2]);"),
           "test grid_on_selected_backend ... FAILED")
+    probe("block cursor covers cell glyphs", "test", "crates/sumie-render/src/grid.rs",
+          replace_once("cursor.write(&mut write);\n"
+                       "                (\n"
+                       "                    Some((col..col + u32::from(columns), row, cursor.color)),\n"
+                       "                    None,\n"
+                       "                )",
+                       "(Some((col..col + u32::from(columns), row, cursor.color)), Some(cursor))"),
+          "test grid_on_selected_backend ... FAILED")
     probe("oversized OSC 52 clipboard write", "test", "crates/sumie-vt/src/effects.rs",
           replace_once("if len > OUTPUT_LIMIT - self.clipboard_bytes {",
                        "if len > OUTPUT_LIMIT + 1 - self.clipboard_bytes {"),

@@ -20,6 +20,7 @@ pub enum Event {
     Configured {
         logical: (u32, u32),
         activated: bool,
+        suspended: bool,
         maximized: bool,
         fullscreen: bool,
         server_decorated: bool,

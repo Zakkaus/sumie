@@ -99,6 +99,14 @@ mod tests {
             (b"\x1b[0 q", None, (Underline, true)),
             (b"\x1b[2 q", None, (Block, false)),
             (b"\x1bc", None, (Underline, true)),
+            (b"\x1b[?1049h", Some((Block, true)), (Block, true)),
+            (b"", Some((Bar, false)), (Bar, false)),
+            (b"\x1b[?1049l", None, (Bar, false)),
+            (b"\x1b[?12h\x1b[?1049h", None, (Bar, true)),
+            (b"\x1b[?1049l", None, (Bar, true)),
+            (b"\x1b[?47h", None, (Bar, true)),
+            (b"", Some((Underline, false)), (Underline, false)),
+            (b"\x1b[?47l", None, (Underline, false)),
         ] {
             assert_eq!(appearance(sequence, defaults), expected, "{sequence:?}");
         }

@@ -156,14 +156,37 @@ const GRID: DrawList<'static> = DrawList {
         glyph(1, 10, HALF, [240, 80, 40, 255]),
         glyph(2, 18, FULL, [64, 64, 64, 255]),
         glyph(3, 26, FULL, [192, 192, 192, 255]),
+        GlyphQuad {
+            dest: PixelRect {
+                origin: [18, 17],
+                size: CELL,
+            },
+            cell: [2, 1],
+            ..glyph(2, 18, FULL, [250, 80, 40, 255])
+        },
+        GlyphQuad {
+            atlas: AtlasRect {
+                size: [4, 16],
+                ..FULL
+            },
+            dest: PixelRect {
+                origin: [26, 17],
+                size: [4, 16],
+            },
+            cell: [3, 1],
+            ..glyph(3, 26, FULL, [250, 80, 40, 255])
+        },
     ],
     cursor: Some(Cursor {
         rect: PixelRect {
-            origin: [26, 17],
-            size: [8, 2],
+            origin: [18, 17],
+            size: [16, 16],
         },
-        color: [191, 46, 200, 255],
-        shape: CursorShape::Block,
+        color: [255; 4],
+        shape: CursorShape::Block {
+            cell: [2, 1],
+            columns: 2,
+        },
     }),
 };
 
@@ -178,9 +201,10 @@ fn assert_grid(pixels: &[u8], [lightened, darkened]: [u8; 2]) {
         ([33, 16], [darkened, darkened, darkened, 255], 1),
         ([34, 16], [0, 0, 0, 0], 0),
         ([2, 17], [65, 112, 94, 255], 1),
-        ([26, 17], [191, 46, 200, 255], 1),
-        ([33, 18], [191, 46, 200, 255], 1),
-        ([33, 19], [236, 231, 242, 255], 1),
+        // Both cells of a wide cursor keep their own background as text color.
+        ([18, 17], [22, 18, 40, 255], 1),
+        ([26, 17], [236, 231, 242, 255], 1),
+        ([33, 18], [255; 4], 1),
     ];
     for ([x, y], expected, tolerance) in samples {
         assert_pixel(pixels, x, y, expected, tolerance);
@@ -226,7 +250,7 @@ fn assert_cursor_shapes(
                     CursorShape::Bar => x < 2,
                     CursorShape::Underline => y >= 22,
                     CursorShape::Hollow => x == 0 || x == 7 || y == 0 || y == 23,
-                    CursorShape::Block => unreachable!(),
+                    CursorShape::Block { .. } | CursorShape::Solid => unreachable!(),
                 };
                 assert_pixel(
                     &pixels,

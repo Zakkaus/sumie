@@ -17,6 +17,7 @@ struct VertexOut {
 }
 
 const LUMINANCE = vec3<f32>(0.2126, 0.7152, 0.0722);
+const CURSOR_GLYPH: u32 = 0x80000000u;
 
 fn linear_rgb(srgb: vec3<f32>) -> vec3<f32> {
     return select(pow((srgb + 0.055) / 1.055, vec3<f32>(2.4)), srgb / 12.92, srgb <= vec3<f32>(0.04045));
@@ -67,7 +68,7 @@ fn vertex(
         let bg_luma = dot(linear_rgb(background.rgb) * background.a, LUMINANCE);
         let fg_luma = dot(fg, LUMINANCE);
         var adjusted_luma = fg_luma;
-        if frame.minimum_contrast > 1.0 {
+        if frame.minimum_contrast > 1.0 && (atlas_origin.x & CURSOR_GLYPH) == 0u {
             adjusted_luma = contrasted_luma(fg_luma, bg_luma, frame.minimum_contrast);
             if adjusted_luma > fg_luma {
                 fg = mix(fg, vec3<f32>(1.0), (adjusted_luma - fg_luma) / (1.0 - fg_luma));
@@ -77,7 +78,7 @@ fn vertex(
         }
         out.luminances = vec2<f32>(adjusted_luma, bg_luma);
         out.srgb_luminances = vec2<f32>(srgb_luma(out.luminances.x), srgb_luma(bg_luma));
-        out.atlas_position = vec2<f32>(atlas_origin + offset);
+        out.atlas_position = vec2<f32>(vec2<u32>(atlas_origin.x & ~CURSOR_GLYPH, atlas_origin.y) + offset);
     }
     out.color = vec4<f32>(fg * color.a, color.a);
     return out;

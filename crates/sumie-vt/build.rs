@@ -27,6 +27,7 @@ fn main() {
     let zig = zig();
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     let source = source(&out);
+    resolve_cursor_default_at_snapshot(&source);
     let prefix = out.join("ghostty-install");
     let mut build = Command::new(zig);
     build
@@ -56,6 +57,24 @@ fn main() {
         prefix.join("lib").display()
     );
     println!("cargo::rustc-link-lib=static=ghostty-vt");
+}
+
+fn resolve_cursor_default_at_snapshot(source: &Path) {
+    // The pinned Ghostty stores each screen's last shape, but default-following
+    // is terminal-wide. Resolve the default without changing the shared blink mode.
+    const VISUAL_STYLE: &str = "self.cursor.visual_style = s.cursor.cursor_style;";
+    const FIXED: &str = "self.cursor.visual_style = if (t.cursor.is_default)\n            \
+        t.cursor.default_style\n        else\n            s.cursor.cursor_style;";
+    let path = source.join("src/terminal/render.zig");
+    let text = fs::read_to_string(&path).expect("read pinned Ghostty render.zig");
+    if !text.contains(FIXED) {
+        assert_eq!(
+            text.matches(VISUAL_STYLE).count(),
+            1,
+            "Ghostty patch anchor"
+        );
+        fs::write(path, text.replacen(VISUAL_STYLE, FIXED, 1)).expect("patch Ghostty cursor shape");
+    }
 }
 
 fn zig() -> PathBuf {

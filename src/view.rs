@@ -10,7 +10,7 @@ use sumie_pty::Size;
 use sumie_render::{
     AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, PixelRect, Rgba, wgpu,
 };
-use sumie_vt::{Rgb, Snapshot, codepoint_width};
+use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 use sumie_wayland::CursorRect;
 
 use crate::Result;
@@ -291,43 +291,44 @@ impl View {
         focused: bool,
     ) {
         self.cursor = snapshot.cursor.and_then(|cursor| {
-            if banner && cursor.row == 0 {
+            if (banner && cursor.row == 0) || (!cursor.visible && overlay.is_none()) {
                 return None;
             }
-            let [column, row] = [u32::from(cursor.column), u32::from(cursor.row)];
-            let [x, y] = self.origin([column, row]);
-            let (rect, shape) = if let Some((_, _, width)) = overlay {
+            let [mut column, row] = [u32::from(cursor.column), u32::from(cursor.row)];
+            let (origin, size, shape) = if let Some((_, _, width)) = overlay {
+                let [x, y] = self.origin([column, row]);
                 (
-                    PixelRect {
-                        origin: [x, y + self.cell[1].cast_signed() - 2],
-                        size: [width * self.cell[0], 2],
-                    },
-                    CursorShape::Block,
-                )
-            } else if cursor.visible {
-                let shape = if focused {
-                    match cursor.style {
-                        sumie_vt::CursorStyle::Block => CursorShape::Block,
-                        sumie_vt::CursorStyle::Bar => CursorShape::Bar,
-                        sumie_vt::CursorStyle::Underline => CursorShape::Underline,
-                        sumie_vt::CursorStyle::Hollow => CursorShape::Hollow,
-                    }
-                } else {
-                    CursorShape::Hollow
-                };
-                let width = snapshot.rows[row as usize][column as usize].width.max(1);
-                (
-                    PixelRect {
-                        origin: [x, y],
-                        size: [u32::from(width) * self.cell[0], self.cell[1]],
-                    },
-                    shape,
+                    [x, y + self.cell[1].cast_signed() - 2],
+                    [width * self.cell[0], 2],
+                    CursorShape::Solid,
                 )
             } else {
-                return None;
+                let cells = &snapshot.rows[row as usize];
+                if focused
+                    && cursor.style == CursorStyle::Block
+                    && column > 0
+                    && cells[column as usize - 1].width == 2
+                {
+                    column -= 1;
+                }
+                let width = cells[column as usize].width.max(1);
+                let shape = match (focused, cursor.style) {
+                    (true, CursorStyle::Block) => CursorShape::Block {
+                        cell: [column, row],
+                        columns: width,
+                    },
+                    (true, CursorStyle::Bar) => CursorShape::Bar,
+                    (true, CursorStyle::Underline) => CursorShape::Underline,
+                    _ => CursorShape::Hollow,
+                };
+                (
+                    self.origin([column, row]),
+                    [u32::from(width) * self.cell[0], self.cell[1]],
+                    shape,
+                )
             };
             Some(Cursor {
-                rect,
+                rect: PixelRect { origin, size },
                 color: rgba(cursor.color),
                 shape,
             })

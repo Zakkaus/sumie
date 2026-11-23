@@ -36,6 +36,7 @@ pub(crate) fn run(capture: capture::Options) -> Result<()> {
         reload,
         session: None,
         focused: false,
+        suspended: false,
         events: Vec::new(),
     };
     let result = app.drive();
@@ -54,6 +55,7 @@ struct App {
     reload: Reload,
     session: Option<Session>,
     focused: bool,
+    suspended: bool,
     events: Vec<Event>,
 }
 
@@ -103,13 +105,14 @@ impl App {
             if let Some(session) = &mut self.session {
                 session.watch_input()?;
                 let gpu = self.gpu.as_mut().unwrap();
-                let ready =
-                    gpu.frame_slot_available() && retry.is_none_or(|at| Instant::now() >= at);
+                let ready = !self.suspended
+                    && gpu.frame_slot_available()
+                    && session.frame_retry.is_none_or(|at| Instant::now() >= at);
                 if ready {
                     session.update_snapshot()?;
                 }
                 let banner = self.reload.banner.as_deref();
-                session.watch_blink(self.focused, banner)?;
+                session.watch_blink(self.focused && !self.suspended, banner)?;
                 if ready && session.draw(gpu, &self.capture, banner, self.focused)? {
                     return Ok(());
                 }
@@ -152,6 +155,7 @@ impl App {
             if changes.cursor {
                 set_cursor_defaults(&mut session.pane.terminal, next.cursor)?;
                 session.snapshot_dirty = true;
+                session.update_snapshot()?;
             }
             if changes.selection_colors {
                 session.view.set_selection_colors(&next.colors);
@@ -175,7 +179,15 @@ impl App {
         match event {
             Event::CloseRequested => return Ok(true),
             Event::Presentation(feedback) => tracing::trace!(?feedback, "presentation feedback"),
-            Event::Configured { activated, .. } => {
+            Event::Configured {
+                activated,
+                suspended,
+                ..
+            } => {
+                self.suspended = suspended;
+                if suspended && let Some(session) = &mut self.session {
+                    session.frame_retry = None;
+                }
                 if self.focused != activated {
                     self.focused = activated;
                     if let Some(session) = &mut self.session {
@@ -393,9 +405,9 @@ impl Session {
         Ok(())
     }
 
-    fn watch_blink(&mut self, focused: bool, banner: Option<&str>) -> Result<()> {
+    fn watch_blink(&mut self, eligible: bool, banner: Option<&str>) -> Result<()> {
         let cursor = self.snapshot.as_ref().and_then(|snapshot| snapshot.cursor);
-        let enabled = focused
+        let enabled = eligible
             && self.view.preedit.is_empty()
             && cursor.is_some_and(|cursor| {
                 cursor.visible && cursor.blink && (cursor.row != 0 || banner.is_none())

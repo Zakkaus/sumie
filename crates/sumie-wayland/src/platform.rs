@@ -470,13 +470,15 @@ impl WindowHandler for State {
                 "server-side decorations unavailable; P0 window has no client-side decorations"
             );
         }
+        let suspended = configure.state.contains(WindowState::SUSPENDED);
         #[cfg(debug_assertions)]
         if let Some(log) = &mut self.present_log {
-            log.visibility(configure.state.contains(WindowState::SUSPENDED));
+            log.visibility(suspended);
         }
         self.events.push_back(Event::Configured {
             logical,
             activated: configure.is_activated(),
+            suspended,
             maximized: configure.is_maximized(),
             fullscreen: configure.is_fullscreen(),
             server_decorated,

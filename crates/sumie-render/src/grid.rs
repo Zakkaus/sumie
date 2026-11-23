@@ -24,15 +24,21 @@ pub struct GlyphQuad {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CursorShape {
-    Block,
+    /// Draw behind text and recolor glyphs owned by these cells.
+    Block {
+        cell: [u32; 2],
+        columns: u8,
+    },
     Bar,
     Underline,
     Hollow,
+    /// Fill the rectangle without affecting glyph colors, for IME preedit.
+    Solid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cursor {
-    /// Cell bounds in device pixels, or the already-sized rectangle for a solid block.
+    /// Cell bounds in device pixels, or the already-sized rectangle for `Solid`.
     pub rect: PixelRect,
     pub color: Rgba,
     pub shape: CursorShape,
@@ -66,7 +72,9 @@ impl Cursor {
                 solid([x, y + 1], [1, h - 2]);
                 solid([x + w.cast_signed() - 1, y + 1], [1, h - 2]);
             }
-            CursorShape::Block | CursorShape::Hollow => solid([x, y], [w, h]),
+            CursorShape::Block { .. } | CursorShape::Hollow | CursorShape::Solid => {
+                solid([x, y], [w, h]);
+            }
         }
     }
 }
@@ -118,6 +126,14 @@ impl Instance {
             background,
         }
     }
+
+    fn cursor_glyph(glyph: &GlyphQuad, text: Rgba, fill: Rgba) -> Self {
+        let mut instance = Self::glyph(glyph, fill);
+        // Atlas coordinates never use the high bit; the shader uses it to skip contrast correction.
+        instance.atlas_origin[0] |= 1 << 31;
+        instance.color = text;
+        instance
+    }
 }
 
 impl DrawList<'_> {
@@ -152,13 +168,39 @@ impl DrawList<'_> {
                 write(Instance::solid(rect, color));
             }
         }
+        let (cursor_cells, overlay) = match self.cursor {
+            Some(
+                cursor @ Cursor {
+                    shape:
+                        CursorShape::Block {
+                            cell: [col, row],
+                            columns,
+                        },
+                    ..
+                },
+            ) => {
+                cursor.write(&mut write);
+                (
+                    Some((col..col + u32::from(columns), row, cursor.color)),
+                    None,
+                )
+            }
+            overlay => (None, overlay),
+        };
         for glyph in self.glyphs {
             let [col, row] = glyph.cell;
             debug_assert!(col < self.grid_size[0] && row < self.grid_size[1]);
             let background = self.backgrounds[row as usize * columns + col as usize];
-            write(Instance::glyph(glyph, background));
+            if let Some((cells, cursor_row, fill)) = &cursor_cells
+                && row == *cursor_row
+                && cells.contains(&col)
+            {
+                write(Instance::cursor_glyph(glyph, background, *fill));
+            } else {
+                write(Instance::glyph(glyph, background));
+            }
         }
-        if let Some(cursor) = self.cursor {
+        if let Some(cursor) = overlay {
             cursor.write(write);
         }
     }
