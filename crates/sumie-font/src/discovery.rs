@@ -5,12 +5,14 @@ use skrifa::{Font, FontRef, Tag};
 
 use crate::FontError;
 
-#[derive(Debug)]
+#[cfg_attr(target_os = "linux", derive(Debug))]
 pub(crate) struct Match {
     pub family: String,
     path: PathBuf,
     index: u32,
     weight: Option<u16>,
+    #[cfg(target_os = "macos")]
+    bytes: skrifa::font::Blob,
 }
 
 impl Match {
@@ -19,12 +21,19 @@ impl Match {
         let source = if let Some(face) = faces.iter().find(|face| face.matched.path == self.path) {
             face.font.source().clone()
         } else {
-            std::fs::read(&self.path)
-                .map_err(|source| FontError::ReadFont {
-                    path: self.path.clone(),
-                    source,
-                })?
-                .into()
+            #[cfg(target_os = "linux")]
+            {
+                std::fs::read(&self.path)
+                    .map_err(|source| FontError::ReadFont {
+                        path: self.path.clone(),
+                        source,
+                    })?
+                    .into()
+            }
+            #[cfg(target_os = "macos")]
+            {
+                self.bytes.clone().into()
+            }
         };
         let font = Font::new(source, self.face_index())
             .ok_or_else(|| FontError::InvalidFont(self.path.clone()))?;
@@ -91,7 +100,7 @@ impl Discovery {
         })
     }
 
-    pub fn find(&self, codepoint: Option<char>) -> Result<Match, FontError> {
+    pub fn find(&mut self, codepoint: Option<char>) -> Result<Match, FontError> {
         if let Some(ch) = codepoint.filter(|&ch| is_private_use(ch))
             && let Some(matched) = self.find_nerd(ch)?
         {
@@ -206,16 +215,7 @@ pub(crate) fn is_nerd_family(family: &str) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) enum Discovery {}
+mod core_text;
 
 #[cfg(target_os = "macos")]
-impl Discovery {
-    pub fn new(_: &str, _: Option<u16>) -> Result<Self, FontError> {
-        // TODO(P1): Discover the primary and fallback faces through Core Text.
-        Err(FontError::UnsupportedPlatform)
-    }
-
-    pub fn find(&self, _: Option<char>) -> Result<Match, FontError> {
-        match *self {}
-    }
-}
+pub(crate) use core_text::Discovery;

@@ -6,14 +6,18 @@
 
 #[cfg(target_os = "linux")]
 mod app;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod capture;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod frame_window;
 #[cfg(target_os = "linux")]
 mod gpu;
 #[cfg(target_os = "linux")]
 mod input;
 #[cfg(target_os = "linux")]
 mod keycodes;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_os = "linux")]
 mod pane;
 #[cfg(target_os = "linux")]
@@ -63,7 +67,9 @@ fn run() -> Result<()> {
     #[cfg(target_os = "linux")]
     return run_app(args);
     // TODO(P1): Watch configuration on macOS with kqueue.
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    return macos::run(&capture::Options::parse(args)?);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     Ok(())
 }
 

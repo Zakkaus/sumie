@@ -2,9 +2,11 @@
 
 [English](README.md)
 
-sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wgpu。在 Linux Wayland 上，按住滑鼠左鍵拖曳即可選取文字，放開時會將文字複製到剪貼簿。按 Ctrl+Shift+C 可再次複製選取的文字，按 Ctrl+Shift+V 可貼上。macOS 支援尚在規劃中。
+sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wgpu。在 Linux Wayland 上，按住滑鼠左鍵拖曳即可選取文字，放開時會將文字複製到剪貼簿。按 Ctrl+Shift+C 可再次複製選取的文字，按 Ctrl+Shift+V 可貼上。
 
-首次啟動時，sumie 使用 ncurses 的 `tic` 將 `xterm-sumie` 安裝到 `$XDG_DATA_HOME/sumie/terminfo`（預設為 `~/.local/share/sumie/terminfo`）。內附的原始碼有變更時才重新編譯；若無法安裝，sumie 會改用 `TERM=xterm-256color` 啟動 shell。
+在 macOS 13 以上版本，sumie 會開啟 Metal 測試頁，不啟動 shell。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
+
+在 Linux 上首次啟動時，sumie 使用 ncurses 的 `tic` 將 `xterm-sumie` 安裝到 `$XDG_DATA_HOME/sumie/terminfo`（預設為 `~/.local/share/sumie/terminfo`）。內附的原始碼有變更時才重新編譯；若無法安裝，sumie 會改用 `TERM=xterm-256color` 啟動 shell。
 滾輪每格捲動三行歷史記錄。程式若開啟滑鼠追蹤，滾輪事件會送給程式；此時按一下左鍵可點擊，拖曳可選取終端機文字，按住 Alt 拖曳則交由程式處理。`less` 等使用替代螢幕的程式若未追蹤滑鼠，且已開啟模式 1007（預設開啟），滾輪每格會送出三次方向鍵。捲動會清除選取範圍，輸入文字會回到底部。
 
 ## 建置與檢查

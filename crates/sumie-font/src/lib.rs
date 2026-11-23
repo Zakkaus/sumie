@@ -1,7 +1,8 @@
 //! Owns font discovery and fallback, shaping, rasterization, and glyph atlas
 //! data. Does not issue GPU calls or read or change terminal state.
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(target_os = "macos"), forbid(unsafe_code))]
+#![deny(unsafe_code)]
 
 mod atlas;
 mod discovery;
@@ -82,8 +83,9 @@ impl GlyphKey {
 
 #[derive(Debug, Error)]
 pub enum FontError {
-    #[error("font discovery is not supported on this platform")]
-    UnsupportedPlatform,
+    #[cfg(target_os = "macos")]
+    #[error("Core Text returned no font file URL for {0}")]
+    MissingFontUrl(String),
     #[error("could not initialize Fontconfig")]
     FontconfigInit,
     #[cfg(target_os = "linux")]
@@ -158,7 +160,7 @@ impl FontSystem {
         {
             return Err(FontError::InvalidWeight);
         }
-        let discovery = Discovery::new(family, options.weight)?;
+        let mut discovery = Discovery::new(family, options.weight)?;
         let matched = discovery.find(None)?;
         let font = matched.load(&[])?;
         let metrics = CellMetrics::measure(&font, ppem)?;

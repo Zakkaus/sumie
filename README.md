@@ -2,9 +2,11 @@
 
 [繁體中文](README.zh-TW.md)
 
-sumie is a GPU terminal emulator written in Rust with libghostty-vt and wgpu. On Linux Wayland, drag with the left mouse button to select text. Releasing the button copies the selection to the clipboard. Press Ctrl+Shift+C to copy it again, or Ctrl+Shift+V to paste. macOS support is planned.
+sumie is a GPU terminal emulator written in Rust with libghostty-vt and wgpu. On Linux Wayland, drag with the left mouse button to select text. Releasing the button copies the selection to the clipboard. Press Ctrl+Shift+C to copy it again, or Ctrl+Shift+V to paste.
 
-On first launch, sumie uses ncurses `tic` to install `xterm-sumie` under `$XDG_DATA_HOME/sumie/terminfo` (default: `~/.local/share/sumie/terminfo`). It reuses the entry until the bundled source changes. If it cannot install the entry, it starts the shell with `TERM=xterm-256color` instead.
+On macOS 13 or later, sumie opens a Metal test page, not a shell. Run `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` to save the third presented frame and close the window.
+
+On first launch on Linux, sumie uses ncurses `tic` to install `xterm-sumie` under `$XDG_DATA_HOME/sumie/terminfo` (default: `~/.local/share/sumie/terminfo`). It reuses the entry until the bundled source changes. If it cannot install the entry, it starts the shell with `TERM=xterm-256color` instead.
 
 For bash, zsh and fish login shells, sumie installs scripts under `$XDG_DATA_HOME/sumie/shell-integration` without editing your startup files. They mark prompts and commands (OSC 133) and report the working directory (OSC 7). The `ssh` wrapper sets `TERM=xterm-256color` for SSH only and requests `COLORTERM` and `TERM_PROGRAM` forwarding. The server must allow these variables through `AcceptEnv`. Set `integration = false` in `[shell]` to skip injection and leave `ssh` unchanged.
 

@@ -6,15 +6,15 @@ use sumie_render::{
 };
 use sumie_wayland::{CursorRect, Event, Platform, SourceHandle};
 
-use crate::{Result, capture::Readback};
-
-/// Window-side frame pacing, confined to the event-loop thread.
-trait FrameWindow {
-    fn frame_slot_available(&self) -> bool;
-    fn arm_frame_callback(&mut self);
-}
+use crate::{Result, capture::Readback, frame_window::FrameWindow};
 
 impl FrameWindow for Platform {
+    type Context = str;
+
+    fn open(title: &str) -> Result<Self> {
+        Ok(Self::connect(title)?)
+    }
+
     fn frame_slot_available(&self) -> bool {
         self.can_present()
     }
@@ -33,7 +33,7 @@ pub(crate) struct Gpu {
 
 impl Gpu {
     pub(crate) fn new(capture: bool, minimum_contrast: f32) -> Result<Self> {
-        let window = Platform::connect("sumie")?;
+        let window = Platform::open("sumie")?;
         let instance = wgpu::Instance::new(instance_descriptor(
             wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
                 window.display_handle_source(),

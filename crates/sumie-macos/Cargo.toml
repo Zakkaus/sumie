@@ -5,5 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = { version = "0.30.12", default-features = false, features = ["rwh_06"] }
+
 [lints]
 workspace = true

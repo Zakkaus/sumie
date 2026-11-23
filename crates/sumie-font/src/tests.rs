@@ -175,7 +175,7 @@ mod linux {
             ('龍', 2, "Noto Sans CJK TC"),
         ];
         let results = cases.map(|(ch, cells, fixture)| -> Result<(), String> {
-            let discovery = crate::Discovery::new(fixture, None).unwrap();
+            let mut discovery = crate::Discovery::new(fixture, None).unwrap();
             let matched = discovery.find(None).unwrap();
             if matched.family != fixture
                 || matched
@@ -337,4 +337,22 @@ fn nerd_family_names() {
     ] {
         assert_eq!(is_nerd_family(family), nerd, "{family}");
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn core_text_loads_the_named_collection_face_and_cjk_fallback() {
+    use skrifa::{MetadataProvider as _, string::StringId};
+
+    let mut font =
+        crate::FontSystem::new("Menlo-Bold", 20.0, 1.0, crate::FontOptions::default()).unwrap();
+    let face = font.faces[0].sfnt().unwrap();
+    assert!(
+        face.localized_strings(StringId::POSTSCRIPT_NAME)
+            .any(|name| name.chars().eq("Menlo-Bold".chars()))
+    );
+    let run = font.shape("水", &[2]).unwrap();
+    let key = run.glyphs[0].key;
+    assert_ne!(key.face(), font.primary_face());
+    assert!(font.rasterize(key).unwrap().rect.width > 0);
 }

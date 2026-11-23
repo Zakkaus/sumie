@@ -57,6 +57,10 @@ For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actu
 
 `gpu` creates the wgpu surface with safe `Instance::create_surface` and passes it to `SurfaceRenderer`. wgpu retains the shared `WindowOwner`; the renderer's GPU resources drop before the surface, and the native window cannot drop while the surface still owns it.
 
+## macOS smoke window
+
+`sumie-macos` owns the winit event loop and creates its window on the main thread when winit resumes. The binary's `macos` module owns the Metal surface and frame scheduling. Both platforms use the binary's `FrameWindow` contract to notify the window system just before presentation. The macOS test page owns a fixed grid of ASCII, CJK and box-drawing glyphs, not a terminal or PTY. It rebuilds the atlas on scale changes; a size change only reconfigures the surface. In frame-limited mode it requests redraws until the requested presentation, then writes that frame if a screenshot was requested.
+
 ## Terminal core (`sumie-vt`)
 
 `Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. It includes resolved foreground and background colors and the viewport cursor. No handles or borrowed native data escape the crate.
@@ -71,7 +75,7 @@ The VT `selection` module converts viewport coordinates to native grid reference
 
 ## Font pipeline (`sumie-font`)
 
-`FontSystem` owns font discovery, loaded faces, shaping and rasterization scratch space, and one CPU atlas. Linux uses `fontconfig` for family aliases and locale-aware charset matches. Font discovery and the first use of a fallback face can block on file I/O. macOS discovery returns an unsupported-platform error until P1 Core Text integration.
+`FontSystem` owns font discovery, loaded faces, shaping and rasterization scratch space, and one CPU atlas. Linux uses `fontconfig` for family aliases and locale-aware charset matches. On macOS, Core Text selects the primary font by name and uses its cascade for missing characters. The font file's PostScript names identify faces within collections. Font discovery and the first use of a fallback face can block on file I/O.
 
 The caller supplies the grid widths for an already ordered, left-to-right run, including zero-width continuations. The font crate does not infer widths from Unicode or consult terminal state. HarfRust shapes face runs with `calt` and `liga`; glyph advances inside a cluster do not change its grid span. Wide clusters center their shaped advance in two cells. Fallback sizing uses the advance of `水`. Each fallback face shares one baseline that centers its ascent and descent in the row. Oversized ink shrinks to fit and is centered horizontally.
 
