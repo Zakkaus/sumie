@@ -52,7 +52,9 @@ For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actu
 
 The caller supplies the grid widths for an already ordered, left-to-right run, including zero-width continuations. The font crate does not infer widths from Unicode or consult terminal state. HarfRust shapes face runs with `calt` and `liga`; glyph advances inside a cluster do not change its grid span. Wide clusters use a two-cell slot, with fallback sizing based on the advance of `水` and ink centered in the slot.
 
-Skrifa draws unhinted outlines into Zeno's 8-bit coverage rasterizer. Glyph origins and cell metrics use integer device pixels. Atlas entries retain their pixel rectangles when the shelf packer grows; growth marks the full atlas dirty. At a new scale or font size, replace the `FontSystem` and its atlas together. The binary reads the atlas dimensions, bytes, and dirty rectangles, then clears the dirty regions after consuming them. The font crate does not call the GPU.
+Skrifa draws outlines into Zeno's 8-bit coverage rasterizer. `FontOptions` fixes the hinting mode for one font system. The default mode leaves outlines unhinted. Enabled modes cache a hinter per face and raster size without changing grid metrics or shaping advances. An optional CSS weight applies to the primary match and overrides its `wght` coordinate if present.
+
+Glyph origins and cell metrics use integer device pixels. Atlas entries retain their pixel rectangles when the shelf packer grows; growth marks the full atlas dirty. At a new scale or font size, replace the `FontSystem` and its atlas together. The binary reads the atlas dimensions, bytes, and dirty rectangles, then clears the dirty regions after consuming them. The font crate does not call the GPU.
 
 ## GPU renderer (`sumie-render`)
 

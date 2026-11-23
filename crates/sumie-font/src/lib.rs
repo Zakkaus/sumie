@@ -24,6 +24,23 @@ pub use metrics::CellMetrics;
 
 const MAX_PPEM: f32 = 4096.0;
 
+/// Grid fitting applied to glyph outlines, independently of shaping and cell metrics.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum Hinting {
+    #[default]
+    Off,
+    Light,
+    Normal,
+}
+
+/// Font selection and rasterization settings for one font system and atlas.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FontOptions {
+    pub hinting: Hinting,
+    /// Primary face weight on the CSS scale, 100 through 900. `None` leaves matching unchanged.
+    pub weight: Option<u16>,
+}
+
 /// Identifies a face, including its font collection index and variation instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FaceId(usize);
@@ -77,6 +94,8 @@ pub enum FontError {
         "logical size and scale must be positive and finite, with a device size no greater than 4096 px"
     )]
     InvalidSize,
+    #[error("font weight must be an integer from 100 through 900")]
+    InvalidWeight,
     #[error("could not read font {path:?}: {source}")]
     ReadFont {
         path: PathBuf,
@@ -100,6 +119,8 @@ pub enum FontError {
     UnsupportedGlyph,
     #[error("Skrifa: {0}")]
     Outline(skrifa::ScaleError),
+    #[error("Skrifa hinted outline: {0}")]
+    HintedOutline(#[from] skrifa::outline::DrawError),
     #[error("not enough space to grow the glyph atlas")]
     AtlasFull,
 }
@@ -116,18 +137,29 @@ pub struct FontSystem {
 }
 
 impl FontSystem {
-    /// Resolves `family` using platform aliases and loads its default style.
+    /// Resolves the primary face using platform family aliases and the requested weight.
     ///
     /// # Errors
-    /// Returns an error for an invalid size, failed discovery or load, or missing grid metrics.
-    pub fn new(family: &str, logical_px: f32, scale: f32) -> Result<Self, FontError> {
+    /// Returns an error for an invalid size or weight, failed discovery or load, or missing grid metrics.
+    pub fn new(
+        family: &str,
+        logical_px: f32,
+        scale: f32,
+        options: FontOptions,
+    ) -> Result<Self, FontError> {
         let ppem = logical_px * scale;
         if logical_px <= 0.0 || scale <= 0.0 || !(0.0 < ppem && ppem <= MAX_PPEM) {
             return Err(FontError::InvalidSize);
         }
-        let discovery = Discovery::new(family)?;
+        if options
+            .weight
+            .is_some_and(|weight| !(100..=900).contains(&weight))
+        {
+            return Err(FontError::InvalidWeight);
+        }
+        let discovery = Discovery::new(family, options.weight)?;
         let matched = discovery.find(None)?;
-        let font = matched.load(&[])?;
+        let font = matched.load(&[], options.weight)?;
         let metrics = CellMetrics::measure(&font, ppem)?;
         Ok(Self {
             discovery,
@@ -139,7 +171,7 @@ impl FontSystem {
             fallback: HashMap::new(),
             metrics,
             layout: layout::Layout::default(),
-            rasterizer: raster::Rasterizer::default(),
+            rasterizer: raster::Rasterizer::new(options.hinting),
             atlas: Atlas::new(128),
         })
     }
@@ -180,7 +212,7 @@ impl FontSystem {
                 .ok_or(missing)?;
             FaceId(index)
         } else {
-            let font = matched.load(&self.faces)?;
+            let font = matched.load(&self.faces, None)?;
             font.charmap().map_unicode(ch).ok_or(missing)?;
             let ppem = self.metrics.fallback_ppem(&font, self.faces[0].ppem);
             let id = FaceId(self.faces.len());
@@ -205,7 +237,7 @@ impl FontSystem {
             return Ok(entry);
         }
         let face = self.faces.get(key.face.0).ok_or(FontError::UnknownFace)?;
-        self.rasterizer.draw(&face.font, key, &mut self.atlas)
+        self.rasterizer.draw(face, key, &mut self.atlas)
     }
 
     #[must_use]

@@ -1,15 +1,19 @@
 #[cfg(target_os = "linux")]
 mod linux {
-    use crate::{FontError, FontSystem};
+    use crate::{FontError, FontOptions, FontSystem, Hinting};
 
-    fn jetbrains() -> Option<FontSystem> {
+    fn jetbrains_at(logical_px: f32, scale: f32, options: FontOptions) -> Option<FontSystem> {
         const FAMILY: &str = "JetBrains Mono";
-        let fonts = FontSystem::new(FAMILY, 20.0, 1.5).unwrap();
+        let fonts = FontSystem::new(FAMILY, logical_px, scale, options).unwrap();
         if fonts.family(fonts.primary_face()) != Some(FAMILY) {
             eprintln!("skipped: {FAMILY} is not installed");
             return None;
         }
         Some(fonts)
+    }
+
+    fn jetbrains() -> Option<FontSystem> {
+        jetbrains_at(20.0, 1.5, FontOptions::default())
     }
 
     #[test]
@@ -34,6 +38,37 @@ mod linux {
                 .iter()
                 .any(|&pixel| pixel > 0 && pixel < 255)
         );
+    }
+
+    #[test]
+    fn normal_hinting_saturates_the_stem() {
+        let mut saturated = [0; 2];
+        for (count, hinting) in saturated.iter_mut().zip([Hinting::Off, Hinting::Normal]) {
+            let options = FontOptions {
+                hinting,
+                ..FontOptions::default()
+            };
+            let Some(mut fonts) = jetbrains_at(18.33, 1.0, options) else {
+                return;
+            };
+            let key = fonts.shape("l", &[1]).unwrap().glyphs[0].key;
+            let rect = fonts.rasterize(key).unwrap().rect;
+            let atlas = fonts.atlas();
+            let stride = atlas.dimensions()[0] as usize;
+            let x = rect.x as usize;
+            let width = rect.width as usize;
+            *count = atlas
+                .pixels()
+                .chunks_exact(stride)
+                .skip(rect.y as usize)
+                .take(rect.height as usize)
+                .flat_map(|row| &row[x..x + width])
+                .filter(|&&pixel| pixel == 255)
+                .count();
+        }
+        let [off, normal] = saturated;
+        println!("opaque pixels: Off={off}, Normal={normal}");
+        assert!(normal > off, "opaque pixels: Off={off}, Normal={normal}");
     }
 
     #[test]

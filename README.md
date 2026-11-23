@@ -10,6 +10,13 @@ Build the workspace from the repository root with `cargo build --workspace --loc
 
 With Git, Python 3.11 or newer, rustfmt, and Clippy available, run `scripts/check-all.sh` from the repository root. Use `--fast` to skip the probes that temporarily edit source files. See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate boundaries and hook setup.
 
+## Font comparison on Linux
+
+Set `SUMIE_FONT` to the font family and `SUMIE_FONT_PX` to the logical pixel size.
+`SUMIE_FONT_HINTING` accepts `off` (default), `light`, or `normal`. Set
+`SUMIE_FONT_WEIGHT` to an integer from 100 through 900 to select the primary
+font weight; omit it to use the platform's default match.
+
 ## License
 
 [GNU Affero General Public License v3.0 or later](LICENSE) (`AGPL-3.0-or-later`).

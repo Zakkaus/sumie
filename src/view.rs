@@ -3,7 +3,7 @@ use std::{
     mem::{Discriminant, discriminant},
 };
 
-use sumie_font::{FontError, FontSystem};
+use sumie_font::{FontError, FontOptions, FontSystem, Hinting};
 use sumie_pty::Size;
 use sumie_render::{AtlasRect, AtlasUpload, Cursor, DrawList, GlyphQuad, PixelRect, Rgba, wgpu};
 use sumie_vt::{Rgb, Snapshot, codepoint_width};
@@ -338,7 +338,22 @@ fn font_at_scale(scale: u32) -> Result<FontSystem> {
     // P0 comparison overrides until the TOML config lands in P1.
     let family = std::env::var("SUMIE_FONT").unwrap_or_else(|_| "JetBrains Mono".into());
     let px = std::env::var("SUMIE_FONT_PX").map_or(Ok(20.0), |px| px.parse::<f32>())?;
-    let font = FontSystem::new(&family, px, f32::from(scale_units) / 120.0)?;
+    let hinting = match std::env::var("SUMIE_FONT_HINTING").as_deref() {
+        Err(std::env::VarError::NotPresent) | Ok("off") => Hinting::Off,
+        Ok("light") => Hinting::Light,
+        Ok("normal") => Hinting::Normal,
+        _ => return Err("SUMIE_FONT_HINTING must be off, light, or normal".into()),
+    };
+    let weight = match std::env::var("SUMIE_FONT_WEIGHT") {
+        Err(std::env::VarError::NotPresent) => None,
+        value => Some(value?.parse().map_err(|_| FontError::InvalidWeight)?),
+    };
+    let font = FontSystem::new(
+        &family,
+        px,
+        f32::from(scale_units) / 120.0,
+        FontOptions { hinting, weight },
+    )?;
     let metrics = font.metrics();
     tracing::info!(
         family = font.family(font.primary_face()),

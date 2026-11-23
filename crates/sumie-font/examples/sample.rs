@@ -2,7 +2,7 @@
 
 use std::{error::Error, fs::File, io::BufWriter};
 
-use sumie_font::{Atlas, AtlasGlyph, FontSystem, ShapedGlyph};
+use sumie_font::{Atlas, AtlasGlyph, FontOptions, FontSystem, ShapedGlyph};
 
 fn main() -> Result<(), Box<dyn Error>> {
     const TEXT: &str = "hello 中文 -> != ===";
@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output = std::env::args_os()
         .nth(1)
         .ok_or("usage: sample OUTPUT.png")?;
-    let mut fonts = FontSystem::new("JetBrains Mono", 20.0, 1.5)?;
+    let mut fonts = FontSystem::new("JetBrains Mono", 20.0, 1.5, FontOptions::default())?;
     let widths: Vec<_> = TEXT
         .chars()
         .map(|ch| if matches!(ch, '中' | '文') { 2 } else { 1 })
