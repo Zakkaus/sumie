@@ -28,9 +28,11 @@ Two edges are deliberately closed:
 
 ## Single-pane Linux application
 
-`main` handles the schema and defaults commands without opening a window. For a Linux session it loads TOML once before connecting to Wayland and logs invalid settings. The binary maps font settings and environment overrides into `FontSettings`, applies terminal colors before spawning the PTY, and passes selection overrides to the view and the minimum contrast ratio to the renderer.
+`main` handles the schema and defaults commands without opening a window. The Linux app loads TOML before connecting to Wayland. It maps font settings and environment overrides into `FontSettings`. It configures terminal colors before spawning the PTY, passes selection overrides to the view, and sets the renderer's minimum contrast ratio.
 
 `app` drives Wayland and the PTY on one calloop thread. `pane` owns the local terminal, key encoder and PTY. The consumer calls `Pane::command` and draws from its own `Pane::snapshot` result; neither method waits for PTY I/O. `view` composes the owned snapshot and IME preedit into device-pixel draw lists and hands font atlas data to the renderer. `capture` handles opt-in frame readback and PNG output; normal presentation does not read back pixels.
+
+On Linux, `sumie-config::Watch` registers the primary file, every visited include, and their parent directories before reading. It watches for atomic replacement and follows missing paths from the nearest existing parent. `reload` registers its nonblocking inotify descriptor with calloop and supplies a 100 ms deadline after the last relevant notification. Loading TOML and rebuilding a changed font can block the event-loop thread on filesystem I/O; the watcher itself spawns no thread. Failed loads retain the active settings and log a diagnostic once per outstanding error. `view` draws the diagnostic in place of the first terminal row, truncating with an ellipsis and leaving the terminal grid and its contents intact. Repair removes the overlay even when the effective settings did not change; other unchanged saves do not schedule a frame.
 
 `pane::terminfo` owns the bundled entry and its on-disk cache, not the PTY or VT replies. `request_environment` resolves it before spawning a child. Its first call can block on the cache lock, filesystem access, and `tic`; live-pane methods never call it. A missing or stale entry that cannot be compiled falls back to `xterm-256color` without exporting a `TERMINFO` override.
 

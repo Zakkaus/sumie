@@ -53,12 +53,7 @@ impl LocalPane {
         let term = env.get(std::ffi::OsStr::new("TERM"));
         terminal.set_identity(XTVERSION, term.map_or(&[], |term| term.as_encoded_bytes()))?;
         terminal.set_scrollback_bytes(10_000_000)?;
-        terminal.set_colors(
-            colors.foreground(),
-            colors.background(),
-            colors.cursor(),
-            &colors.palette(),
-        )?;
+        set_colors(&mut terminal, colors)?;
         terminal.resize_pixels(size.cols, size.rows, cell)?;
         let mouse = mouse::Mouse::new(&terminal, [size.cols, size.rows], cell)?;
         Ok(Self {
@@ -108,6 +103,16 @@ impl LocalPane {
         self.mouse.state.cancel_selection();
         Ok(PaneEffect::ViewportChanged)
     }
+}
+
+pub(crate) fn set_colors(terminal: &mut Terminal, colors: &sumie_config::Colors) -> Result<()> {
+    terminal.set_colors(
+        colors.foreground(),
+        colors.background(),
+        colors.cursor(),
+        &colors.palette(),
+    )?;
+    Ok(())
 }
 
 impl Pane for LocalPane {

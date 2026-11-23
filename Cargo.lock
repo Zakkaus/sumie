@@ -1201,6 +1201,7 @@ dependencies = [
 name = "sumie-config"
 version = "0.0.0"
 dependencies = [
+ "rustix",
  "schemars",
  "serde",
  "serde_json",

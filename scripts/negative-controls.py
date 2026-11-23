@@ -176,6 +176,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("alternate scroll on primary screen", "test", "crates/sumie-core/src/mouse.rs",
           replace_once("modes.alternate && modes.alternate_scroll", "modes.alternate_scroll"),
           "test mouse::tests::routes_mouse_by_mode_and_gesture ... FAILED")
+    probe("unchanged settings request a contrast redraw", "test", "crates/sumie-config/src/changes.rs",
+          replace_once("!= next.minimum_contrast().to_bits()",
+                       "== next.minimum_contrast().to_bits()"),
+          "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
         probe("sprite shifted off cell origin", "test", "crates/sumie-font/src/sprite.rs",
               replace_once("top: 0,", "top: 1,"),

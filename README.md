@@ -37,8 +37,11 @@ foreground = "#cccccc"
 background = "#1e1e1e"
 ```
 
-Restart sumie to apply changes. Colors use `#rrggbb` notation; an optional
-`palette` must contain all 16 ANSI colors in index order.
+On Linux, saving the main file or an included file applies the changes without
+restarting sumie. Invalid settings leave the previous settings in effect and show
+the filename, line, and column at the top of the window until the next valid save.
+Colors use `#rrggbb` notation; an optional `palette` must contain all 16 ANSI colors
+in index order.
 
 Run `sumie config show --defaults` for all options. To enable editor completion,
 run `sumie config schema > sumie.schema.json` from the config directory.

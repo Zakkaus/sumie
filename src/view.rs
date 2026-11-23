@@ -101,6 +101,26 @@ impl View {
         Ok(())
     }
 
+    /// Replace the font and its atlas at the current scale, leaving the view intact on error.
+    pub(crate) fn set_font(&mut self, config: sumie_config::Font) -> Result<bool> {
+        let settings = FontSettings::from_config(config)?;
+        if settings.same_as(&self.font_settings) {
+            return Ok(false);
+        }
+        let font = settings.at_scale(self.scale)?;
+        let cell = [font.metrics().width, font.metrics().height];
+        self.grid = grid_size(self.device, cell)?;
+        self.cell = cell;
+        self.font = font;
+        self.font_settings = settings;
+        Ok(true)
+    }
+
+    pub(crate) fn set_selection_colors(&mut self, colors: &sumie_config::Colors) {
+        self.selection_foreground = colors.selection_foreground();
+        self.selection_background = colors.selection_background();
+    }
+
     pub(crate) fn size(&self) -> Size {
         let [cols, rows] = self
             .grid
@@ -144,11 +164,22 @@ impl View {
         )
     }
 
-    pub(crate) fn build(&mut self, snapshot: &Snapshot, selection: Option<CellRange>) {
+    pub(crate) fn build(
+        &mut self,
+        snapshot: &Snapshot,
+        selection: Option<CellRange>,
+        banner: Option<&str>,
+    ) {
         self.backgrounds.clear();
         self.glyphs.clear();
-        let overlay = self.composition(snapshot);
-        for (row, cells) in (0..).zip(&snapshot.rows) {
+        let overlay = self
+            .composition(snapshot)
+            .filter(|&(row, _, _)| row != 0 || banner.is_none());
+        if let Some(message) = banner {
+            self.draw_banner(snapshot, message);
+        }
+        let rows = (0..).zip(&snapshot.rows);
+        for (row, cells) in rows.skip(usize::from(banner.is_some())) {
             let selected = selection.and_then(|range| range.columns(row));
             let highlighted = |column| selected.as_ref().is_some_and(|cols| cols.contains(&column));
             let columns = overlay
@@ -216,8 +247,23 @@ impl View {
                 rgba(snapshot.foreground),
             );
         }
-        self.set_cursor(snapshot, overlay);
+        self.set_cursor(snapshot, overlay, banner.is_some());
         self.collect_atlas_dirty();
+    }
+
+    fn draw_banner(&mut self, snapshot: &Snapshot, message: &str) {
+        self.backgrounds.extend(std::iter::repeat_n(
+            rgba(snapshot.foreground),
+            self.grid[0] as usize,
+        ));
+        self.line.ellipsize(message, self.grid[0]);
+        self.line.draw(
+            &mut self.font,
+            &mut self.font_errors,
+            &mut self.glyphs,
+            [0, 0],
+            rgba(snapshot.background),
+        );
     }
 
     fn collect_atlas_dirty(&mut self) {
@@ -234,8 +280,11 @@ impl View {
         );
     }
 
-    fn set_cursor(&mut self, snapshot: &Snapshot, overlay: Option<(u32, u32, u32)>) {
+    fn set_cursor(&mut self, snapshot: &Snapshot, overlay: Option<(u32, u32, u32)>, banner: bool) {
         self.cursor = snapshot.cursor.and_then(|cursor| {
+            if banner && cursor.row == 0 {
+                return None;
+            }
             let [column, row] = [u32::from(cursor.column), u32::from(cursor.row)];
             let [x, y] = self.origin([column, row]);
             let rect = if let Some((_, _, width)) = overlay {
@@ -341,6 +390,32 @@ impl Line {
             .extend(std::iter::repeat_n(0, cluster.chars().count() - 1));
     }
 
+    fn ellipsize(&mut self, text: &str, columns: u32) {
+        self.clear();
+        let mut cells = 0;
+        let mut last = (0, 0);
+        for ch in text.chars() {
+            let ch = if ch.is_control() { ' ' } else { ch };
+            let width = codepoint_width(ch);
+            if cells + u32::from(width) > columns {
+                if cells == columns {
+                    self.text.truncate(last.0);
+                    self.widths.truncate(last.1);
+                }
+                self.push("…", 1);
+                break;
+            }
+            if width != 0 {
+                last = (self.text.len(), self.widths.len());
+            } else if cells == 0 {
+                continue;
+            }
+            self.text.push(ch);
+            self.widths.push(width);
+            cells += u32::from(width);
+        }
+    }
+
     fn trim_spaces(&mut self) {
         let len = self.text.trim_end_matches(' ').len();
         self.widths
@@ -444,6 +519,13 @@ impl FontSettings {
             px,
             options: FontOptions { hinting, weight },
         })
+    }
+
+    fn same_as(&self, other: &Self) -> bool {
+        self.family == other.family
+            && self.px.to_bits() == other.px.to_bits()
+            && self.options.weight == other.options.weight
+            && discriminant(&self.options.hinting) == discriminant(&other.options.hinting)
     }
 
     fn at_scale(&self, scale: u32) -> Result<FontSystem> {

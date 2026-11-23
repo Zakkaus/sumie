@@ -17,6 +17,8 @@ mod keycodes;
 #[cfg(target_os = "linux")]
 mod pane;
 #[cfg(target_os = "linux")]
+mod reload;
+#[cfg(target_os = "linux")]
 mod sources;
 #[cfg(target_os = "linux")]
 mod view;
@@ -60,6 +62,7 @@ fn run() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     return run_app(args);
+    // TODO(P1): Watch configuration on macOS with kqueue.
     #[cfg(not(target_os = "linux"))]
     Ok(())
 }
@@ -78,10 +81,5 @@ fn run_app(args: impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
         .with_max_level(level)
         .init();
 
-    // TODO(P1): Hot reload must keep the last valid config and display errors in the window.
-    let config = sumie_config::load_user_config().unwrap_or_else(|error| {
-        tracing::warn!(%error, "invalid configuration; using defaults");
-        sumie_config::Config::default()
-    });
-    app::run(capture, config)
+    app::run(capture)
 }

@@ -121,6 +121,10 @@ impl Gpu {
         self.target.upload_atlas(atlas);
     }
 
+    pub(crate) fn set_minimum_contrast(&mut self, ratio: f32) {
+        self.target.set_minimum_contrast(ratio);
+    }
+
     pub(crate) const fn present_count(&self) -> u64 {
         self.target.present_count()
     }

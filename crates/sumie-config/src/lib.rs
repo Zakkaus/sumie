@@ -3,6 +3,14 @@
 //! Owns settings definitions, loading, validation, hot reload, TOML write-back,
 //! and JSON Schema generation. Does not manage windows or render.
 
+mod changes;
+#[cfg(target_os = "linux")]
+mod watch;
+
+pub use changes::Changes;
+#[cfg(target_os = "linux")]
+pub use watch::Watch;
+
 use std::{
     borrow::Cow,
     env, fs, io,
@@ -22,7 +30,7 @@ const MIN_WEIGHT: u16 = 100;
 const MAX_WEIGHT: u16 = 900;
 const MAX_INCLUDE_DEPTH: usize = 64;
 
-/// Startup settings for the terminal and its renderer.
+/// Settings for the terminal and its renderer.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
@@ -213,7 +221,7 @@ const fn default_palette() -> [Color; 16] {
 }
 
 /// Font selection and rasterization settings.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Font {
     /// Choose a different installed font family for the terminal grid.
@@ -318,12 +326,9 @@ pub enum Error {
     },
 }
 
-/// Load settings from `$XDG_CONFIG_HOME/sumie/sumie.toml` or `~/.config/sumie/sumie.toml`.
-/// An absent main file uses defaults.
-///
-/// # Errors
-/// Returns the path of an unreadable file or the location of invalid settings.
-pub fn load_user_config() -> Result<Config, Error> {
+/// Path of the primary configuration, if the environment identifies a config directory.
+#[must_use]
+pub fn user_config_path() -> Option<PathBuf> {
     fn absolute_var(name: &str) -> Option<PathBuf> {
         env::var_os(name)
             .map(PathBuf::from)
@@ -332,15 +337,21 @@ pub fn load_user_config() -> Result<Config, Error> {
 
     absolute_var("XDG_CONFIG_HOME")
         .or_else(|| absolute_var("HOME").map(|home| home.join(".config")))
-        .map_or_else(
-            || Ok(Config::default()),
-            |dir| load(&dir.join("sumie/sumie.toml")),
-        )
+        .map(|dir| dir.join("sumie/sumie.toml"))
 }
 
-fn load(path: &Path) -> Result<Config, Error> {
+/// Load the primary settings and its includes. An absent main file uses defaults.
+///
+/// # Errors
+/// Returns the path of an unreadable file or the location of invalid settings.
+pub fn load(path: &Path) -> Result<Config, Error> {
+    load_visited(path, &mut |_| {})
+}
+
+fn load_visited(path: &Path, visit: &mut impl FnMut(&Path)) -> Result<Config, Error> {
+    visit(path);
     match fs::read_to_string(path) {
-        Ok(text) => load_document(path, &text, &mut Vec::new()),
+        Ok(text) => load_document(path, &text, &mut Vec::new(), visit),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
         Err(source) => Err(Error::Read {
             path: path.to_owned(),
@@ -349,7 +360,12 @@ fn load(path: &Path) -> Result<Config, Error> {
     }
 }
 
-fn load_document(path: &Path, text: &str, active: &mut Vec<PathBuf>) -> Result<Config, Error> {
+fn load_document(
+    path: &Path,
+    text: &str,
+    active: &mut Vec<PathBuf>,
+    visit: &mut impl FnMut(&Path),
+) -> Result<Config, Error> {
     let mut file: Config = toml::from_str(text).map_err(|error: toml::de::Error| {
         invalid(
             path,
@@ -373,6 +389,7 @@ fn load_document(path: &Path, text: &str, active: &mut Vec<PathBuf>) -> Result<C
     let mut merged = Config::default();
     for entry in include {
         let included = path.with_file_name(entry.get_ref());
+        visit(&included);
         let at_entry = |message| invalid(path, text, entry.span().start, message);
         let identity = fs::canonicalize(&included)
             .map_err(|error| at_entry(format!("{}: {error}", included.display())))?;
@@ -390,7 +407,7 @@ fn load_document(path: &Path, text: &str, active: &mut Vec<PathBuf>) -> Result<C
         let source = fs::read_to_string(&included)
             .map_err(|error| at_entry(format!("{}: {error}", included.display())))?;
         active.push(identity);
-        merged.overlay(load_document(&included, &source, active)?);
+        merged.overlay(load_document(&included, &source, active, visit)?);
         active.pop();
     }
     merged.overlay(file);

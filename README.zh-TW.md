@@ -32,7 +32,7 @@ foreground = "#cccccc"
 background = "#1e1e1e"
 ```
 
-重新啟動 sumie 才會套用設定。色碼採用 `#rrggbb` 格式；若設定 `palette`，須依索引順序列出全部 16 個 ANSI 色碼。
+在 Linux 上，儲存主設定檔或 `include` 引入的檔案即可套用變更，不必重新啟動 sumie。設定有誤時，sumie 會沿用上一份有效設定，並在視窗頂端顯示檔名、行號與欄號，直到儲存有效的設定為止。色碼採用 `#rrggbb` 格式；若設定 `palette`，須依索引順序列出全部 16 個 ANSI 色碼。
 
 `size` 以 96 DPI 下的點數為單位。執行 `sumie config show --defaults` 可查看所有選項與預設值。
 要啟用編輯器自動補全，請在設定目錄執行 `sumie config schema > sumie.schema.json`。

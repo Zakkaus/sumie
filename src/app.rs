@@ -13,18 +13,30 @@ use crate::{
     Result, capture,
     gpu::Gpu,
     input,
-    pane::LocalPane,
+    pane::{LocalPane, set_colors},
+    reload::Reload,
     sources::{self, Sources},
     view::{FontSettings, View, clear_color},
 };
 
 const FRAME_RETRY_DELAY: Duration = Duration::from_millis(50);
 
-pub(crate) fn run(capture: capture::Options, config: sumie_config::Config) -> Result<()> {
-    let minimum_contrast = config.minimum_contrast();
-    let font = FontSettings::from_config(config.font)?;
-    let gpu = Gpu::new(capture.screenshot.is_some(), minimum_contrast)?;
-    let mut app = App::new(gpu, capture, font, config.colors);
+pub(crate) fn run(capture: capture::Options) -> Result<()> {
+    let mut reload = Reload::new()?;
+    let config = reload.load()?.unwrap_or_else(|error| {
+        reload.load_error(&error);
+        sumie_config::Config::default()
+    });
+    let gpu = Gpu::new(capture.screenshot.is_some(), config.minimum_contrast())?;
+    reload.register(&gpu.loop_handle())?;
+    let mut app = App {
+        gpu: Some(gpu),
+        capture,
+        config,
+        reload,
+        session: None,
+        events: Vec::new(),
+    };
     let result = app.drive();
     let close = app.close();
     let reap = app
@@ -37,8 +49,8 @@ pub(crate) fn run(capture: capture::Options, config: sumie_config::Config) -> Re
 struct App {
     gpu: Option<Gpu>,
     capture: capture::Options,
-    font: Option<FontSettings>,
-    colors: sumie_config::Colors,
+    config: sumie_config::Config,
+    reload: Reload,
     session: Option<Session>,
     events: Vec<Event>,
 }
@@ -56,22 +68,6 @@ struct Session {
 }
 
 impl App {
-    fn new(
-        gpu: Gpu,
-        capture: capture::Options,
-        font: FontSettings,
-        colors: sumie_config::Colors,
-    ) -> Self {
-        Self {
-            gpu: Some(gpu),
-            capture,
-            font: Some(font),
-            colors,
-            session: None,
-            events: Vec::new(),
-        }
-    }
-
     fn drive(&mut self) -> Result<()> {
         let handle = self.gpu.as_ref().unwrap().loop_handle();
         loop {
@@ -79,7 +75,11 @@ impl App {
                 .session
                 .as_ref()
                 .and_then(|session| session.frame_retry);
-            let timeout = retry.map(|at| at.saturating_duration_since(Instant::now()));
+            let timeout = retry
+                .into_iter()
+                .chain(self.reload.deadline)
+                .min()
+                .map(|at| at.saturating_duration_since(Instant::now()));
             self.gpu
                 .as_mut()
                 .unwrap()
@@ -96,17 +96,68 @@ impl App {
                 }
             }
             self.events = events;
+            self.reload_config()?;
             if let Some(session) = &mut self.session {
                 session.watch_input()?;
                 let gpu = self.gpu.as_mut().unwrap();
                 if gpu.frame_slot_available()
                     && retry.is_none_or(|at| Instant::now() >= at)
-                    && session.draw(gpu, &self.capture)?
+                    && session.draw(gpu, &self.capture, self.reload.banner.as_deref())?
                 {
                     return Ok(());
                 }
             }
         }
+    }
+
+    fn reload_config(&mut self) -> Result<()> {
+        let Some(next) = self.reload.pending()? else {
+            return Ok(());
+        };
+        let next = match next {
+            Ok(next) => next,
+            Err(error) => {
+                if self.reload.load_error(&error)
+                    && let Some(session) = &mut self.session
+                {
+                    session.frame_dirty = true;
+                }
+                return Ok(());
+            }
+        };
+        let changes = self.config.changes(&next);
+        if let Some(session) = &mut self.session {
+            if changes.font {
+                match session.view.set_font(next.font.clone()) {
+                    Ok(true) => session.resize_grid()?,
+                    Ok(false) => (),
+                    Err(error) => {
+                        session.frame_dirty |=
+                            self.reload.show_error(format!("sumie.toml:1:1: {error}"));
+                        return Ok(());
+                    }
+                }
+            }
+            if changes.terminal_colors {
+                set_colors(&mut session.pane.terminal, &next.colors)?;
+                session.snapshot_dirty = true;
+            }
+            if changes.selection_colors {
+                session.view.set_selection_colors(&next.colors);
+            }
+            session.frame_dirty |= changes.selection_colors
+                || changes.minimum_contrast
+                || self.reload.banner.is_some();
+        }
+        if changes.minimum_contrast {
+            self.gpu
+                .as_mut()
+                .unwrap()
+                .set_minimum_contrast(next.minimum_contrast());
+        }
+        self.reload.banner = None;
+        self.config = next;
+        Ok(())
     }
 
     fn handle_event(&mut self, event: Event, handle: &SourceHandle) -> Result<bool> {
@@ -123,17 +174,13 @@ impl App {
                 if let Some(session) = &mut self.session {
                     session.resize(scale, logical, device)?;
                 } else {
-                    let font = self
-                        .font
-                        .take()
-                        .expect("font settings before the first resize");
                     self.session = Some(Session::new(
                         scale,
                         logical,
                         device,
                         handle.clone(),
-                        font,
-                        &self.colors,
+                        FontSettings::from_config(self.config.font.clone())?,
+                        &self.config.colors,
                     )?);
                 }
                 self.gpu.as_mut().unwrap().resize(device);
@@ -184,6 +231,10 @@ impl Session {
 
     fn resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<()> {
         self.view.resize(scale, logical, device)?;
+        self.resize_grid()
+    }
+
+    fn resize_grid(&mut self) -> Result<()> {
         self.selection = Selection::default();
         let size = self.view.size();
         self.pane.command(PaneCommand::Resize {
@@ -314,14 +365,19 @@ impl Session {
         Ok(())
     }
 
-    fn draw(&mut self, gpu: &mut Gpu, options: &capture::Options) -> Result<bool> {
+    fn draw(
+        &mut self,
+        gpu: &mut Gpu,
+        options: &capture::Options,
+        banner: Option<&str>,
+    ) -> Result<bool> {
         self.frame_retry = None;
         self.update_snapshot()?;
         if !self.frame_dirty {
             return Ok(false);
         }
         let snapshot = self.snapshot.as_ref().expect("initial snapshot");
-        self.view.build(snapshot, self.selection.range());
+        self.view.build(snapshot, self.selection.range(), banner);
         gpu.upload_atlas(&self.view.atlas());
         self.view.atlas_uploaded();
         let final_frame = options
