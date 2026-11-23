@@ -69,6 +69,12 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
+      # The gate builds the debug profile; code behind cfg(debug_assertions) can break release.
+      - name: Clippy the release profile
+        run: cargo clippy --locked --release --workspace --all-targets -- -D warnings
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
       - name: Present three Metal frames and capture the third
         if: runner.os == 'macOS'
         timeout-minutes: 3

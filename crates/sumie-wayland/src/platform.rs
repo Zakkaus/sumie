@@ -5,7 +5,6 @@ use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WaylandWindowHandle,
     WindowHandle,
 };
-#[cfg(debug_assertions)]
 use smithay_client_toolkit::reexports::csd_frame::WindowState;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
