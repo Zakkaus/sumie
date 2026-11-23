@@ -24,7 +24,7 @@ On Wayland, terminal programs can use OSC 52 to write up to 1 MiB of decoded dat
 
 The wheel scrolls three history lines per notch. If the program tracks the mouse, it receives wheel reports instead. In alternate-screen programs such as `less`, the wheel sends three arrow keys per notch when mode 1007 is enabled (the default). With mouse tracking on, hold Shift when you start a selection. You can release Shift while dragging without sending mouse motion to the program. Scrolling clears the selection; typing returns to the bottom.
 
-On Linux, programs can display PNG, RGB and RGBA images with the Kitty graphics protocol. Direct transfers work over SSH. Local file transfers (`t=f` and `t=t`) accept absolute paths under `/tmp` or `/dev/shm`, without symlinks or hard links, up to 320 MiB per file. A temporary file's basename must contain `tty-graphics-protocol`; sumie removes it when it opens the image for reading. Use a direct transfer for images elsewhere. Animation and video playback are not supported.
+On Linux, programs can display PNG, RGB and RGBA images with the Kitty graphics protocol. Direct transfers work over SSH. Local file transfers (`t=f` and `t=t`) accept regular files up to 320 MiB on tmpfs, ramfs or devtmpfs under `/tmp` or `/dev/shm`. Paths must be absolute, with no symlinks or hard links. With `t=t`, sumie checks that the path contains `tty-graphics-protocol` and still names the opened file before removing it. Use a direct transfer for images elsewhere, including on a disk-backed `/tmp`. Animation and video playback are not supported.
 
 ## Build and checks
 

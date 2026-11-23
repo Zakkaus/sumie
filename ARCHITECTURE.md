@@ -99,7 +99,7 @@ The VT `selection` module uses libghostty-vt's word and line helpers. A Zig brid
 
 Before compiling the extracted source, the build script links `src/search/grid.zig` into the pinned Ghostty module and enables uucode's simple-fold table. The bridge uses Ghostty's page types directly; Rust does not depend on Ghostty's internal cell layout.
 
-`sumie-core::graphics` carries immutable RGBA images and viewport-relative placement geometry between VT snapshots and the renderer. Ghostty owns protocol parsing, replies, image IDs, cursor movement and grid anchors. The VT `graphics` module reads Ghostty's render-state iterator on the owner thread; the renderer never borrows a native pointer. The build selects Ghostty's existing Wuffs PNG decoder, which uses the native image allocator. File transfers can block during a VT write. On Linux the pinned file loader opens only regular files below `/tmp` or `/dev/shm`; the file policy does not parse graphics commands.
+`sumie-core::graphics` carries immutable RGBA images and viewport-relative placement geometry between VT snapshots and the renderer. Ghostty owns protocol parsing, replies, image IDs, cursor movement and grid anchors. The VT `graphics` module skips images that exceed the device's texture dimensions or RGBA byte budget before copying snapshot pixels. A protocol acknowledgement confirms storage, not GPU residency. On Linux, file transfers accept only regular files on memory filesystems below `/tmp` or `/dev/shm`. Reads and Wuffs PNG decoding still run synchronously on the terminal owner thread.
 
 ## Font pipeline (`sumie-font`)
 
@@ -127,7 +127,7 @@ The renderer uploads instances through a reusable staging belt and draws backgro
 
 On the render thread, call `upload_atlas` and `draw` only after releasing the terminal lock. The caller schedules frames; the renderer never draws or presents on its own. `Renderer` draws to a reusable offscreen target. `SurfaceRenderer` owns a caller-created surface, configures it at nonzero device-pixel sizes, and presents once per successful draw. `resize` may wait for swapchain GPU work. Drop `SurfaceRenderer` on the render thread; its renderer resources drop before its surface.
 
-The renderer caches image textures separately from glyph atlases. A frame draws images in Kitty z-order relative to cell backgrounds and glyphs, clipped to the terminal grid before drawing window chrome. GPU eviction does not delete a protocol image: a later visible placement can upload it again from the VT snapshot.
+The renderer caches image textures separately from glyph atlases. The cache charges at least 64 KiB per texture and caps residency at 320 MiB and 4096 textures. It evicts off-screen textures first, in least-recently-used order. A frame draws images in Kitty z-order relative to cell backgrounds and glyphs, clipped to the terminal grid before drawing window chrome. GPU eviction does not delete a protocol image: a later visible placement can upload it again from the VT snapshot.
 
 The workspace tests use the same pixel checks on the selected backend and on Linux GLES. Set `SUMIE_REQUIRE_GPU=1` to fail instead of skipping when an adapter is unavailable. Set `SUMIE_RENDER_ARTIFACT_DIR` to an existing directory to save `grid.png` from the selected backend test.
 

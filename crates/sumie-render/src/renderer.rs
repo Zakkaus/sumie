@@ -3,12 +3,13 @@ use std::{num::NonZeroU64, ops::Range};
 use wgpu::util::StagingBelt;
 
 use crate::grid::{GridLayers, Instance};
-use crate::images::{Images, Layers};
+use crate::images::{Images, Layers, QUAD_SIZE};
 use crate::{AtlasRect, AtlasUpload, DrawList, atlas};
 
 const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const FRAME_SIZE: u64 = size_of::<Frame>() as u64;
 const INSTANCE_SIZE: u64 = size_of::<Instance>() as u64;
+const IMAGE_INSTANCE_SIZE: u64 = QUAD_SIZE as u64;
 const INITIAL_INSTANCES: u32 = 256;
 
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -162,6 +163,8 @@ impl Renderer {
             let available = self
                 .frame_limit
                 .saturating_sub(grid.saturating_add(chrome).saturating_add(1));
+            let available =
+                u32::try_from(u64::from(available) * INSTANCE_SIZE / IMAGE_INSTANCE_SIZE).unwrap();
             self.images
                 .prepare(&self.device, &self.queue, list, size, available)
                 .map(|images| LayeredFrame {
@@ -264,9 +267,13 @@ impl Renderer {
         count: u32,
         layered: Option<&LayeredFrame>,
     ) {
-        let total = count + layered.map_or(0, |layers| layers.images.end);
-        let bytes = FRAME_SIZE + u64::from(total) * INSTANCE_SIZE;
+        let image_bytes = layered.map_or(0, |layers| {
+            u64::from(layers.images.end) * IMAGE_INSTANCE_SIZE
+        });
+        let instance_bytes = u64::from(count) * INSTANCE_SIZE + image_bytes;
+        let bytes = FRAME_SIZE + instance_bytes;
         if bytes > self.frame.size() {
+            let total = u32::try_from(instance_bytes.div_ceil(INSTANCE_SIZE)).unwrap();
             let capacity = total
                 .checked_next_power_of_two()
                 .map_or(self.frame_limit, |rounded| rounded.min(self.frame_limit));

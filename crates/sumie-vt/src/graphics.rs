@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
 use std::ptr::{from_mut, from_ref, null, null_mut};
 use std::sync::Arc;
-use sumie_core::graphics::{Image, Placement};
+use sumie_core::graphics::{IMAGE_BUDGET, Image, Placement, texture_bytes};
 
 pub(super) const PLACEHOLDER: char = '\u{10eeee}';
 
@@ -44,7 +44,8 @@ const FORMAT_GRAY: c_int = 4;
 pub(super) struct Graphics {
     iter: ffi::RenderStateImageIterator,
     images: HashMap<u32, CachedImage>,
-    generation: u64,
+    generation: Option<u64>,
+    max_dimension: u32,
     placements: Arc<Vec<Placement>>,
 }
 
@@ -73,7 +74,8 @@ impl Graphics {
         Ok(Self {
             iter,
             images: HashMap::new(),
-            generation: 0,
+            generation: Some(0),
+            max_dimension: u32::MAX,
             placements: Arc::default(),
         })
     }
@@ -131,8 +133,17 @@ impl Drop for Graphics {
 }
 
 impl Terminal {
+    /// Omit images too large for the target device before allocating snapshot pixels.
+    pub fn set_image_dimension_limit(&mut self, limit: u32) {
+        if self.graphics.max_dimension != limit {
+            self.graphics.max_dimension = limit;
+            self.graphics.generation = None;
+            self.graphics.images.clear();
+        }
+    }
+
     pub(super) fn configure_graphics(&self) -> Result<(), Error> {
-        const LIMIT: u64 = 320 * 1024 * 1024;
+        const LIMIT: u64 = IMAGE_BUDGET as u64;
         // SAFETY: The terminal is live. The option reads a u64 during this call.
         check(unsafe {
             ffi::ghostty_terminal_set(self.raw, STORAGE_LIMIT, from_ref(&LIMIT).cast())
@@ -163,14 +174,14 @@ impl Terminal {
     pub(super) fn snapshot_images(&mut self) -> Result<Arc<Vec<Placement>>, Error> {
         // SAFETY: This render-state key writes the u64 revision of the entire placement list.
         let generation = unsafe { self.render_value::<u64>(PLACEMENTS_GENERATION)? };
-        if generation == self.graphics.generation {
+        if Some(generation) == self.graphics.generation {
             return Ok(Arc::clone(&self.graphics.placements));
         }
         let placements = self.collect_images()?;
         self.graphics
             .images
             .retain(|_, cached| std::mem::take(&mut cached.visible));
-        self.graphics.generation = generation;
+        self.graphics.generation = Some(generation);
         self.graphics.placements = Arc::new(placements);
         Ok(Arc::clone(&self.graphics.placements))
     }
@@ -193,7 +204,9 @@ impl Terminal {
             if geometry.source[2..].contains(&0) {
                 continue;
             }
-            let image = self.cache_image(&geometry, &mut storage)?;
+            let Some(image) = self.cache_image(&geometry, &mut storage)? else {
+                continue;
+            };
             placements.push(Placement {
                 image,
                 image_id: geometry.image_id,
@@ -212,12 +225,12 @@ impl Terminal {
         &mut self,
         geometry: &Geometry,
         storage: &mut ffi::KittyGraphics,
-    ) -> Result<Arc<Image>, Error> {
+    ) -> Result<Option<Arc<Image>>, Error> {
         if let Some(cached) = self.graphics.images.get_mut(&geometry.image_id)
             && cached.image.generation == geometry.generation
         {
             cached.visible = true;
-            return Ok(Arc::clone(&cached.image));
+            return Ok(Some(Arc::clone(&cached.image)));
         }
         if storage.is_null() {
             // SAFETY: The live terminal writes a borrowed KittyGraphics handle to `storage`.
@@ -230,8 +243,17 @@ impl Terminal {
             })?;
         }
         // SAFETY: Storage belongs to this terminal, which is unchanged during image extraction.
-        let image =
-            Arc::new(unsafe { read_image(*storage, geometry.image_id, geometry.generation) }?);
+        let image = unsafe {
+            read_image(
+                *storage,
+                geometry.image_id,
+                geometry.generation,
+                self.graphics.max_dimension,
+            )
+        }?;
+        let Some(image) = image.map(Arc::new) else {
+            return Ok(None);
+        };
         self.graphics.images.insert(
             geometry.image_id,
             CachedImage {
@@ -239,7 +261,7 @@ impl Terminal {
                 visible: true,
             },
         );
-        Ok(image)
+        Ok(Some(image))
     }
 }
 
@@ -248,7 +270,8 @@ unsafe fn read_image(
     storage: ffi::KittyGraphics,
     id: u32,
     generation: u64,
-) -> Result<Image, Error> {
+    max_dimension: u32,
+) -> Result<Option<Image>, Error> {
     let mut size = [0_u32; 2];
     let [width, height] = &mut size;
     let mut format: c_int = 0;
@@ -282,23 +305,20 @@ unsafe fn read_image(
         FORMAT_GRAY => 1,
         _ => return Err(Error(ffi::INVALID_VALUE)),
     };
-    let count = usize::try_from(u64::from(size[0]) * u64::from(size[1]))
-        .map_err(|_| Error(ffi::INVALID_VALUE))?;
-    let rgba_len = count
-        .checked_mul(4)
-        .filter(|len| (1..=isize::MAX as usize).contains(len))
-        .ok_or(Error(ffi::INVALID_VALUE))?;
-    if pixels.ptr.is_null() || pixels.len != count * channels {
+    let Some(rgba_len) = texture_bytes(size, max_dimension) else {
+        return Ok(None);
+    };
+    if pixels.ptr.is_null() || pixels.len != rgba_len / 4 * channels {
         return Err(Error(ffi::INVALID_VALUE));
     }
     // SAFETY: The getter lends initialized terminal memory until the next mutation. The
-    // non-null buffer has exactly the expected byte length, bounded by isize::MAX above.
+    // non-null buffer has exactly the expected byte length, bounded by IMAGE_BUDGET.
     let pixels = unsafe { std::slice::from_raw_parts(pixels.ptr, pixels.len) };
-    Ok(Image {
+    Ok(Some(Image {
         generation,
         size,
         rgba: to_rgba(pixels, channels, rgba_len),
-    })
+    }))
 }
 
 fn to_rgba(pixels: &[u8], channels: usize, rgba_len: usize) -> Vec<u8> {

@@ -82,6 +82,7 @@ fn kitty_commands_query_transmit_place_and_delete() {
     const PNG: &str = "a=T,f=100,i=9,C=1;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQVDL+DwACFAFmBODefwAAAABJRU5ErkJggg==";
     let mut vt = Terminal::new(12, 5).unwrap();
     vt.resize_pixels(12, 5, [8, 16]).unwrap();
+    vt.set_image_dimension_limit(2);
     for (command, reply, visible, cursor) in [
         ("a=q,i=7,f=24,s=1,v=1;ESIz", "i=7;OK", 0, [0, 0]),
         (
@@ -96,6 +97,12 @@ fn kitty_commands_query_transmit_place_and_delete() {
         ("a=d,d=I,i=7", "", 0, [2, 1]),
         (PNG, "i=9;OK", 1, [2, 1]),
         ("a=d,d=A", "", 0, [2, 1]),
+        (
+            "a=T,i=10,f=24,s=3,v=1,C=1;AAECAwQFBgcI",
+            "i=10;OK",
+            0,
+            [2, 1],
+        ),
     ] {
         vt.write(format!("\x1b_G{command}\x1b\\").as_bytes());
         let expected = if reply.is_empty() {

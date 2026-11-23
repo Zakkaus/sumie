@@ -65,6 +65,10 @@ impl Gpu {
         })
     }
 
+    pub(crate) fn image_dimension_limit(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
+    }
+
     pub(crate) fn loop_handle(&self) -> SourceHandle {
         self.window.loop_handle()
     }

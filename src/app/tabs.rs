@@ -91,8 +91,11 @@ impl Tab {
         config: &sumie_config::Config,
         cwd: &Path,
         click_interval: Option<u32>,
+        image_dimension_limit: u32,
     ) -> Result<Self> {
         let mut pane = LocalPane::login(view.size(), view.cell, config, cwd)?;
+        pane.terminal
+            .set_image_dimension_limit(image_dimension_limit);
         if let Some(millis) = click_interval {
             pane.set_click_interval(millis);
         }
@@ -261,8 +264,15 @@ impl Session {
             .filter(|p| p.is_dir())
             .unwrap_or(&self.home);
         let prepared = resized.and_then(|resized| {
-            Tab::open(&self.view, &self.handle, config, cwd, self.click_interval)
-                .map(|tab| (tab, resized))
+            Tab::open(
+                &self.view,
+                &self.handle,
+                config,
+                cwd,
+                self.click_interval,
+                gpu.image_dimension_limit(),
+            )
+            .map(|tab| (tab, resized))
         });
         let (tab, resized) = match prepared {
             Ok(prepared) => prepared,

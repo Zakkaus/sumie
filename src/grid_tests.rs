@@ -139,6 +139,8 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
     #[cfg(target_os = "linux")]
     assert_image(&mut renderer, &device, &queue);
     #[cfg(target_os = "linux")]
+    assert_image_sampling(&mut renderer, &device, &queue, &target);
+    #[cfg(target_os = "linux")]
     tabs::assert_tab_bar(&mut renderer, &device, &queue);
     assert_cursor_shapes(&mut renderer, &device, &queue, &target);
 }
@@ -175,6 +177,75 @@ fn assert_image(renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
         let index = (((view.cell[1] + dy) * DEVICE[0] + view.cell[0] + dx) * 4) as usize;
         assert_eq!(&pixels[index..index + 4], &color);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn assert_image_sampling(
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    target: &OffscreenTarget,
+) {
+    use std::sync::Arc;
+    use sumie_core::graphics::{Image, Placement};
+
+    let green = [0, 255, 0, 255];
+    let red = [255, 0, 0, 255];
+    let transparent_blue = [0, 0, 255, 0];
+    let scaled = Placement {
+        image: Arc::new(Image {
+            generation: u64::MAX,
+            size: [4, 4],
+            rgba: [
+                [green, green, green, green],
+                [green, red, transparent_blue, green],
+                [green, transparent_blue, transparent_blue, green],
+                [green, green, green, green],
+            ]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect(),
+        }),
+        image_id: 1,
+        placement_id: 1,
+        z: 0,
+        cell: [-1, 0],
+        offset: [7, 0],
+        size: [8, 8],
+        source: [1, 1, 2, 2],
+    };
+    let native = Placement {
+        placement_id: 2,
+        cell: [1, 0],
+        offset: [0, 0],
+        size: [2, 2],
+        ..scaled.clone()
+    };
+    renderer.draw(
+        &DrawList {
+            grid_size: [2, 1],
+            origin: [2, 1],
+            cell_size: CELL,
+            backgrounds: &[[0; 4]; 2],
+            default_background: [0; 4],
+            default_backgrounds: &[],
+            images: &[scaled, native],
+            image_exclusions: [None; 2],
+            glyphs: &[],
+            cursor: None,
+            chrome: None,
+        },
+        target,
+    );
+    let pixels = readback(device, queue, target.texture());
+    assert_pixel(&pixels, 1, 1, [0; 4], 0); // Grid clips the first destination pixel.
+    assert_pixel(&pixels, 2, 1, red, 0); // The crop excludes green on both axes.
+    assert_pixel(&pixels, 3, 1, [240, 0, 0, 223], 1); // The clipped scale is still 4×.
+    assert_pixel(&pixels, 4, 4, [168, 0, 0, 100], 1); // Only premultiplied red contributes.
+    assert_pixel(&pixels, 8, 8, [0; 4], 0);
+    assert_pixel(&pixels, 10, 1, red, 0);
+    assert_pixel(&pixels, 11, 1, [0; 4], 0);
 }
 
 fn upload_atlas(renderer: &mut Renderer) {

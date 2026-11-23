@@ -144,20 +144,19 @@ fn install_graphics_policy(source: &Path) {
         kitty.join("sumie_file.zig"),
         include_str!("src/image_file.zig"),
     )
-    .expect("install confined image file opener");
-    // Keep upstream's APC parser, chunk assembler, file reader, limits and decoder.
-    // The public ABI only has a boolean for t=f; interpose at its only file open.
+    .expect("install confined image file reader");
+    // Keep the pinned parser and decoder, but replace the file reader's body.
+    // Anchor outside that body so fresh and previously patched trees converge.
     let path = kitty.join("graphics_image.zig");
     let mut text = fs::read_to_string(&path).expect("read pinned image loader");
-    let replacement = "const file = try @import(\"sumie_file.zig\").open(io, path, medium == .temporary_file, t.offset, t.size);\n        defer file.close(io);\n\n        ";
-    if !text.contains(replacement) {
-        let start = text
-            .find("// Some Windows paths are dangerous to even open,")
-            .expect("find pinned file open");
-        let end = start
-            + text[start..]
-                .find("var buf: [4096]u8 = undefined;")
-                .expect("find pinned image reader");
+    let anchor = "            else => @compileError(\"readFile only supports file and temporary_file\"),\n        }\n";
+    let start = text.find(anchor).expect("find pinned file reader") + anchor.len();
+    let end = start
+        + text[start..]
+            .find("\n    }\n")
+            .expect("find end of pinned file reader");
+    let replacement = "\n        assert(self.data.items.len == 0);\n        self.data = try @import(\"sumie_file.zig\").read(io, alloc, path, medium == .temporary_file, t.offset, t.size);";
+    if text[start..end] != *replacement {
         text.replace_range(start..end, replacement);
         fs::write(path, text).expect("confine Ghostty file transports");
     }

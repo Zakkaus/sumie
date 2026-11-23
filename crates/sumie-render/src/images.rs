@@ -1,16 +1,14 @@
 use std::{cmp::Reverse, num::NonZeroU64, ops::Range};
 
-use sumie_core::graphics::{Image, Placement};
+use sumie_core::graphics::{IMAGE_BUDGET, Image, Placement, texture_bytes};
 use wgpu::util::StagingBelt;
 
 use crate::{DrawList, PixelRect, atlas};
 
 mod cache;
 
-const TEXTURE_BUDGET: usize = 320 * 1024 * 1024;
 const BELOW_BACKGROUND: i32 = -(1 << 30);
-const QUAD_SIZE: usize = size_of::<Quad>();
-const _: () = assert!(QUAD_SIZE == size_of::<crate::grid::Instance>());
+pub(crate) const QUAD_SIZE: usize = size_of::<Quad>();
 
 type Exclusions = [[f32; 4]; 2];
 
@@ -39,7 +37,7 @@ impl Images {
         Self {
             format,
             pipeline: None,
-            cache: cache::Cache::new(TEXTURE_BUDGET),
+            cache: cache::Cache::new(IMAGE_BUDGET),
             draws: Vec::new(),
         }
     }
@@ -61,9 +59,13 @@ impl Images {
         self.draws.clear();
         self.draws
             .extend(list.images.iter().enumerate().filter_map(|(index, p)| {
+                let bytes = texture_bytes(p.image.size, dimension_limit)?;
+                if p.image.rgba.len() != bytes {
+                    return None;
+                }
                 Some(Draw {
                     index,
-                    bytes: texture_bytes(&p.image, dimension_limit)?,
+                    bytes,
                     quad: Quad::clipped(p, list, clip, ndc_scale)?,
                 })
             }));
@@ -73,7 +75,11 @@ impl Images {
             Reverse((p.z, p.image_id, p.placement_id, draw.index))
         });
         let format = self.format;
-        self.cache.begin_frame();
+        self.cache.begin_frame(
+            self.draws
+                .iter()
+                .map(|draw| list.images[draw.index].image.generation),
+        );
         let (cache, pipeline) = (&mut self.cache, &mut self.pipeline);
         let mut remaining = capacity;
         self.draws.retain(|draw| {
@@ -196,12 +202,14 @@ impl Clip {
 #[repr(C)]
 struct Quad {
     dest: [f32; 4],
-    uv: [f32; 4],
+    source: [f32; 4],
+    // A negative exclusive end marks an axis drawn at native size.
+    crop: [i32; 4],
 }
 
 impl Quad {
-    const ATTRS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
+    const ATTRS: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Sint32x4];
 
     #[expect(
         clippy::cast_possible_truncation,
@@ -230,17 +238,25 @@ impl Quad {
             };
             let source = |edge| {
                 let offset = f64::from(u32::try_from(edge - start).unwrap());
-                let cropped = f64::from(source_start)
-                    + offset * f64::from(source_size) / f64::from(p.size[i]);
-                (cropped / f64::from(texture_size)) as f32
+                (f64::from(source_start) + offset * f64::from(source_size) / f64::from(p.size[i]))
+                    as f32
             };
-            Some(([screen(first), screen(last)], [source(first), source(last)]))
+            let end = i32::try_from(source_start + source_size).ok()?;
+            Some((
+                [screen(first), screen(last)],
+                [source(first), source(last)],
+                [
+                    i32::try_from(source_start).ok()?,
+                    if source_size == p.size[i] { -end } else { end },
+                ],
+            ))
         };
-        let ([left, right], [u0, u1]) = axis(0)?;
-        let ([top, bottom], [v0, v1]) = axis(1)?;
+        let ([left, right], [x0, x1], [crop_left, crop_right]) = axis(0)?;
+        let ([top, bottom], [y0, y1], [crop_top, crop_bottom]) = axis(1)?;
         Some(Self {
             dest: [left, top, right, bottom],
-            uv: [u0, v0, u1, v1],
+            source: [x0, y0, x1, y1],
+            crop: [crop_left, crop_top, crop_right, crop_bottom],
         })
     }
 }
@@ -255,20 +271,9 @@ fn pixel_edges(rect: PixelRect) -> [f32; 4] {
     [x as f32, y as f32, (x + w) as f32, (y + h) as f32]
 }
 
-fn texture_bytes(image: &Image, limit: u32) -> Option<usize> {
-    let [width, height] = image.size;
-    if width == 0 || height == 0 || width > limit || height > limit {
-        return None;
-    }
-    let row = u64::from(width.checked_mul(4)?);
-    let bytes = usize::try_from(row * u64::from(height)).ok()?;
-    (bytes <= TEXTURE_BUDGET && bytes == image.rgba.len()).then_some(bytes)
-}
-
 struct BoundPipeline {
     pipeline: wgpu::RenderPipeline,
     texture_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
     exclusions: wgpu::Buffer,
     exclusions_bindings: wgpu::BindGroup,
     last_exclusions: [Option<PixelRect>; 2],
@@ -278,12 +283,6 @@ impl BoundPipeline {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let pipeline = pipeline(device, format);
         let texture_layout = pipeline.get_bind_group_layout(0);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("sumie image sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
         let exclusions = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sumie image exclusions"),
             size: size_of::<Exclusions>() as u64,
@@ -301,7 +300,6 @@ impl BoundPipeline {
         Self {
             pipeline,
             texture_layout,
-            sampler,
             exclusions,
             exclusions_bindings,
             last_exclusions: [None; 2],
@@ -338,18 +336,12 @@ impl BoundPipeline {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sumie image texture bindings"),
             layout: &self.texture_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(
-                        &texture.create_view(&wgpu::TextureViewDescriptor::default()),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(
+                    &texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                ),
+            }],
         })
     }
 }

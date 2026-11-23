@@ -266,6 +266,7 @@ impl App {
                         logical,
                         device,
                         handle.clone(),
+                        self.gpu.as_ref().unwrap().image_dimension_limit(),
                         &self.config,
                     )?);
                 }
@@ -291,13 +292,21 @@ impl Session {
         logical: [u32; 2],
         device: [u32; 2],
         handle: SourceHandle,
+        image_dimension_limit: u32,
         config: &sumie_config::Config,
     ) -> Result<Self> {
         let font = FontSettings::from_config(config.font.clone())?;
         let view = View::new(scale, logical, device, font, &config.colors)?;
         let home = std::env::home_dir().ok_or("no home directory for login shell")?;
         let click_interval = sumie_wayland::double_click_interval();
-        let first = Tab::open(&view, &handle, config, &home, click_interval)?;
+        let first = Tab::open(
+            &view,
+            &handle,
+            config,
+            &home,
+            click_interval,
+            image_dimension_limit,
+        )?;
         Ok(Self {
             tabs: WindowTabs::new(first),
             routing: input::Routing::default(),
