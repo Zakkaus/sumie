@@ -62,6 +62,24 @@ impl Discovery {
     }
 
     pub fn find(&self, codepoint: Option<char>) -> Result<Match, FontError> {
+        if let Some(ch) = codepoint.filter(|&ch| is_private_use(ch)) {
+            // Private-use code points mean different things in different fonts: SIL fonts put
+            // Latin letters where Nerd Fonts put icons, and Fontconfig ranks by family
+            // closeness, not meaning. Prefer a Nerd Font, as Ghostty and WezTerm do.
+            let fonts = self
+                .pattern(Some(ch))?
+                .sort_fonts(fontconfig::UnicodeCoverage::NoTrim)?;
+            if let Some(nerd) = fonts
+                .iter()
+                .find(|font| font.get_string(c"family").is_ok_and(is_nerd_family))
+            {
+                return to_match(&nerd);
+            }
+        }
+        to_match(&self.pattern(codepoint)?.font_match()?)
+    }
+
+    fn pattern(&self, codepoint: Option<char>) -> Result<fontconfig::Pattern<'_>, FontError> {
         use fontconfig::{CharSet, Pattern};
 
         let mut pattern = Pattern::new(&self.fc)?;
@@ -71,16 +89,30 @@ impl Discovery {
             charset.add_char(codepoint)?;
             pattern.add_charset(charset)?;
         }
-        let matched = pattern.font_match()?;
-        let path = PathBuf::from(matched.filename()?);
-        let index = u32::try_from(matched.face_index()?)
-            .map_err(|_| FontError::InvalidFont(path.clone()))?;
-        Ok(Match {
-            family: matched.get_string(c"family")?.to_owned(),
-            path,
-            index,
-        })
+        Ok(pattern)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn to_match(matched: &fontconfig::Pattern<'_>) -> Result<Match, FontError> {
+    let path = PathBuf::from(matched.filename()?);
+    let index =
+        u32::try_from(matched.face_index()?).map_err(|_| FontError::InvalidFont(path.clone()))?;
+    Ok(Match {
+        family: matched.get_string(c"family")?.to_owned(),
+        path,
+        index,
+    })
+}
+
+#[cfg(target_os = "linux")]
+const fn is_private_use(ch: char) -> bool {
+    matches!(ch, '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{10fffd}')
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn is_nerd_family(family: &str) -> bool {
+    family.contains("Nerd Font") || family.split_whitespace().any(|word| word == "NF")
 }
 
 #[cfg(target_os = "macos")]

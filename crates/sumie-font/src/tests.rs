@@ -200,3 +200,17 @@ fn atlas_keeps_rectangles_and_reports_uploads() {
         (255, 127, 100)
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn nerd_family_names() {
+    use crate::discovery::is_nerd_family;
+    for (family, nerd) in [
+        ("JetBrainsMono Nerd Font", true),
+        ("Maple Mono NF CN", true),
+        ("DejaVu Sans", false),
+        ("NFoo Sans", false),
+    ] {
+        assert_eq!(is_nerd_family(family), nerd, "{family}");
+    }
+}
