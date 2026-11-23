@@ -6,9 +6,17 @@ use crate::grid::Instance;
 use crate::{AtlasRect, AtlasUpload, DrawList, atlas};
 
 const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-const FRAME_SIZE: u64 = size_of::<[u32; 4]>() as u64;
+const FRAME_SIZE: u64 = size_of::<Frame>() as u64;
 const INSTANCE_SIZE: u64 = size_of::<Instance>() as u64;
 const INITIAL_INSTANCES: u32 = 256;
+
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct Frame {
+    size: [u32; 2],
+    minimum_contrast: f32,
+    padding: u32,
+}
 
 /// Persistent RGBA8 sRGB render attachment and copy source on the renderer's device.
 pub struct OffscreenTarget {
@@ -30,6 +38,7 @@ pub struct Renderer {
     atlas: wgpu::Texture,
     atlas_uploaded: bool,
     frame: wgpu::Buffer,
+    minimum_contrast: f32,
     pipeline: wgpu::RenderPipeline,
     staging: StagingBelt,
     pub(crate) device: wgpu::Device,
@@ -58,10 +67,18 @@ impl Renderer {
             atlas_uploaded: false,
             staging: StagingBelt::new(device.clone(), frame.size()),
             frame,
+            minimum_contrast: 1.1,
             pipeline,
             device: device.clone(),
             queue: queue.clone(),
         }
+    }
+
+    /// Set the minimum WCAG contrast ratio for text in subsequent draws.
+    /// Defaults to `1.1`; `1.0` disables correction.
+    pub fn set_minimum_contrast(&mut self, minimum_contrast: f32) {
+        // TODO(P1): Pass the sumie.toml setting here from the config lane.
+        self.minimum_contrast = minimum_contrast;
     }
 
     /// Create an offscreen target of the given nonzero device-pixel size.
@@ -174,8 +191,12 @@ impl Renderer {
         let mut staging =
             self.staging
                 .write_buffer(encoder, &self.frame, 0, NonZeroU64::new(bytes).unwrap());
-        let (mut header, instances) = staging.slice(..).split_at(size_of::<[u32; 4]>());
-        header.copy_from_slice(bytemuck::bytes_of(&[width, height, 0, 0]));
+        let (mut header, instances) = staging.slice(..).split_at(size_of::<Frame>());
+        header.copy_from_slice(bytemuck::bytes_of(&Frame {
+            size: [width, height],
+            minimum_contrast: self.minimum_contrast,
+            padding: 0,
+        }));
         list.write_instances(instances);
     }
 

@@ -77,6 +77,12 @@ impl<'window> SurfaceRenderer<'window> {
         Ok(target)
     }
 
+    /// Set the minimum WCAG contrast ratio for text in subsequent draws.
+    /// Defaults to `1.1`; `1.0` disables correction.
+    pub fn set_minimum_contrast(&mut self, minimum_contrast: f32) {
+        self.renderer.set_minimum_contrast(minimum_contrast);
+    }
+
     /// Enable copying acquired frames before configuring the initial device size.
     ///
     /// # Errors

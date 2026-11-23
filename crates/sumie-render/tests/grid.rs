@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -23,10 +23,8 @@ const HALF: AtlasRect = AtlasRect {
 
 #[test]
 fn grid_on_selected_backend() {
-    snapshot(
-        backends(),
-        std::env::var_os("SUMIE_RENDER_ARTIFACT_DIR").map(PathBuf::from),
-    );
+    let artifact_dir = std::env::var_os("SUMIE_RENDER_ARTIFACT_DIR").map(PathBuf::from);
+    snapshot(backends(), artifact_dir.as_deref());
 }
 
 #[cfg(target_os = "linux")]
@@ -35,7 +33,7 @@ fn grid_on_gl() {
     snapshot(wgpu::Backends::GL, None);
 }
 
-fn snapshot(backends: wgpu::Backends, artifact_dir: Option<PathBuf>) {
+fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
     let instance = wgpu::Instance::new(instance_descriptor(
         wgpu::InstanceDescriptor::new_without_display_handle(),
         backends,
@@ -70,17 +68,26 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<PathBuf>) {
     let mut renderer = Renderer::new(&device, &queue);
     let target = renderer.create_offscreen([WIDTH, HEIGHT]);
     upload_atlas(&mut renderer);
-    renderer.draw(&GRID, &target);
-    let pixels = readback(&device, &queue, target.texture());
-    assert_grid(&pixels);
-    if let Some(dir) = artifact_dir {
-        let file = std::fs::File::create(dir.join("grid.png")).unwrap();
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), WIDTH, HEIGHT);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-        let mut writer = encoder.write_header().unwrap();
-        writer.write_image_data(&pixels).unwrap();
-        writer.finish().unwrap();
+    for (setting, grays) in [
+        (None, [70, 183]),
+        (Some(1.0), [64, 192]),
+        (Some(2.0), [109, 134]),
+    ] {
+        if let Some(ratio) = setting {
+            renderer.set_minimum_contrast(ratio);
+        }
+        renderer.draw(&GRID, &target);
+        let pixels = readback(&device, &queue, target.texture());
+        assert_grid(&pixels, grays);
+        if let (None, Some(dir)) = (setting, artifact_dir) {
+            let file = std::fs::File::create(dir.join("grid.png")).unwrap();
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), WIDTH, HEIGHT);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&pixels).unwrap();
+            writer.finish().unwrap();
+        }
     }
 }
 
@@ -137,7 +144,7 @@ const GRID: DrawList<'static> = DrawList {
         [12, 25, 40, 255],
         [16, 60, 128, 255],
         [64, 64, 64, 255],
-        [32, 48, 142, 255],
+        [192, 192, 192, 255],
         [65, 112, 94, 255],
         [71, 97, 31, 255],
         [22, 18, 40, 255],
@@ -147,6 +154,7 @@ const GRID: DrawList<'static> = DrawList {
         glyph(0, 2, FULL, [245, 220, 115, 255]),
         glyph(1, 10, HALF, [240, 80, 40, 255]),
         glyph(2, 18, FULL, [64, 64, 64, 255]),
+        glyph(3, 26, FULL, [192, 192, 192, 255]),
     ],
     cursor: Some(Cursor {
         rect: PixelRect {
@@ -157,15 +165,15 @@ const GRID: DrawList<'static> = DrawList {
     }),
 };
 
-fn assert_grid(pixels: &[u8]) {
+fn assert_grid(pixels: &[u8], [lightened, darkened]: [u8; 2]) {
     let samples = [
         ([1, 1], [0, 0, 0, 0], 0),
         ([2, 1], [245, 220, 115, 255], 1),
         ([9, 16], [245, 220, 115, 255], 1),
         // 128/255 coverage gives a corrected linear weight of 0.39036 for these colors.
         ([10, 16], [158, 69, 105, 255], 2),
-        ([18, 1], [70, 70, 70, 255], 1),
-        ([33, 16], [32, 48, 142, 255], 1),
+        ([18, 1], [lightened, lightened, lightened, 255], 1),
+        ([33, 16], [darkened, darkened, darkened, 255], 1),
         ([34, 16], [0, 0, 0, 0], 0),
         ([2, 17], [65, 112, 94, 255], 1),
         ([26, 17], [191, 46, 200, 255], 1),
