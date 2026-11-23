@@ -178,7 +178,7 @@ struct Scan<'a> {
 impl Scan<'_> {
     fn watch_path(&mut self, path: &Path) -> io::Result<()> {
         self.watch_parent(path)?;
-        if let Some(file) = open(path, 0)? {
+        if let Some(file) = open(path, 0) {
             self.watch(file)?;
         }
         // Watch both directory entries when a symlink resolves outside its lexical parent.
@@ -200,7 +200,7 @@ impl Scan<'_> {
             };
             let id = if let Some(&id) = self.parents.get(parent) {
                 id
-            } else if let Some(directory) = open(parent, O_DIRECTORY)? {
+            } else if let Some(directory) = open(parent, O_DIRECTORY) {
                 let id = self.watch(directory)?;
                 self.parents.insert(parent.to_owned(), id);
                 id
@@ -259,25 +259,15 @@ fn register(queue: &Kqueue, event: KEvent) -> io::Result<()> {
     }
 }
 
-fn open(path: &Path, flags: i32) -> io::Result<Option<File>> {
-    match OpenOptions::new()
+// A path that cannot be watched (missing, a symlink loop, out of descriptors) is
+// treated as absent: loading reports any resulting config error in the banner,
+// and the parent directory watch picks the file up when it becomes readable.
+fn open(path: &Path, flags: i32) -> Option<File> {
+    OpenOptions::new()
         .read(true)
         .custom_flags(O_EVTONLY | flags)
         .open(path)
-    {
-        Ok(file) => Ok(Some(file)),
-        Err(error)
-            if matches!(
-                error.kind(),
-                io::ErrorKind::NotFound
-                    | io::ErrorKind::NotADirectory
-                    | io::ErrorKind::PermissionDenied
-            ) =>
-        {
-            Ok(None)
-        }
-        Err(error) => Err(error),
-    }
+        .ok()
 }
 
 type Stamp = Option<(u64, u64, i64, i64)>;
