@@ -73,6 +73,10 @@ impl Gpu {
         self.window.set_input_generation(generation);
     }
 
+    pub(crate) fn set_link_cursor(&mut self, link: bool) {
+        self.window.set_link_cursor(link);
+    }
+
     pub(crate) fn read_clipboard(&mut self, recipient: u64) {
         if let Err(error) = self
             .window

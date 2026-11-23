@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 pty-process.workspace = true
 rustix.workspace = true
+sumie-core = { path = "../sumie-core" }
 thiserror.workspace = true
 tracing.workspace = true
 

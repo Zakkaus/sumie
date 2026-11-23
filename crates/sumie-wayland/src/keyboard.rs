@@ -195,6 +195,8 @@ impl KeyboardHandler for State {
             keyboard.selection_serial = None;
             keyboard.modifiers = Modifiers::default();
             self.disable_text_input();
+            self.events
+                .push_back(Event::ModifiersChanged(Modifiers::default()));
         }
     }
 

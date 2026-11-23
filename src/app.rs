@@ -1,5 +1,6 @@
 mod directory;
 mod highlights;
+mod links;
 mod search;
 mod tabs;
 
@@ -74,6 +75,7 @@ struct Session {
     shell: String,
     closing: Vec<(Sources, sumie_pty::Pty)>,
     pointer: tabs::BarPointer,
+    link_pointer: links::Pointer,
 }
 
 struct Tab {
@@ -89,6 +91,7 @@ struct Tab {
     snapshot: Option<Snapshot>,
     snapshot_dirty: bool,
     frame_dirty: bool,
+    hover: links::Hover,
 }
 
 impl App {
@@ -151,6 +154,7 @@ impl App {
                     session.active_mut().update_snapshot()?;
                 }
                 let banner = self.reload.banner.as_deref();
+                session.update_link_hover(gpu, banner.is_some())?;
                 session.watch_blink(self.focused && !self.suspended, banner)?;
                 if ready && session.draw(gpu, &self.capture, banner, self.focused)? {
                     return Ok(());
@@ -270,7 +274,7 @@ impl App {
             event => {
                 if let Some(session) = &mut self.session {
                     let gpu = self.gpu.as_mut().unwrap();
-                    if let Some(action) = session.input(event, gpu)? {
+                    if let Some(action) = session.input(event, gpu, self.reload.banner.is_some())? {
                         session.apply(action, gpu, &self.config)?;
                         return Ok(session.tabs.active().is_none());
                     }
@@ -309,6 +313,7 @@ impl Session {
             shell: directory::shell_name(),
             closing: Vec::new(),
             pointer: tabs::BarPointer::default(),
+            link_pointer: links::Pointer::default(),
         })
     }
 
@@ -335,7 +340,8 @@ impl Session {
         }
     }
 
-    fn input(&mut self, event: Event, gpu: &mut Gpu) -> Result<Option<tabs::Action>> {
+    fn input(&mut self, event: Event, gpu: &mut Gpu, banner: bool) -> Result<Option<tabs::Action>> {
+        self.link_pointer.record(&event);
         if let std::ops::ControlFlow::Break(action) = self.bar_input(&event) {
             return Ok(action);
         }
@@ -363,15 +369,16 @@ impl Session {
             modifiers,
         } = event
         {
-            if matches!(phase, sumie_wayland::PointerPhase::Press(..)) {
-                tab.update_snapshot()?;
-            }
+            let phase = input::mouse_phase(phase);
+            let hit = || self.link_pointer.hit(&self.view, searching, banner);
+            let link = tab.prepare_pointer_press(phase, hit)?;
             let (cell, pixel) = self.view.pointer_position(position);
             let mouse = MouseEvent {
-                phase: input::mouse_phase(phase),
+                phase,
                 cell,
                 pixel,
                 modifiers: input::key_modifiers(modifiers),
+                link,
             };
             let hit = || self.view.search_hit(position);
             match routing.pointer(&mut tab.pane, searching, mouse, hit)? {
@@ -397,6 +404,7 @@ impl Session {
                 }
                 tab.search_action(action, &mut self.view)?;
             }
+            input::Effect::OpenLink => tab.hover.open(),
             input::Effect::Copy(serial) => tab.copy_selection(gpu, serial)?,
             input::Effect::ViewportChanged => {
                 tab.frame_dirty |= searching || tab.selection.range().is_some();
@@ -486,6 +494,7 @@ impl Tab {
     fn update_snapshot(&mut self) -> Result<()> {
         if self.snapshot_dirty {
             self.snapshot_dirty = false;
+            self.hover.invalidate();
             let next = self.pane.snapshot()?;
             if let Some(range) = self.selection.range()
                 && !self
@@ -534,8 +543,13 @@ impl Session {
         if tab.frame_dirty {
             tab.prepare_search_view(&mut self.view)?;
             let snapshot = tab.snapshot.as_ref().expect("initial snapshot");
-            self.view
-                .build(snapshot, tab.selection.range(), banner, focused);
+            self.view.build(
+                snapshot,
+                tab.selection.range(),
+                tab.hover.range(),
+                banner,
+                focused,
+            );
             let background = snapshot.background;
             self.view.draw_tabs(
                 self.tabs.as_slice().iter().map(|t| t.label(&self.shell)),

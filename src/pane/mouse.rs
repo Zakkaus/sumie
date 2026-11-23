@@ -129,6 +129,7 @@ impl LocalPane {
         let (action, button) = match self.mouse.state.dispatch(event, modes) {
             Dispatch::Ignore => return Ok(PaneEffect::None),
             Dispatch::Select(step) => return Ok(PaneEffect::Select(step)),
+            Dispatch::OpenLink => return Ok(PaneEffect::OpenLink),
             Dispatch::Press(b) => (MouseAction::Press, Some(b)),
             Dispatch::Release(b) => (MouseAction::Release, Some(b)),
             Dispatch::Motion(b) => (MouseAction::Motion, b),

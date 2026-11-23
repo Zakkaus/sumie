@@ -14,6 +14,7 @@ pub(crate) enum Effect {
     ReadClipboard,
     Copy(u32),
     Select(SelectStep),
+    OpenLink,
     ViewportChanged,
     Search(SearchAction),
     Tab(TabAction),
@@ -230,6 +231,7 @@ impl Routing {
         Ok(match send_pointer(pane, searching, event)? {
             PaneEffect::ViewportChanged => Effect::ViewportChanged,
             PaneEffect::Select(step) => Effect::Select(step),
+            PaneEffect::OpenLink => Effect::OpenLink,
             _ => Effect::None,
         })
     }

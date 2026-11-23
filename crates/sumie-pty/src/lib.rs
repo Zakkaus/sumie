@@ -4,6 +4,8 @@
 //! macOS. Does not touch windows or render.
 
 mod child;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod opener;
 mod reader;
 mod wake;
 
@@ -22,6 +24,8 @@ use rustix::process::Pid;
 use rustix::termios::{Winsize, tcsetwinsize};
 
 use child::{Child, Cleanup, ExitWatch};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use opener::open_url;
 pub use reader::OUTPUT_SLOTS;
 use reader::Reader;
 

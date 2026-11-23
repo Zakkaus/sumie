@@ -24,6 +24,8 @@ pub struct MouseEvent {
     pub cell: CellPosition,
     pub pixel: [f32; 2],
     pub modifiers: KeyModifiers,
+    /// Whether this press hit a link the desktop opener can handle.
+    pub link: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -60,6 +62,7 @@ pub enum WheelRoute {
 pub enum Dispatch {
     Ignore,
     Select(SelectStep),
+    OpenLink,
     Press(Button),
     Release(Button),
     Motion(Option<Button>),
@@ -173,6 +176,10 @@ impl MouseState {
                 } else {
                     Dispatch::Wheel(route, steps)
                 }
+            }
+            MousePhase::Press(Button::Left, _) if event.modifiers.control && event.link => {
+                self.reset_clicks();
+                Dispatch::OpenLink
             }
             MousePhase::Press(button, time) => self.press(
                 button,
@@ -308,6 +315,7 @@ mod tests {
                 cell: CellPosition { row: 0, column },
                 pixel: [0.0; 2],
                 modifiers,
+                link: false,
             };
             let dispatch = state.dispatch(event, modes);
             assert_eq!(dispatch, expected, "column={column}, shift={shift}");

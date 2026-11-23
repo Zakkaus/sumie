@@ -110,6 +110,7 @@ impl Tab {
             snapshot: None,
             snapshot_dirty: true,
             frame_dirty: true,
+            hover: super::links::Hover::default(),
         })
     }
 

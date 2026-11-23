@@ -300,6 +300,7 @@ unsafe extern "C" {
         terminal: Terminal,
         reference: *const GridRef,
         out: *mut Selection,
+        writer: *const Writer,
     ) -> c_int;
     pub fn ghostty_formatter_terminal_new(
         allocator: *const Allocator,

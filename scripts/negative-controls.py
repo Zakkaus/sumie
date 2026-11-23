@@ -212,6 +212,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                        "== next.minimum_contrast().to_bits()"),
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("Ctrl+click link sent to the PTY", "test", "crates/sumie-core/src/mouse.rs",
+              replace_once("if event.modifiers.control && event.link => {",
+                           "if !event.modifiers.control && event.link => {"),
+              "test tests::ctrl_click_a_link_bypasses_mouse_tracking ... FAILED")
         probe("two tabs lose their bar", "test", "crates/sumie-ui/src/tabs.rs",
               replace_once("if count < 2 {", "if count < 3 {"),
               "test grid_tests::grid_on_selected_backend ... FAILED")

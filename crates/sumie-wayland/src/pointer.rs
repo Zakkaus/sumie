@@ -2,11 +2,12 @@ use std::{env, process::Command};
 
 use smithay_client_toolkit::{
     reexports::client::{
-        Connection, Proxy, QueueHandle,
+        Connection, QueueHandle,
         protocol::{wl_pointer::WlPointer, wl_seat::WlSeat},
     },
     seat::pointer::{
-        AxisScroll, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, PointerEvent, PointerEventKind, PointerHandler,
+        AxisScroll, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, CursorIcon, PointerEvent, PointerEventKind,
+        PointerHandler, ThemeSpec, ThemedPointer,
     },
 };
 
@@ -52,11 +53,27 @@ pub fn double_click_interval() -> Option<u32> {
 }
 
 pub(crate) struct Pointer {
-    proxy: WlPointer,
+    themed: ThemedPointer<()>,
     position: Option<(f64, f64)>,
+    link_cursor: Option<bool>,
 }
 
 impl Pointer {
+    pub(crate) fn set_link_cursor(&mut self, connection: &Connection, link: bool) {
+        if self.position.is_none() || self.link_cursor == Some(link) {
+            return;
+        }
+        self.link_cursor = Some(link);
+        let icon = if link {
+            CursorIcon::Pointer
+        } else {
+            CursorIcon::Default
+        };
+        if let Err(error) = self.themed.set_cursor(connection, icon) {
+            tracing::warn!(%error, "could not set pointer cursor");
+        }
+    }
+
     fn track(
         &mut self,
         event: &PointerEvent,
@@ -66,7 +83,11 @@ impl Pointer {
         let (phase, serial) = match event.kind {
             PointerEventKind::Enter { .. } => {
                 self.position = Some(event.position);
-                return None;
+                self.link_cursor = None;
+                return Some(Event::PointerEntered {
+                    position: event.position,
+                    modifiers,
+                });
             }
             PointerEventKind::Leave { .. } => return self.cancel(modifiers),
             PointerEventKind::Motion { .. } => (PointerPhase::Motion, 0),
@@ -138,24 +159,27 @@ fn wheel_delta<'a>(events: impl Iterator<Item = &'a PointerEvent>) -> Option<f64
     (delta != 0.0).then_some(delta)
 }
 
-impl Drop for Pointer {
-    fn drop(&mut self) {
-        if self.proxy.version() >= 3 {
-            self.proxy.release();
-        }
-    }
-}
-
 impl State {
     pub(crate) fn start_pointer(&mut self, qh: &QueueHandle<Self>, seat: &WlSeat) {
-        match self.seats.get_pointer(qh, seat) {
-            Ok(proxy) => {
+        let surface = self.compositor.create_surface(qh);
+        match self.seats.get_pointer_with_theme::<_, ()>(
+            qh,
+            seat,
+            self.shm.wl_shm(),
+            surface.clone(),
+            ThemeSpec::System,
+        ) {
+            Ok(themed) => {
                 self.pointer = Some(Pointer {
-                    proxy,
+                    themed,
                     position: None,
+                    link_cursor: None,
                 });
             }
-            Err(error) => tracing::warn!(%error, "could not bind pointer"),
+            Err(error) => {
+                surface.destroy();
+                tracing::warn!(%error, "could not bind pointer");
+            }
         }
     }
 
@@ -176,7 +200,7 @@ impl State {
 impl PointerHandler for State {
     fn pointer_frame(
         &mut self,
-        _: &Connection,
+        connection: &Connection,
         _: &QueueHandle<Self>,
         proxy: &WlPointer,
         events: &[PointerEvent],
@@ -186,7 +210,7 @@ impl PointerHandler for State {
         let Some(pointer) = self
             .pointer
             .as_mut()
-            .filter(|pointer| &pointer.proxy == proxy)
+            .filter(|pointer| pointer.themed.pointer() == proxy)
         else {
             return;
         };
@@ -200,8 +224,11 @@ impl PointerHandler for State {
             {
                 keyboard.selection_serial = Some(serial);
             }
-            self.events
-                .extend(pointer.track(event, modifiers, &mut wheel));
+            let event = pointer.track(event, modifiers, &mut wheel);
+            if matches!(event, Some(Event::PointerEntered { .. })) {
+                pointer.set_link_cursor(connection, false);
+            }
+            self.events.extend(event);
         }
     }
 }

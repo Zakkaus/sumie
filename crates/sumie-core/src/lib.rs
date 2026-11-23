@@ -10,10 +10,11 @@
 //! use sumie_core::wgpu;
 //! ```
 
+mod link;
 pub mod mouse;
 mod selection;
 mod tabs;
-
+pub use link::LinkUri;
 pub use selection::{CellPosition, CellRange, Selection, SelectionPoint};
 pub use tabs::{TabAction, WindowTabs};
 
@@ -188,6 +189,7 @@ pub enum PaneEffect {
     None,
     Copied(String),
     Select(mouse::SelectStep),
+    OpenLink,
     ViewportChanged,
 }
 

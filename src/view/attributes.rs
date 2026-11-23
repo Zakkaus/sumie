@@ -41,9 +41,25 @@ impl View {
 }
 
 impl Decorations {
-    pub(super) fn draw(&mut self, view: &mut View, pos: [u32; 2], cell: &Cell, fg: Rgba) {
+    pub(super) fn draw(
+        &mut self,
+        view: &mut View,
+        pos: [u32; 2],
+        cell: &Cell,
+        fg: Rgba,
+        hovered: bool,
+    ) {
         let style = cell.style;
-        let underline = match style.underline {
+        let underline = if hovered {
+            if style.underline == Underline::Single {
+                Underline::Double
+            } else {
+                Underline::Single
+            }
+        } else {
+            style.underline
+        };
+        let underline = match underline {
             Underline::None => None,
             Underline::Single => Some(Decoration::Single),
             Underline::Double => Some(Decoration::Double),

@@ -2,7 +2,7 @@ use std::ffi::{c_int, c_void};
 use std::ptr::{from_mut, from_ref, null, null_mut};
 use std::sync::LazyLock;
 
-use sumie_core::{CellPosition, CellRange, SelectionPoint, mouse::SelectionUnit};
+use sumie_core::{CellPosition, CellRange, LinkUri, SelectionPoint, mouse::SelectionUnit};
 
 use crate::{Error, Terminal, check, ffi};
 
@@ -10,6 +10,16 @@ static LINKS_READY: LazyLock<bool> = LazyLock::new(|| {
     // SAFETY: LazyLock initializes the process-wide native matcher once.
     unsafe { ffi::sumie_selection_init_links() }
 });
+
+unsafe extern "C" fn read_uri(data: *mut c_void, bytes: *const u8, len: usize) -> bool {
+    // SAFETY: The bridge borrows initialized URI bytes and the caller's output for this call.
+    let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
+    let uri = std::str::from_utf8(bytes).ok().and_then(LinkUri::parse);
+    let accepted = uri.is_some();
+    // SAFETY: The caller supplied an exclusive reference to an Option<LinkUri>.
+    unsafe { *data.cast::<Option<LinkUri>>() = uri };
+    accepted
+}
 
 struct Formatter(ffi::Formatter);
 
@@ -145,6 +155,10 @@ impl Terminal {
             return Ok(None);
         }
         check(result)?;
+        self.cell_range(&selection).map(Some)
+    }
+
+    fn cell_range(&self, selection: &ffi::Selection) -> Result<CellRange, Error> {
         let mut start = self.selection_point(&selection.start)?;
         let mut end = self.selection_point(&selection.end)?;
         if cell_wide(&selection.start)? == ffi::CELL_WIDE_SPACER_TAIL {
@@ -153,13 +167,52 @@ impl Terminal {
         if cell_wide(&selection.end)? == ffi::CELL_WIDE_WIDE {
             end.column += 1;
         }
-        Ok(Some(CellRange { start, end }))
+        Ok(CellRange { start, end })
+    }
+
+    /// Find an OSC 8 or detected URI covering a viewport cell, including soft wraps.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid hit or a native lookup failure.
+    pub fn link_at(&self, hit: CellPosition) -> Result<Option<(CellRange, LinkUri)>, Error> {
+        if !*LINKS_READY {
+            return Ok(None);
+        }
+        let reference = self.grid_ref(ffi::POINT_TAG_VIEWPORT, hit.column, hit.row.into())?;
+        let mut selection = ffi::Selection {
+            start: ffi::GridRef::default(),
+            end: ffi::GridRef::default(),
+            rectangle: false,
+        };
+        let mut uri: Option<LinkUri> = None;
+        let writer = ffi::Writer {
+            write: read_uri,
+            userdata: from_mut(&mut uri).cast(),
+        };
+        // SAFETY: The reference belongs to this terminal; the selection and writer are live
+        // for the synchronous lookup. The matcher was initialized before use.
+        let result = unsafe {
+            ffi::sumie_selection_link_at(
+                self.raw,
+                &raw const reference,
+                &raw mut selection,
+                &raw const writer,
+            )
+        };
+        if result == ffi::NO_VALUE {
+            return Ok(None);
+        }
+        check(result)?;
+        Ok(Some((
+            self.cell_range(&selection)?,
+            uri.ok_or(Error(ffi::INVALID_VALUE))?,
+        )))
     }
 
     fn select_link(&self, reference: &ffi::GridRef, selection: &mut ffi::Selection) -> bool {
         // SAFETY: The matcher is initialized, and the grid reference and output stay live.
         *LINKS_READY
-            && unsafe { ffi::sumie_selection_link_at(self.raw, reference, selection) }
+            && unsafe { ffi::sumie_selection_link_at(self.raw, reference, selection, null()) }
                 == ffi::SUCCESS
     }
 
@@ -330,6 +383,44 @@ mod tests {
                 .unwrap();
             assert_eq!(range.end.column, end_column);
             assert_eq!(terminal.selection_text(range).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn finds_openable_links_at_grid_boundaries() {
+        let parens = "(https://ex.io/a(b)),";
+        let ftp = "ftp://ex.io/file,";
+        let cjk = "前文https://ex.io/頁面，後文";
+        let osc = "\x1b]8;;file:///tmp/a\x1b\\標abcde\x1b]8;;\x1b\\z";
+        let blocked = "\x1b]8;;javascript:alert(1)\x1b\\blocked\x1b]8;;\x1b\\";
+        for (columns, text, (row, column), expected) in [
+            (40, parens, (0, 18), Some("https://ex.io/a(b)")),
+            (40, parens, (0, 19), None),
+            (40, ftp, (0, 15), Some("ftp://ex.io/file")),
+            (40, ftp, (0, 16), None),
+            (40, "mailto:me@ex.io.", (0, 7), Some("mailto:me@ex.io")),
+            (12, "https://ex.io/abc", (1, 2), Some("https://ex.io/abc")),
+            (40, cjk, (0, 21), Some("https://ex.io/頁面")),
+            (40, cjk, (0, 22), None),
+            (5, osc, (1, 0), Some("file:///tmp/a")),
+            (40, blocked, (0, 1), None),
+        ] {
+            let mut terminal = Terminal::new(columns, 3).unwrap();
+            terminal.write(text.as_bytes());
+            let found = terminal.link_at(CellPosition { row, column }).unwrap();
+            assert_eq!(
+                found.as_ref().map(|(_, uri)| uri.as_str()),
+                expected,
+                "hit={row}:{column}, text={text:?}"
+            );
+            if let Some((range, uri)) = found {
+                let label = if text == osc {
+                    "標abcde"
+                } else {
+                    uri.as_str()
+                };
+                assert_eq!(terminal.selection_text(range).unwrap(), label);
+            }
         }
     }
 }

@@ -52,6 +52,10 @@ pub enum Event {
         serial: u32,
     },
     ModifiersChanged(Modifiers),
+    PointerEntered {
+        position: (f64, f64),
+        modifiers: Modifiers,
+    },
     /// Pointer input from the active seat on the window surface.
     Pointer {
         phase: PointerPhase,

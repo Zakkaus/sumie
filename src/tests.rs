@@ -319,6 +319,7 @@ fn search_pointer_only_scrolls_history() {
         cell: CellPosition { column: 0, row: 0 },
         pixel: [0.0; 2],
         modifiers: KeyModifiers::default(),
+        link: false,
     };
     let right = Button::Right;
     let left = Button::Left;
@@ -385,6 +386,43 @@ fn search_pointer_only_scrolls_history() {
 }
 
 #[test]
+fn ctrl_click_a_link_bypasses_mouse_tracking() {
+    let mut pane = ready_pane(
+        "printf '\\033[?1003;1006hREADY\\n'; exec cat",
+        &request_environment(),
+    );
+    let mut routing = input::Routing::default();
+    for (phase, link, expected) in [
+        (
+            MousePhase::Press(Button::Left, 0),
+            true,
+            input::Effect::OpenLink,
+        ),
+        (
+            MousePhase::Release(Button::Left),
+            false,
+            input::Effect::None,
+        ),
+    ] {
+        let event = MouseEvent {
+            phase,
+            cell: CellPosition { column: 0, row: 0 },
+            pixel: [0.0; 2],
+            modifiers: KeyModifiers {
+                control: link,
+                ..KeyModifiers::default()
+            },
+            link,
+        };
+        let effect = routing.pointer(&mut pane, false, event, || None).unwrap();
+        assert_eq!(effect, expected);
+        assert!(pane.pty.input_fd().is_none());
+    }
+    pane.command(PaneCommand::Close).unwrap();
+    crate::sources::reap(&mut pane.pty).unwrap();
+}
+
+#[test]
 fn switching_tabs_finishes_a_reported_drag() {
     let mut pane = ready_pane(
         "stty -echo; printf '\\033[?1002;1006hREADY\\n'; IFS= read -r reports; \
@@ -397,6 +435,7 @@ fn switching_tabs_finishes_a_reported_drag() {
             cell: CellPosition { column, row: 0 },
             pixel: [f32::from(column) * 12.0, 0.0],
             modifiers: KeyModifiers::default(),
+            link: false,
         })
     };
     pane.command(mouse(MousePhase::Press(Button::Left, 0), 0))

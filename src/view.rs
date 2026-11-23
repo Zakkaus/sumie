@@ -217,10 +217,22 @@ impl View {
         )
     }
 
+    pub(crate) fn link_cell(&self, position: (f64, f64), banner: bool) -> Option<CellPosition> {
+        let (hit, [x, y]) = self.pointer_position(position);
+        let [width, height] =
+            std::array::from_fn::<_, 2, _>(|i| f64::from(self.grid[i] * self.cell[i]));
+        (!self.over_tab_bar(position)
+            && (0.0..width).contains(&f64::from(x))
+            && (0.0..height).contains(&f64::from(y))
+            && (!banner || hit.row != 0))
+            .then_some(hit)
+    }
+
     pub(crate) fn build(
         &mut self,
         snapshot: &Snapshot,
         selection: Option<CellRange>,
+        hovered_link: Option<CellRange>,
         banner: Option<&str>,
         focused: bool,
     ) {
@@ -248,6 +260,7 @@ impl View {
         self.draw_terminal(
             snapshot,
             selection,
+            hovered_link,
             overlay,
             usize::from(banner.is_some())..self.grid[1] as usize,
         );
@@ -274,6 +287,7 @@ impl View {
         &mut self,
         snapshot: &Snapshot,
         selection: Option<CellRange>,
+        hovered_link: Option<CellRange>,
         overlay: Option<(u32, u32, u32)>,
         visible: std::ops::Range<usize>,
     ) {
@@ -281,6 +295,7 @@ impl View {
         let rows = (0..).zip(snapshot.rows.iter().take(visible.end));
         for (row, cells) in rows.skip(visible.start) {
             let selected = selection.and_then(|range| range.columns(row));
+            let underline = hovered_link.and_then(|range| range.columns(row));
             let highlighted = |column| selected.as_ref().is_some_and(|cols| cols.contains(&column));
             let columns = overlay
                 .filter(|&(y, _, _)| y == row)
@@ -321,7 +336,10 @@ impl View {
                     columns.start < column + u32::from(cell.width) && column < columns.end
                 });
                 if !intersects {
-                    decorations.draw(self, [column, row], cell, ink.color);
+                    let hovered = underline
+                        .as_ref()
+                        .is_some_and(|cols| cols.contains(&column));
+                    decorations.draw(self, [column, row], cell, ink.color, hovered);
                 }
                 self.line
                     .push(if intersects { "" } else { &cell.text }, cell.width);

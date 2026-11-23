@@ -174,6 +174,14 @@ impl Platform {
         self.state.events.drain(..)
     }
 
+    /// Update the cursor for the focused pointer; repeated requests are ignored.
+    pub fn set_link_cursor(&mut self, link: bool) {
+        if let Some(pointer) = &mut self.state.pointer {
+            let connection = Connection::from_backend(self.state.window.display.0.clone());
+            pointer.set_link_cursor(&connection, link);
+        }
+    }
+
     /// Change the focused input recipient; restart IME composition on the same surface.
     /// IME text events carry this generation until the next focus change.
     /// Call outside the interval between `begin_frame` and the buffer commit.
@@ -296,12 +304,13 @@ pub(crate) struct State {
     pub(crate) present_log: Option<PresentLog>,
     pub(crate) window: Arc<WindowOwner>,
     pub(crate) qh: QueueHandle<Self>,
+    pub(crate) compositor: CompositorState,
     pub(crate) loop_handle: LoopHandle<'static, Self>,
     source: RegistrationToken,
     registry: RegistryState,
     output: OutputState,
     pub(crate) seats: SeatState,
-    shm: Shm,
+    pub(crate) shm: Shm,
     pub(crate) data_device_manager: Option<DataDeviceManagerState>,
     pub(crate) clipboard: Clipboard,
     pub(crate) keyboard: Option<Keyboard>,
@@ -360,6 +369,7 @@ impl State {
         Ok(Self {
             scale,
             presentation,
+            compositor,
             #[cfg(debug_assertions)]
             present_log,
             window,
