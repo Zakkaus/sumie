@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use sumie_core::{Pane, PaneCommand, Selection, TabAction};
 use sumie_vt::Event as TerminalEvent;
-use sumie_wayland::{PointerButton as Button, PointerPhase as Phase, SourceHandle};
+use sumie_wayland::{Event, PointerButton as Button, PointerPhase as Phase, SourceHandle};
 
 use super::{Gpu, LocalPane, Result, Session, Sources, Tab, View, directory, sources};
 
@@ -63,13 +63,10 @@ impl BarPointer {
                 if self.wheel.abs() < 120.0 {
                     return Break(None);
                 }
-                let action = if self.wheel.is_sign_positive() {
-                    TabAction::Next
-                } else {
-                    TabAction::Previous
-                };
+                #[expect(clippy::cast_possible_truncation, reason = "emit whole notches")]
+                let steps = (self.wheel / 120.0) as isize;
                 self.wheel %= 120.0;
-                Break(Some(Action::Key(action)))
+                Break(Some(Action::Key(TabAction::Cycle(steps))))
             }
             Phase::Motion
                 if self.captured.contains(&true) || (over && !self.grid.contains(&true)) =>
@@ -101,6 +98,8 @@ impl Tab {
         }
         let sources = Sources::new(handle.clone(), &pane.pty)?;
         Ok(Self {
+            exited: false,
+            paste_recipient: None,
             search: None,
             selection: Selection::default(),
             selected_text: String::new(),
@@ -200,6 +199,64 @@ impl Session {
         self.tabs.active_mut().expect("live window")
     }
 
+    pub(super) fn bar_input(&mut self, event: &Event) -> ControlFlow<Option<Action>> {
+        let Event::Pointer {
+            position, phase, ..
+        } = event
+        else {
+            return Continue(());
+        };
+        self.pointer.route(
+            self.view.tab_hit(*position),
+            self.view.over_tab_bar(*position),
+            *phase,
+        )
+    }
+
+    pub(super) fn input_target(&self, event: &Event) -> Option<(usize, u64)> {
+        if let Event::ClipboardText { generation, .. } = event {
+            let index = self
+                .tabs
+                .as_slice()
+                .iter()
+                .position(|tab| tab.paste_recipient == Some(*generation))?;
+            Some((index, *generation))
+        } else {
+            Some((self.tabs.active_index()?, self.routing.generation))
+        }
+    }
+
+    fn open_tab(&mut self, gpu: &mut Gpu, config: &sumie_config::Config) -> Result<()> {
+        let count = self.tabs.as_slice().len();
+        let resized = self.view.set_tab_count(count + 1);
+        let cwd = self
+            .active()
+            .directory
+            .path
+            .as_deref()
+            .filter(|p| p.is_dir())
+            .unwrap_or(&self.home);
+        let prepared = resized.and_then(|resized| {
+            Tab::open(&self.view, &self.handle, config, cwd, self.click_interval)
+                .map(|tab| (tab, resized))
+        });
+        let (tab, resized) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.view.set_tab_count(count)?;
+                self.active_mut().frame_dirty = true;
+                tracing::warn!(%error, "could not open tab");
+                return Ok(());
+            }
+        };
+        if resized {
+            self.resize_grid()?;
+        }
+        let old = self.tabs.active_index();
+        self.tabs.open(tab);
+        self.focus_changed(old, gpu)
+    }
+
     pub(super) fn apply(
         &mut self,
         action: Action,
@@ -208,32 +265,7 @@ impl Session {
     ) -> Result<()> {
         let index = self.tabs.active_index().unwrap();
         match action {
-            Action::Key(TabAction::Open) => {
-                let count = self.tabs.as_slice().len();
-                let resized = self.view.set_tab_count(count + 1)?;
-                let cwd = self
-                    .active()
-                    .directory
-                    .path
-                    .as_deref()
-                    .filter(|p| p.is_dir())
-                    .unwrap_or(&self.home);
-                let new =
-                    match Tab::open(&self.view, &self.handle, config, cwd, self.click_interval) {
-                        Ok(tab) => tab,
-                        Err(error) => {
-                            self.view.set_tab_count(count)?;
-                            self.active_mut().frame_dirty = true;
-                            tracing::warn!(%error, "could not open tab");
-                            return Ok(());
-                        }
-                    };
-                if resized {
-                    self.resize_grid()?;
-                }
-                self.tabs.open(new);
-                self.focus_changed(Some(index), gpu)?;
-            }
+            Action::Key(TabAction::Open) => self.open_tab(gpu, config)?,
             Action::Close(i) => self.close_tab(i, gpu)?,
             Action::Key(TabAction::Close) => self.close_tab(index, gpu)?,
             Action::Key(nav) if self.tabs.navigate(nav) => {
@@ -253,7 +285,7 @@ impl Session {
         if let Some(i) = old {
             let tab = &mut self.tabs.as_mut_slice()[i];
             tab.sources.watch_blink(false)?;
-            tab.pane.reset_pointer_gestures();
+            tab.pane.leave_tab()?;
         }
         self.pointer.change_recipient();
         gpu.set_input_generation(self.routing.change_recipient());
@@ -317,12 +349,14 @@ impl Session {
             }
         }
         self.closing.retain(|(_, pty)| pty.exit_fd().is_some());
-        for index in (0..self.tabs.as_slice().len()).rev() {
+        let mut exited = false;
+        for index in 0..self.tabs.as_slice().len() {
             let active = self.tabs.active_index() == Some(index);
             let tab = &mut self.tabs.as_mut_slice()[index];
             let mut changed = false;
             if tab.service(gpu, active, self.host.as_bytes(), &mut changed)? {
-                self.close_tab(index, gpu)?;
+                tab.exited = true;
+                exited = true;
             } else if changed {
                 if active {
                     gpu.queue_title(tab.label(&self.shell).to_owned());
@@ -330,6 +364,33 @@ impl Session {
                 self.active_mut().frame_dirty = true;
             }
         }
+        Ok(exited)
+    }
+
+    pub(super) fn close_exited(&mut self, gpu: &mut Gpu) -> Result<bool> {
+        for index in (0..self.tabs.as_slice().len()).rev() {
+            if self.tabs.as_slice()[index].exited {
+                self.close_tab(index, gpu)?;
+            }
+        }
         Ok(self.tabs.active().is_none())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wheel_counts_whole_notches_and_keeps_the_remainder() {
+        let mut pointer = BarPointer::default();
+        for (delta, expected) in [(375., 3), (105., 1), (-90., 0), (-150., -2)] {
+            let steps = match pointer.route(None, true, Phase::Wheel(delta)) {
+                Break(Some(Action::Key(TabAction::Cycle(steps)))) => steps,
+                Break(None) => 0,
+                _ => panic!("wheel did not stay on the tab bar"),
+            };
+            assert_eq!(steps, expected);
+        }
     }
 }

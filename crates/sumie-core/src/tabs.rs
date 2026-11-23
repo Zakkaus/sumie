@@ -3,8 +3,8 @@
 pub enum TabAction {
     Open,
     Close,
-    Next,
-    Previous,
+    /// Switch by a signed number of tabs, wrapping at each end.
+    Cycle(isize),
     /// Select a zero-based position in the current tab order.
     Select(usize),
     Last,
@@ -105,11 +105,16 @@ impl<P> WindowTabs<P> {
         };
         let len = self.panes.len();
         match action {
-            TabAction::Next => {
-                let next = active + 1;
-                self.switch(if next == len { 0 } else { next })
+            TabAction::Cycle(steps) => {
+                let offset = steps.unsigned_abs() % len;
+                let forward = if steps < 0 { len - offset } else { offset };
+                let remaining = len - active;
+                self.switch(if forward < remaining {
+                    active + forward
+                } else {
+                    forward - remaining
+                })
             }
-            TabAction::Previous => self.switch(if active == 0 { len - 1 } else { active - 1 }),
             TabAction::Select(index) => self.switch(index),
             TabAction::Last => self.switch(len - 1),
             TabAction::MoveLeft => self.move_active(active.saturating_sub(1)),
@@ -153,12 +158,13 @@ mod tests {
 
     #[test]
     fn navigation_wraps_but_reorder_stops_at_edges() {
-        use TabAction::{Last, MoveLeft, MoveRight, Next, Previous, Select};
+        use TabAction::{Cycle, Last, MoveLeft, MoveRight, Select};
 
         let mut tabs = three_tabs();
         for (action, changed, order, index) in [
-            (Next, true, [1, 2, 3], 0),
-            (Previous, true, [1, 2, 3], 2),
+            (Cycle(1), true, [1, 2, 3], 0),
+            (Cycle(-1), true, [1, 2, 3], 2),
+            (Cycle(3), false, [1, 2, 3], 2),
             (MoveRight, false, [1, 2, 3], 2),
             (MoveLeft, true, [1, 3, 2], 1),
             (MoveRight, true, [1, 2, 3], 2),

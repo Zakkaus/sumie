@@ -38,7 +38,7 @@ pub(crate) enum SearchTarget {
 #[derive(Default)]
 pub(crate) struct Routing {
     shortcuts: Shortcuts,
-    generation: u64,
+    pub(crate) generation: u64,
     repeating_search_key: Option<u32>,
     search_presses: [Option<SearchTarget>; 3],
 }
@@ -91,6 +91,7 @@ impl Routing {
 }
 
 pub(crate) fn route(
+    recipient: u64,
     pane: &mut impl Pane<Error = Error>,
     routing: &mut Routing,
     searching: bool,
@@ -101,7 +102,7 @@ pub(crate) fn route(
         Event::ImePreedit { generation, .. }
             | Event::ImeCommit { generation, .. }
             | Event::ClipboardText { generation, .. }
-            if *generation != routing.generation
+            if *generation != recipient
     ) {
         return Ok(Effect::None);
     }

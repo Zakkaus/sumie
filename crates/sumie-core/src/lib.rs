@@ -102,8 +102,8 @@ fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Sho
     const KEY_PAGE_DOWN: u32 = 109;
 
     let action = match (evdev, shift) {
-        (KEY_TAB | KEY_PAGE_DOWN, false) => TabAction::Next,
-        (KEY_TAB, true) | (KEY_PAGE_UP, false) => TabAction::Previous,
+        (KEY_TAB | KEY_PAGE_DOWN, false) => TabAction::Cycle(1),
+        (KEY_TAB, true) | (KEY_PAGE_UP, false) => TabAction::Cycle(-1),
         (KEY_PAGE_UP, true) => TabAction::MoveLeft,
         (KEY_PAGE_DOWN, true) => TabAction::MoveRight,
         (_, false) => return None,

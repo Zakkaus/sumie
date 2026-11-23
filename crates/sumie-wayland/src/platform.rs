@@ -175,7 +175,7 @@ impl Platform {
     }
 
     /// Change the focused input recipient; restart IME composition on the same surface.
-    /// Text events carry the recipient's generation, including pending clipboard reads.
+    /// IME text events carry this generation until the next focus change.
     /// Call outside the interval between `begin_frame` and the buffer commit.
     pub fn set_input_generation(&mut self, generation: u64) {
         self.state.set_input_generation(generation);
@@ -183,12 +183,13 @@ impl Platform {
 
     /// Request text from the keyboard seat's clipboard. Non-empty UTF-8 reads
     /// smaller than `max_bytes` arrive in request order as `Event::ClipboardText`.
+    /// The reply carries `recipient`, even if keyboard focus changes during the read.
     /// Reads that reach the size limit or take more than five seconds are discarded.
     ///
     /// # Errors
     /// Returns an error if pipe creation or event source registration fails.
-    pub fn read_clipboard(&mut self, max_bytes: usize) -> std::io::Result<()> {
-        self.state.read_clipboard(max_bytes)
+    pub fn read_clipboard(&mut self, max_bytes: usize, recipient: u64) -> std::io::Result<()> {
+        self.state.read_clipboard(max_bytes, recipient)
     }
 
     /// Publish text from a recent key press or pointer release on the active seat.

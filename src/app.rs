@@ -77,6 +77,8 @@ struct Session {
 }
 
 struct Tab {
+    exited: bool,
+    paste_recipient: Option<u64>,
     search: Option<search::Bar>,
     selection: Selection,
     selected_text: String,
@@ -117,11 +119,11 @@ impl App {
                 .as_mut()
                 .unwrap()
                 .dispatch(&mut self.events, timeout)?;
-            if let Some(session) = &mut self.session
-                && session.service_pty(self.gpu.as_mut().unwrap())?
-            {
-                return Ok(());
+            let mut exited = false;
+            if let Some(session) = &mut self.session {
+                exited = session.service_pty(self.gpu.as_mut().unwrap())?;
             }
+            // Route this dispatch's input before child exits can select another tab.
             let mut events = std::mem::take(&mut self.events);
             for event in events.drain(..) {
                 if self.handle_event(event, &handle)? {
@@ -129,6 +131,12 @@ impl App {
                 }
             }
             self.events = events;
+            if exited
+                && let Some(session) = &mut self.session
+                && session.close_exited(self.gpu.as_mut().unwrap())?
+            {
+                return Ok(());
+            }
             self.reload_config()?;
             if let Some(session) = &mut self.session {
                 session.active_mut().advance_search()?;
@@ -317,18 +325,14 @@ impl Session {
     }
 
     fn input(&mut self, event: Event, gpu: &mut Gpu) -> Result<Option<tabs::Action>> {
-        if let Event::Pointer {
-            position, phase, ..
-        } = &event
-            && let std::ops::ControlFlow::Break(action) = self.pointer.route(
-                self.view.tab_hit(*position),
-                self.view.over_tab_bar(*position),
-                *phase,
-            )
-        {
+        if let std::ops::ControlFlow::Break(action) = self.bar_input(&event) {
             return Ok(action);
         }
-        let tab = self.tabs.active_mut().unwrap();
+        let Some((index, recipient)) = self.input_target(&event) else {
+            return Ok(None);
+        };
+        let tab = &mut self.tabs.as_mut_slice()[index];
+        let routing = &mut self.routing;
         if let Event::ModifiersChanged(modifiers) = event {
             tab.pane
                 .pointer_modifiers_changed(input::key_modifiers(modifiers));
@@ -359,14 +363,14 @@ impl Session {
                 modifiers: input::key_modifiers(modifiers),
             };
             let hit = || self.view.search_hit(position);
-            match self.routing.pointer(&mut tab.pane, searching, mouse, hit)? {
+            match routing.pointer(&mut tab.pane, searching, mouse, hit)? {
                 input::Effect::Select(step) if tab.select(step, cell)? => {
                     input::Effect::Copy(serial)
                 }
                 effect => effect,
             }
         } else {
-            input::route(&mut tab.pane, &mut self.routing, searching, event)?
+            input::route(recipient, &mut tab.pane, routing, searching, event)?
         };
         match effect {
             input::Effect::Tab(action) => return Ok(Some(tabs::Action::Key(action))),
@@ -376,7 +380,8 @@ impl Session {
                     input::SearchAction::Open | input::SearchAction::Close
                 ) {
                     tab.pane.reset_pointer_gestures();
-                    gpu.set_input_generation(self.routing.change_recipient());
+                    tab.paste_recipient = None;
+                    gpu.set_input_generation(routing.change_recipient());
                 }
                 tab.search_action(action, &mut self.view)?;
             }
@@ -386,7 +391,9 @@ impl Session {
                 tab.clear_selection();
                 tab.snapshot_dirty = true;
             }
-            input::Effect::ReadClipboard => gpu.read_clipboard(),
+            input::Effect::ReadClipboard => {
+                gpu.read_clipboard(*tab.paste_recipient.get_or_insert(routing.generation));
+            }
             input::Effect::Preedit(text) if text != self.view.preedit => {
                 self.view.preedit = text;
                 tab.frame_dirty = true;

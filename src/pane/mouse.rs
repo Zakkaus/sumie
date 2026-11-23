@@ -13,6 +13,7 @@ pub(super) struct Mouse {
     pub(super) state: MouseState,
     encoder: MouseEncoder,
     modes: MouseModes,
+    last_report: Option<MouseEvent>,
     grid: [u32; 2],
     cell: [u32; 2],
 }
@@ -34,6 +35,7 @@ impl Mouse {
             state: MouseState::default(),
             encoder,
             modes: modes(terminal)?,
+            last_report: None,
             grid: grid.map(u32::from),
             cell,
         })
@@ -82,6 +84,21 @@ impl LocalPane {
         self.mouse.state.reset_gestures();
     }
 
+    pub(crate) fn leave_tab(&mut self) -> Result<()> {
+        self.reset_pointer_gestures();
+        if self.mouse.state.any_button()
+            && let Some(event) = self.mouse.last_report
+        {
+            for button in [Button::Left, Button::Middle, Button::Right] {
+                self.search_pointer(MouseEvent {
+                    phase: MousePhase::Release(button),
+                    ..event
+                })?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn search_pointer(&mut self, event: MouseEvent) -> Result<PaneEffect> {
         if matches!(event.phase, MousePhase::Press(..) | MousePhase::Motion) {
             return Ok(PaneEffect::None);
@@ -121,6 +138,7 @@ impl LocalPane {
         let bytes = self.mouse.encoder.encode(report)?;
         if !bytes.is_empty() {
             self.pty.enqueue_input(bytes)?;
+            self.mouse.last_report = Some(event);
             if let (MouseAction::Press, Some(button)) = (action, button) {
                 self.mouse.state.press_reported(button);
             }

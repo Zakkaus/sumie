@@ -50,7 +50,8 @@ impl Sources {
             Interest::READ,
             Rc::clone(&ready),
             EXIT,
-        )?;
+        )
+        .inspect_err(|_| handle.remove(output))?;
         Ok(Self {
             handle,
             ready,

@@ -19,6 +19,7 @@ fn local_pane_executes_committed_input_without_preedit() {
     env.insert("PS1".into(), "".into());
     let mut pane = ready_pane("stty -echo; printf 'READY\\n'; exec /bin/sh -i", &env);
     input::route(
+        0,
         &mut pane,
         &mut input::Routing::default(),
         false,
@@ -96,6 +97,7 @@ fn matched_shortcuts_never_reach_the_pty() {
     ] {
         for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
             let effect = input::route(
+                0,
                 &mut pane,
                 &mut routing,
                 false,
@@ -151,10 +153,10 @@ fn tab_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut input::
     let chords = [
         (20, key::Cyrillic_TE, ctrl_shift, TabAction::Open),
         (17, key::W, ctrl_shift, TabAction::Close),
-        (15, key::Tab, ctrl, TabAction::Next),
-        (15, key::ISO_Left_Tab, ctrl_shift, TabAction::Previous),
-        (109, key::Page_Down, ctrl, TabAction::Next),
-        (104, key::Page_Up, ctrl, TabAction::Previous),
+        (15, key::Tab, ctrl, TabAction::Cycle(1)),
+        (15, key::ISO_Left_Tab, ctrl_shift, TabAction::Cycle(-1)),
+        (109, key::Page_Down, ctrl, TabAction::Cycle(1)),
+        (104, key::Page_Up, ctrl, TabAction::Cycle(-1)),
         (104, key::Page_Up, ctrl_shift, TabAction::MoveLeft),
         (109, key::Page_Down, ctrl_shift, TabAction::MoveRight),
     ];
@@ -173,19 +175,22 @@ fn tab_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut input::
             (Release, plain, Effect::None),
         ] {
             let event = key_event(physical, symbol, action, modifiers);
-            assert_eq!(input::route(pane, routing, false, event).unwrap(), expected);
+            assert_eq!(
+                input::route(0, pane, routing, false, event).unwrap(),
+                expected
+            );
             assert!(pane.pty.input_fd().is_none(), "matched tab key: {physical}");
         }
     }
 
     let press = key_event(15, key::ISO_Left_Tab, Press, ctrl_shift);
     assert_eq!(
-        input::route(pane, routing, true, press).unwrap(),
-        Effect::Tab(TabAction::Previous)
+        input::route(0, pane, routing, true, press).unwrap(),
+        Effect::Tab(TabAction::Cycle(-1))
     );
     let release = key_event(15, key::Tab, Release, plain);
     assert_eq!(
-        input::route(pane, routing, false, release).unwrap(),
+        input::route(0, pane, routing, false, release).unwrap(),
         Effect::None
     );
     assert!(pane.pty.input_fd().is_none());
@@ -204,7 +209,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
                 ..Default::default()
             };
             let event = key_event(28, symbol, Press, modifiers);
-            let effect = input::route(pane, routing, true, event).unwrap();
+            let effect = input::route(routing.generation, pane, routing, true, event).unwrap();
             assert_eq!(effect, Effect::Search(SearchAction::Navigate { newer }));
         }
     }
@@ -259,7 +264,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
         (paste(1), Effect::None),
         (commit(3), insert("水")),
     ] {
-        let effect = input::route(pane, routing, searching, event).unwrap();
+        let effect = input::route(routing.generation, pane, routing, searching, event).unwrap();
         assert!(pane.pty.input_fd().is_none());
         assert_eq!(effect, expected);
         if let Effect::Search(SearchAction::Open | SearchAction::Close) = effect {
@@ -362,6 +367,34 @@ fn search_pointer_only_scrolls_history() {
         pane.pty.input_fd().is_some(),
         "1007 must encode arrows outside search"
     );
+    pane.command(PaneCommand::Close).unwrap();
+    crate::sources::reap(&mut pane.pty).unwrap();
+}
+
+#[test]
+fn switching_tabs_finishes_a_reported_drag() {
+    let mut pane = ready_pane(
+        "stty -echo; printf '\\033[?1002;1006hREADY\\n'; IFS= read -r reports; \
+         [ \"$reports\" = \"$(printf '\\033[<0;1;1M\\033[<0;1;1m')\" ] && echo RELEASED; exec cat",
+        &request_environment(),
+    );
+    let mouse = |phase, column| {
+        PaneCommand::Mouse(MouseEvent {
+            phase,
+            cell: CellPosition { column, row: 0 },
+            pixel: [f32::from(column) * 12.0, 0.0],
+            modifiers: KeyModifiers::default(),
+        })
+    };
+    pane.command(mouse(MousePhase::Press(Button::Left, 0), 0))
+        .unwrap();
+    pane.leave_tab().unwrap();
+    assert!(pane.pty.flush_input().unwrap());
+    pane.command(mouse(MousePhase::Motion, 1)).unwrap();
+    assert!(pane.pty.input_fd().is_none());
+    pane.command(PaneCommand::Text(b"\n")).unwrap();
+    assert!(pane.pty.flush_input().unwrap());
+    wait_for_line(&mut pane, "RELEASED");
     pane.command(PaneCommand::Close).unwrap();
     crate::sources::reap(&mut pane.pty).unwrap();
 }

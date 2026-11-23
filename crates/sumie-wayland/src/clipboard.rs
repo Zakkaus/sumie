@@ -221,7 +221,7 @@ impl State {
         Ok(())
     }
 
-    pub(crate) fn read_clipboard(&mut self, max_bytes: usize) -> io::Result<()> {
+    pub(crate) fn read_clipboard(&mut self, max_bytes: usize, recipient: u64) -> io::Result<()> {
         let Some(offer) = self
             .keyboard
             .as_ref()
@@ -282,7 +282,7 @@ impl State {
                 .reads
                 .finish(sequence, None, &mut state.events);
         })?;
-        self.clipboard.reads.push(self.input_generation, transfer);
+        self.clipboard.reads.push(recipient, transfer);
         receive_to_fd(offer.inner(), mime.to_owned(), writer);
         Ok(())
     }
