@@ -151,6 +151,7 @@ pub struct Writer {
 
 pub type Formatter = *mut c_void;
 pub const POINT_TAG_VIEWPORT: c_int = 1;
+pub const POINT_TAG_SCREEN: c_int = 2;
 pub const FORMATTER_OPT_UNWRAP: c_int = 2;
 pub const FORMATTER_OPT_SELECTION: c_int = 4;
 
@@ -176,7 +177,9 @@ pub const TERMINAL_OPT_TITLE_CHANGED: c_int = 6;
 pub const TERMINAL_OPT_CLIPBOARD_WRITE: c_int = 27;
 pub const TERMINAL_OPT_CLIPBOARD_READ: c_int = 39;
 pub const TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES: c_int = 40;
+pub const TERMINAL_DATA_COLS: c_int = 1;
 pub const TERMINAL_DATA_TITLE: c_int = 12;
+pub const TERMINAL_DATA_TOTAL_ROWS: c_int = 14;
 pub const TERMINAL_DATA_COLOR_PALETTE: c_int = 21;
 pub const TERMINAL_DATA_MODE: c_int = 37;
 pub const CLIPBOARD_LOCATION_STANDARD: c_int = 0;
@@ -187,6 +190,9 @@ pub const CLIPBOARD_READ_DENIED: c_int = 1;
 pub const MODE_BRACKETED_PASTE: u16 = 2004;
 pub const STYLE_INVERSE: u16 = 1 << 4;
 pub const STYLE_INVISIBLE: u16 = 1 << 5;
+pub const ROW_DATA_WRAP: c_int = 1;
+pub const ROW_DATA_GRAPHEME: c_int = 3;
+pub const CELL_DATA_CODEPOINT: c_int = 1;
 pub const CELL_DATA_WIDE: c_int = 3;
 pub const CELL_WIDE_NARROW: c_int = 0;
 pub const CELL_WIDE_WIDE: c_int = 1;
@@ -236,6 +242,15 @@ unsafe extern "C" {
     pub fn ghostty_terminal_set(terminal: Terminal, option: c_int, value: *const c_void) -> c_int;
     pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
     pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
+    pub fn ghostty_grid_ref_cell(reference: *const GridRef, out: *mut Cell) -> c_int;
+    pub fn ghostty_grid_ref_row(reference: *const GridRef, out: *mut u64) -> c_int;
+    pub fn ghostty_grid_ref_graphemes(
+        reference: *const GridRef,
+        buffer: *mut u32,
+        capacity: usize,
+        written: *mut usize,
+    ) -> c_int;
+    pub fn ghostty_row_get(row: u64, data: c_int, out: *mut c_void) -> c_int;
     pub fn ghostty_formatter_terminal_new(
         allocator: *const Allocator,
         formatter: *mut Formatter,

@@ -210,6 +210,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("Some(Shortcut::Copy) => return Ok(Effect::Copy(serial)),",
                            "Some(Shortcut::Copy) => (),"),
               "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
+        probe("search commit leaks to PTY", "test", "src/input.rs",
+              replace_once("Event::ImeCommit { text } | Event::ClipboardText(text) if searching",
+                           "Event::ClipboardText(text) if searching"),
+              "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
     if sys.platform == "darwin":
         probe("Core Text bypasses the fallback cascade", "test", "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),

@@ -53,6 +53,12 @@ The Wayland pointer adapter forwards seat events and modifiers without routing t
 
 Viewport scrolling clears the selection and its drag anchor, as do resize and output that changes a selected row. Before resolving a copy or extending a selection, the GUI refreshes a dirty snapshot so the highlight and formatter use the same viewport. A key that produces PTY input returns the viewport to the bottom.
 
+`app::search` owns the query, selected match and event-loop scheduling. It reads match coordinates from `sumie-vt` in bounded slices on the terminal owner thread. Output and resize invalidate the scan. The view draws visible ranges and the search bar; neither search text nor IME composition goes to the PTY.
+
+`view::overlays` draws the diagnostic banner and search bar. Opening the bar reserves the last grid row before resizing the PTY; closing it restores that row. The search caret supplies the IME rectangle even when the terminal cursor is hidden.
+
+The VT search module reads the native grid without changing the viewport. It joins soft wraps, tracks native cell widths and returns inclusive screen coordinates. Only match coordinates survive a completed scan; there is no Rust scrollback mirror.
+
 If surface acquisition times out, reports occlusion, or needs reconfiguration, the app retains the dirty frame and retries on a deadline. An idle or suspended surface has no retry deadline. Runtime font errors leave affected cells blank if no replacement glyph can be drawn; the view logs each error variant once without logging the input text.
 
 For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actual presentation. Use changing terminal output or an enabled cursor blink to reach later frames.

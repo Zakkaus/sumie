@@ -15,6 +15,8 @@ use sumie_wayland::CursorRect;
 
 use crate::Result;
 
+mod overlays;
+
 pub(crate) struct View {
     font: FontSystem,
     font_settings: FontSettings,
@@ -24,6 +26,10 @@ pub(crate) struct View {
     pub(crate) device: [u32; 2],
     pub(crate) cell: [u32; 2],
     pub(crate) preedit: String,
+    /// Formatted query and tab-separated count, without IME preedit.
+    pub(crate) search_bar: Option<String>,
+    /// Viewport row, inclusive first/last columns, and whether this is the current match.
+    pub(crate) search_highlights: Vec<(u16, u16, u16, bool)>,
     grid: [u32; 2],
     backgrounds: Vec<Rgba>,
     selection_foreground: Option<Rgb>,
@@ -80,6 +86,8 @@ impl View {
             cell,
             grid,
             preedit: String::new(),
+            search_bar: None,
+            search_highlights: Vec::new(),
             backgrounds: Vec::new(),
             selection_foreground: colors.selection_foreground(),
             selection_background: colors.selection_background(),
@@ -124,12 +132,13 @@ impl View {
     }
 
     pub(crate) fn size(&self) -> Size {
-        let [cols, rows] = self
-            .grid
-            .map(|value| u16::try_from(value).expect("validated grid"));
-        let [width_px, height_px] = self
-            .device
-            .map(|value| u16::try_from(value).expect("validated device size"));
+        let grid = self.terminal_grid();
+        let [cols, rows] = grid.map(|value| u16::try_from(value).expect("validated grid"));
+        let [width_px, height_px] = [
+            self.device[0],
+            self.device[1] - (self.grid[1] - grid[1]) * self.cell[1],
+        ]
+        .map(|value| u16::try_from(value).expect("validated device size"));
         Size {
             cols,
             rows,
@@ -150,11 +159,12 @@ impl View {
                 pos as f32
             }
         });
+        let grid = self.terminal_grid();
         let cell = |axis: usize| {
             let index = f64::from(pixel[axis]) / f64::from(self.cell[axis]);
             #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             {
-                index.clamp(0.0, f64::from(self.grid[axis] - 1)) as u16
+                index.clamp(0.0, f64::from(grid[axis] - 1)) as u16
             }
         };
         (
@@ -175,14 +185,48 @@ impl View {
     ) {
         self.backgrounds.clear();
         self.glyphs.clear();
-        let overlay = self
-            .composition(snapshot)
+        let search_open = self.search_bar.is_some();
+        let rows = (self.grid[1] - u32::from(search_open)) as usize;
+        let banner = banner.filter(|_| rows != 0);
+        let overlay = (!search_open)
+            .then(|| self.composition(snapshot))
+            .flatten()
             .filter(|&(row, _, _)| row != 0 || banner.is_none());
         if let Some(message) = banner {
             self.draw_banner(snapshot, message);
         }
-        let rows = (0..).zip(&snapshot.rows);
-        for (row, cells) in rows.skip(usize::from(banner.is_some())) {
+        self.draw_terminal(
+            snapshot,
+            selection,
+            overlay,
+            usize::from(banner.is_some())..rows,
+        );
+        if let Some((row, column, _)) = overlay {
+            self.composition.draw(
+                &mut self.font,
+                &mut self.font_errors,
+                &mut self.glyphs,
+                [column, row],
+                rgba(snapshot.foreground),
+            );
+        }
+        if search_open {
+            self.draw_search(snapshot, selection, banner.is_some());
+        } else {
+            self.set_cursor(snapshot, overlay, banner.is_some(), focused);
+        }
+        self.collect_atlas_dirty();
+    }
+
+    fn draw_terminal(
+        &mut self,
+        snapshot: &Snapshot,
+        selection: Option<CellRange>,
+        overlay: Option<(u32, u32, u32)>,
+        visible: std::ops::Range<usize>,
+    ) {
+        let rows = (0..).zip(snapshot.rows.iter().take(visible.end));
+        for (row, cells) in rows.skip(visible.start) {
             let selected = selection.and_then(|range| range.columns(row));
             let highlighted = |column| selected.as_ref().is_some_and(|cols| cols.contains(&column));
             let columns = overlay
@@ -241,32 +285,6 @@ impl View {
                 draw(&mut self.line, start, color);
             }
         }
-        if let Some((row, column, _)) = overlay {
-            self.composition.draw(
-                &mut self.font,
-                &mut self.font_errors,
-                &mut self.glyphs,
-                [column, row],
-                rgba(snapshot.foreground),
-            );
-        }
-        self.set_cursor(snapshot, overlay, banner.is_some(), focused);
-        self.collect_atlas_dirty();
-    }
-
-    fn draw_banner(&mut self, snapshot: &Snapshot, message: &str) {
-        self.backgrounds.extend(std::iter::repeat_n(
-            rgba(snapshot.foreground),
-            self.grid[0] as usize,
-        ));
-        self.line.ellipsize(message, self.grid[0]);
-        self.line.draw(
-            &mut self.font,
-            &mut self.font_errors,
-            &mut self.glyphs,
-            [0, 0],
-            rgba(snapshot.background),
-        );
     }
 
     fn collect_atlas_dirty(&mut self) {
@@ -388,19 +406,24 @@ impl View {
         ]
     }
 
-    pub(crate) fn ime_rectangle(&self, cursor: sumie_vt::Cursor) -> CursorRect {
-        let [x, y] = self.origin([u32::from(cursor.column), u32::from(cursor.row)]);
+    pub(crate) fn ime_rectangle(&self, cursor: Option<sumie_vt::Cursor>) -> Option<CursorRect> {
+        let [x, y] = if self.search_bar.is_some() {
+            self.cursor?.rect.origin
+        } else {
+            let cursor = cursor?;
+            self.origin([u32::from(cursor.column), u32::from(cursor.row)])
+        };
         let scale = self.scale.cast_signed();
         let left = x * 120 / scale;
         let top = y * 120 / scale;
         let right = ((x + self.cell[0].cast_signed()) * 120 + scale - 1) / scale;
         let bottom = ((y + self.cell[1].cast_signed()) * 120 + scale - 1) / scale;
-        CursorRect {
+        Some(CursorRect {
             x: left,
             y: top,
             width: right - left,
             height: bottom - top,
-        }
+        })
     }
 }
 
@@ -416,32 +439,6 @@ impl Line {
         self.widths.push(width);
         self.widths
             .extend(std::iter::repeat_n(0, cluster.chars().count() - 1));
-    }
-
-    fn ellipsize(&mut self, text: &str, columns: u32) {
-        self.clear();
-        let mut cells = 0;
-        let mut last = (0, 0);
-        for ch in text.chars() {
-            let ch = if ch.is_control() { ' ' } else { ch };
-            let width = codepoint_width(ch);
-            if cells + u32::from(width) > columns {
-                if cells == columns {
-                    self.text.truncate(last.0);
-                    self.widths.truncate(last.1);
-                }
-                self.push("…", 1);
-                break;
-            }
-            if width != 0 {
-                last = (self.text.len(), self.widths.len());
-            } else if cells == 0 {
-                continue;
-            }
-            self.text.push(ch);
-            self.widths.push(width);
-            cells += u32::from(width);
-        }
     }
 
     fn trim_spaces(&mut self) {

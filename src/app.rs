@@ -1,3 +1,5 @@
+mod search;
+
 use std::time::{Duration, Instant};
 
 use sumie_core::{
@@ -61,6 +63,7 @@ struct App {
 
 struct Session {
     shortcuts: Shortcuts,
+    search: Option<search::Bar>,
     selection: Selection,
     pane: LocalPane,
     sources: Option<Sources>,
@@ -83,6 +86,12 @@ impl App {
             let timeout = retry
                 .into_iter()
                 .chain(self.reload.deadline)
+                .chain(
+                    self.session
+                        .as_ref()
+                        .filter(|s| s.search_pending())
+                        .map(|_| Instant::now()),
+                )
                 .min()
                 .map(|at| at.saturating_duration_since(Instant::now()));
             self.gpu
@@ -103,6 +112,7 @@ impl App {
             self.events = events;
             self.reload_config()?;
             if let Some(session) = &mut self.session {
+                session.advance_search()?;
                 session.watch_input()?;
                 let gpu = self.gpu.as_mut().unwrap();
                 let ready = !self.suspended
@@ -248,6 +258,7 @@ impl Session {
         let sources = Sources::new(handle, &pane.pty)?;
         Ok(Self {
             shortcuts: Shortcuts::default(),
+            search: None,
             selection: Selection::default(),
             pane,
             sources: Some(sources),
@@ -274,6 +285,9 @@ impl Session {
             px: [size.width_px, size.height_px],
             cell_px: self.view.cell,
         })?;
+        if let Some(bar) = &mut self.search {
+            bar.restart();
+        }
         self.snapshot_dirty = true;
         self.frame_dirty = true;
         Ok(())
@@ -306,9 +320,15 @@ impl Session {
                 _ => return Ok(()),
             }
         } else {
-            input::route(&mut self.pane, &mut self.shortcuts, event)?
+            input::route(
+                &mut self.pane,
+                &mut self.shortcuts,
+                self.search.is_some(),
+                event,
+            )?
         };
         match effect {
+            input::Effect::Search(action) => self.search_action(action)?,
             input::Effect::Copy(serial) => {
                 self.update_snapshot()?;
                 if let Some(range) = self.selection.range()
@@ -318,6 +338,10 @@ impl Session {
                 }
             }
             input::Effect::ViewportChanged => {
+                if let Some(bar) = &mut self.search {
+                    bar.restore_top = Some(self.pane.terminal.viewport_top()?);
+                    self.frame_dirty = true;
+                }
                 self.frame_dirty |= self.selection.range().is_some();
                 self.selection = Selection::default();
                 self.snapshot_dirty = true;
@@ -361,6 +385,10 @@ impl Session {
             self.snapshot_dirty |= dirty;
             if dirty {
                 sources.reset_blink();
+            }
+            if dirty && let Some(bar) = &mut self.search {
+                bar.restart();
+                self.frame_dirty = true;
             }
             for event in self.pane.terminal.drain_events() {
                 match event {
@@ -408,6 +436,7 @@ impl Session {
     fn watch_blink(&mut self, eligible: bool, banner: Option<&str>) -> Result<()> {
         let cursor = self.snapshot.as_ref().and_then(|snapshot| snapshot.cursor);
         let enabled = eligible
+            && self.search.is_none()
             && self.view.preedit.is_empty()
             && cursor.is_some_and(|cursor| {
                 cursor.visible && cursor.blink && (cursor.row != 0 || banner.is_none())
@@ -427,6 +456,7 @@ impl Session {
         if !self.frame_dirty && self.cursor_hidden == cursor_hidden {
             return Ok(false);
         }
+        self.prepare_search_view()?;
         let snapshot = self.snapshot.as_ref().expect("initial snapshot");
         if self.frame_dirty {
             self.view
@@ -443,9 +473,9 @@ impl Session {
             final_frame && options.screenshot.is_some(),
         );
         if self.frame_dirty
-            && let Some(cursor) = snapshot.cursor
+            && let Some(rect) = self.view.ime_rectangle(snapshot.cursor)
         {
-            gpu.set_cursor_rectangle(self.view.ime_rectangle(cursor));
+            gpu.set_cursor_rectangle(rect);
         }
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {

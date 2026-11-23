@@ -12,6 +12,7 @@ const SCREEN_ALTERNATE: c_int = 1;
 const MODE_ALTERNATE_SCROLL: u16 = 1007;
 const SCROLL_BOTTOM: c_int = 1;
 const SCROLL_DELTA: c_int = 2;
+const SCROLL_ROW: c_int = 3;
 const MOUSE_OPT_SIZE: c_int = 3;
 const MOUSE_OPT_ANY_BUTTON_PRESSED: c_int = 4;
 const MOUSE_OPT_TRACK_LAST_CELL: c_int = 5;
@@ -29,6 +30,7 @@ struct Scrollbar {
 #[repr(C)]
 union ScrollValue {
     delta: isize,
+    row: usize,
     padding: [u64; 2],
 }
 
@@ -179,6 +181,45 @@ impl Terminal {
     /// # Errors
     /// Returns an error if Ghostty cannot read the scrollbar.
     pub fn at_bottom(&self) -> Result<bool, Error> {
+        let scrollbar = self.scrollbar()?;
+        Ok(scrollbar.offset == scrollbar.total - scrollbar.len)
+    }
+
+    /// Return the first visible row in the active screen's scrollback coordinates.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the scrollbar or the offset exceeds `u32`.
+    pub fn viewport_top(&self) -> Result<u32, Error> {
+        u32::try_from(self.scrollbar()?.offset).map_err(|_| Error(ffi::INVALID_VALUE))
+    }
+
+    /// Scroll a search-result row into view if it is not already visible.
+    ///
+    /// # Errors
+    /// Returns an error if the row is outside the screen or Ghostty rejects the scroll.
+    pub fn reveal_search(&mut self, row: u32) -> Result<(), Error> {
+        let scrollbar = self.scrollbar()?;
+        let target = u64::from(row);
+        if target >= scrollbar.total {
+            return Err(Error(ffi::INVALID_VALUE));
+        }
+        if (scrollbar.offset..scrollbar.offset + scrollbar.len).contains(&target) {
+            return Ok(());
+        }
+        let row = usize::try_from(row).map_err(|_| Error(ffi::INVALID_VALUE))?;
+        // SAFETY: The terminal is live and the absolute-row tag matches the union field.
+        check(unsafe {
+            ghostty_terminal_scroll_viewport(
+                self.raw,
+                ScrollViewport {
+                    tag: SCROLL_ROW,
+                    value: ScrollValue { row },
+                },
+            )
+        })
+    }
+
+    fn scrollbar(&self) -> Result<Scrollbar, Error> {
         let mut scrollbar = Scrollbar {
             total: 0,
             offset: 0,
@@ -192,7 +233,7 @@ impl Terminal {
                 from_mut(&mut scrollbar).cast(),
             )
         })?;
-        Ok(scrollbar.offset == scrollbar.total - scrollbar.len)
+        Ok(scrollbar)
     }
 }
 

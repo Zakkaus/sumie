@@ -9,22 +9,36 @@ pub(crate) enum Effect {
     ReadClipboard,
     Copy(u32),
     ViewportChanged,
+    Search(SearchAction),
+}
+
+pub(crate) enum SearchAction {
+    Open,
+    Close,
+    Backspace,
+    Insert(String),
+    Navigate { newer: bool },
 }
 
 pub(crate) fn route(
     pane: &mut impl Pane<Error = Error>,
     shortcuts: &mut Shortcuts,
+    searching: bool,
     event: Event,
 ) -> Result<Effect> {
+    let key_text;
     let command = match event {
         Event::ImePreedit { text, .. } => return Ok(Effect::Preedit(text)),
+        Event::ImeCommit { text } | Event::ClipboardText(text) if searching => {
+            return Ok(Effect::Search(SearchAction::Insert(text)));
+        }
         Event::ImeCommit { ref text } => PaneCommand::Text(text.as_bytes()),
         Event::ClipboardText(text) => PaneCommand::Paste(text),
         Event::Key {
             serial,
             physical,
             keysym,
-            ref utf8,
+            utf8,
             modifiers,
             pressed,
             repeat,
@@ -38,16 +52,26 @@ pub(crate) fn route(
                 KeyAction::Release
             };
             let symbol = xkeysym::Keysym::new(keysym).key_char();
-            match shortcuts.match_key(physical, symbol, modifiers, action) {
+            let shortcut = shortcuts.match_key(physical, symbol, modifiers, action);
+            if searching {
+                if !pressed && !repeat {
+                    return Ok(Effect::None);
+                }
+                shortcuts.capture(physical);
+                return Ok(search_key(keysym, modifiers, utf8));
+            }
+            match shortcut {
                 Some(Shortcut::Copy) => return Ok(Effect::Copy(serial)),
                 Some(Shortcut::Paste) => return Ok(Effect::ReadClipboard),
+                Some(Shortcut::Search) => return Ok(Effect::Search(SearchAction::Open)),
                 Some(Shortcut::Consume) => return Ok(Effect::None),
                 None => (),
             }
+            key_text = utf8;
             PaneCommand::Key {
                 physical,
                 modifiers,
-                text: utf8
+                text: key_text
                     .as_deref()
                     .filter(|text| !text.chars().any(char::is_control))
                     .unwrap_or(""),
@@ -61,6 +85,25 @@ pub(crate) fn route(
         PaneEffect::ViewportChanged => Ok(Effect::ViewportChanged),
         _ => Ok(Effect::None),
     }
+}
+
+fn search_key(keysym: u32, modifiers: KeyModifiers, text: Option<String>) -> Effect {
+    use xkeysym::key;
+    let action = match keysym {
+        key::Escape => SearchAction::Close,
+        key::BackSpace => SearchAction::Backspace,
+        key::Return | key::KP_Enter | key::F3 => SearchAction::Navigate {
+            newer: modifiers.shift,
+        },
+        _ if !modifiers.control && !modifiers.super_key => {
+            let Some(text) = text else {
+                return Effect::None;
+            };
+            SearchAction::Insert(text)
+        }
+        _ => return Effect::None,
+    };
+    Effect::Search(action)
 }
 
 pub(crate) fn send(

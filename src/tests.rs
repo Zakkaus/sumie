@@ -20,6 +20,7 @@ fn local_pane_executes_committed_input_without_preedit() {
     input::route(
         &mut pane,
         &mut sumie_core::Shortcuts::default(),
+        false,
         Event::ImePreedit {
             text: "not-a-command ".into(),
             cursor: None,
@@ -77,6 +78,7 @@ fn matched_shortcuts_never_reach_the_pty() {
     );
     let mut shortcuts = sumie_core::Shortcuts::default();
     for (physical, shifted, base, text) in [
+        (33, xkeysym::key::F, xkeysym::key::f, "F"),
         (
             46,
             xkeysym::key::Cyrillic_ES,
@@ -91,9 +93,10 @@ fn matched_shortcuts_never_reach_the_pty() {
         ),
     ] {
         for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
-            input::route(
+            let effect = input::route(
                 &mut pane,
                 &mut shortcuts,
+                false,
                 Event::Key {
                     physical,
                     keysym: if pressed { shifted } else { base },
@@ -109,14 +112,54 @@ fn matched_shortcuts_never_reach_the_pty() {
                 },
             )
             .unwrap();
+            if physical == 33 && pressed && !repeat {
+                assert!(matches!(
+                    effect,
+                    input::Effect::Search(input::SearchAction::Open)
+                ));
+            }
             assert!(
                 pane.pty.input_fd().is_none(),
                 "matched key queued PTY input: {physical}, pressed={pressed}, repeat={repeat}"
             );
         }
     }
+    for symbol in [xkeysym::key::Return, xkeysym::key::F3] {
+        for newer in [false, true] {
+            let event = search_key(28, symbol, true, newer);
+            let effect = input::route(&mut pane, &mut shortcuts, true, event).unwrap();
+            assert!(
+                matches!(effect, input::Effect::Search(input::SearchAction::Navigate { newer: n }) if n == newer)
+            );
+        }
+    }
+    for (event, open) in [
+        (Event::ImeCommit { text: "水".into() }, true),
+        (search_key(30, xkeysym::key::a, true, false), true),
+        (search_key(1, xkeysym::key::Escape, true, false), true),
+        (search_key(1, xkeysym::key::Escape, false, false), false),
+        (search_key(30, xkeysym::key::a, false, false), false),
+    ] {
+        input::route(&mut pane, &mut shortcuts, open, event).unwrap();
+        assert!(pane.pty.input_fd().is_none());
+    }
     pane.command(PaneCommand::Close).unwrap();
     crate::sources::reap(&mut pane.pty).unwrap();
+}
+
+fn search_key(physical: u32, keysym: u32, pressed: bool, shift: bool) -> Event {
+    Event::Key {
+        serial: 1,
+        physical,
+        keysym,
+        utf8: pressed.then(|| "a".into()),
+        modifiers: sumie_wayland::Modifiers {
+            shift,
+            ..Default::default()
+        },
+        pressed,
+        repeat: false,
+    }
 }
 
 fn ready_pane(script: &str, env: &std::collections::BTreeMap<OsString, OsString>) -> LocalPane {

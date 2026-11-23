@@ -45,10 +45,18 @@ pub struct Shortcuts {
 pub enum Shortcut {
     Copy,
     Paste,
+    Search,
     Consume,
 }
 
 impl Shortcuts {
+    /// Keep a modal key's repeats and release out of the PTY after the modal closes.
+    pub fn capture(&mut self, evdev: u32) {
+        if !self.consumed.contains(&evdev) {
+            self.consumed.push(evdev);
+        }
+    }
+
     /// Match before encoding. A captured press owns its repeats and release even
     /// if the user releases a modifier first or the layout changes.
     pub fn match_key(
@@ -59,6 +67,7 @@ impl Shortcuts {
         action: KeyAction,
     ) -> Option<Shortcut> {
         const KEY_C: u32 = 46;
+        const KEY_F: u32 = 33;
         const KEY_V: u32 = 47;
         if let Some(index) = self.consumed.iter().position(|&held| held == evdev) {
             if !matches!(action, KeyAction::Repeat) {
@@ -76,11 +85,13 @@ impl Shortcuts {
         {
             let key = match evdev {
                 KEY_C => Some('c'),
+                KEY_F => Some('f'),
                 KEY_V => Some('v'),
                 _ => symbol,
             };
             let shortcut = match key {
                 Some('c' | 'C') => Shortcut::Copy,
+                Some('f' | 'F') => Shortcut::Search,
                 Some('v' | 'V') => Shortcut::Paste,
                 _ => return None,
             };
