@@ -104,6 +104,18 @@ impl MouseState {
         self.left = Left::Idle;
     }
 
+    /// Reset local gestures without forgetting buttons already reported to the terminal.
+    pub fn reset_gestures(&mut self) {
+        self.cancel_selection();
+        self.wheel = Wheel::default();
+    }
+
+    /// Track a `Dispatch::Press` after its report has been queued to the PTY.
+    pub fn press_reported(&mut self, button: Button) {
+        self.held.rotate_right(1);
+        self.held[0] = Some(button);
+    }
+
     #[must_use]
     pub fn any_button(&self) -> bool {
         self.held[0].is_some()
@@ -167,8 +179,6 @@ impl MouseState {
             return Dispatch::Select(SelectStep::Begin);
         }
         if tracking && !self.held.contains(&Some(button)) {
-            self.held.rotate_right(1);
-            self.held[0] = Some(button);
             Dispatch::Press(button)
         } else {
             Dispatch::Ignore
@@ -228,7 +238,11 @@ mod tests {
                 let mut fire = |phase, col| {
                     event.phase = phase;
                     event.cell.column = col;
-                    state.dispatch(event, modes)
+                    let dispatch = state.dispatch(event, modes);
+                    if let Dispatch::Press(button) = dispatch {
+                        state.press_reported(button);
+                    }
+                    dispatch
                 };
                 let pass = tracking && alt && !control;
                 let press = MousePhase::Press(Button::Left);

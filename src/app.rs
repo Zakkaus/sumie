@@ -330,7 +330,7 @@ impl Session {
                     action,
                     input::SearchAction::Open | input::SearchAction::Close
                 ) {
-                    self.pane.reset_pointer();
+                    self.pane.reset_pointer_gestures();
                     gpu.set_input_generation(self.routing.change_recipient());
                 }
                 self.search_action(action)?;

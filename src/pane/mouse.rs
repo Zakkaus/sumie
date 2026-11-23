@@ -76,12 +76,12 @@ impl Mouse {
 }
 
 impl LocalPane {
-    pub(crate) fn reset_pointer(&mut self) {
-        self.mouse.state = MouseState::default();
+    pub(crate) fn reset_pointer_gestures(&mut self) {
+        self.mouse.state.reset_gestures();
     }
 
     pub(crate) fn search_pointer(&mut self, event: MouseEvent) -> Result<PaneEffect> {
-        if !matches!(event.phase, MousePhase::Wheel(_)) {
+        if matches!(event.phase, MousePhase::Press(_) | MousePhase::Motion) {
             return Ok(PaneEffect::None);
         }
         let history_only = MouseModes {
@@ -89,16 +89,25 @@ impl LocalPane {
             alternate: false,
             alternate_scroll: false,
         };
-        if let Dispatch::Wheel(WheelRoute::History, steps) =
-            self.mouse.state.dispatch(event, history_only)
-        {
-            return self.scroll_history(steps);
+        match self.pointer_with_modes(event, history_only) {
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::WouldBlock) =>
+            {
+                tracing::warn!("terminal input queue is full; dropped mouse release");
+                Ok(PaneEffect::None)
+            }
+            result => result,
         }
-        Ok(PaneEffect::None)
     }
 
     pub(super) fn pointer(&mut self, event: MouseEvent) -> Result<PaneEffect> {
-        let (action, button) = match self.mouse.state.dispatch(event, self.mouse.modes) {
+        self.pointer_with_modes(event, self.mouse.modes)
+    }
+
+    fn pointer_with_modes(&mut self, event: MouseEvent, modes: MouseModes) -> Result<PaneEffect> {
+        let (action, button) = match self.mouse.state.dispatch(event, modes) {
             Dispatch::Ignore => return Ok(PaneEffect::None),
             Dispatch::Select(step) => return Ok(PaneEffect::Select(step)),
             Dispatch::Click(press) => {
@@ -113,13 +122,19 @@ impl LocalPane {
                 self.pty.enqueue_input(&self.mouse.click)?;
                 return Ok(PaneEffect::Select(SelectStep::Clear));
             }
-            Dispatch::Press(b) => (MouseAction::Press, Some(native_button(b))),
-            Dispatch::Release(b) => (MouseAction::Release, Some(native_button(b))),
-            Dispatch::Motion(b) => (MouseAction::Motion, b.map(native_button)),
+            Dispatch::Press(b) => (MouseAction::Press, Some(b)),
+            Dispatch::Release(b) => (MouseAction::Release, Some(b)),
+            Dispatch::Motion(b) => (MouseAction::Motion, b),
             Dispatch::Wheel(route, steps) => return self.wheel(event, route, steps),
         };
-        let report = self.mouse.report(event, action, button);
-        self.pty.enqueue_input(self.mouse.encoder.encode(report)?)?;
+        let report = self.mouse.report(event, action, button.map(native_button));
+        let bytes = self.mouse.encoder.encode(report)?;
+        if !bytes.is_empty() {
+            self.pty.enqueue_input(bytes)?;
+            if let (MouseAction::Press, Some(button)) = (action, button) {
+                self.mouse.state.press_reported(button);
+            }
+        }
         Ok(PaneEffect::None)
     }
 

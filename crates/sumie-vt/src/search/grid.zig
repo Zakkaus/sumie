@@ -1,4 +1,5 @@
 //! Project pinned Ghostty page rows into the search ABI without copying styles.
+const std = @import("std");
 const uucode = @import("uucode");
 const grid_ref = @import("terminal/c/grid_ref.zig");
 const GridRef = grid_ref.CGridRef;
@@ -6,6 +7,7 @@ const Result = @import("terminal/c/result.zig").Result;
 
 pub fn install() void {
     @export(&readRow, .{ .name = "sumie_search_read_row" });
+    @export(&checkRows, .{ .name = "sumie_search_check_rows" });
     @export(&lineStart, .{ .name = "sumie_search_line_start" });
     @export(&graphemes, .{ .name = "sumie_search_graphemes" });
     @export(&fold, .{ .name = "sumie_search_fold" });
@@ -52,6 +54,33 @@ fn readRow(reference: *const GridRef, next: *GridRef, buf: [*]u32, cap: u16, met
     }
     meta.* = .{ .len = @intCast(len), .cols = @intCast(cols), .wrapped = row.wrap };
     next.* = if (pin.down(1)) |p| GridRef.fromPin(p) else .{};
+    return true;
+}
+
+const Stamp = extern struct { hash: u64, dirty: bool, neutral: bool };
+
+// Render updates consume Ghostty's dirty bits, even though search may be
+// reading a different viewport. Keep fingerprints only for scanned active rows.
+fn checkRows(reference: *const GridRef, stamps: [*]Stamp, len: usize) callconv(.c) bool {
+    var pin = reference.toPin() orelse return false;
+    for (stamps[0..len], 0..) |*stamp, i| {
+        const page = pin.node.page();
+        const row = page.getRow(pin.y);
+        const cells = page.getCells(row);
+        var hash = std.hash.Wyhash.init(@intFromBool(row.wrap));
+        hash.update(std.mem.sliceAsBytes(cells));
+        if (row.grapheme) for (cells) |*cell| {
+            if (cell.hasGrapheme()) if (pin.grapheme(cell)) |extra| {
+                const n = extra.len;
+                hash.update(std.mem.asBytes(&n));
+                hash.update(std.mem.sliceAsBytes(extra));
+            };
+        };
+        const value = hash.final();
+        stamp.dirty = stamp.dirty or stamp.hash != value;
+        stamp.hash = value;
+        if (i + 1 < len) pin = pin.down(1) orelse return false;
+    }
     return true;
 }
 

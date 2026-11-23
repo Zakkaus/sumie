@@ -225,9 +225,15 @@ fn search_key(physical: u32, keysym: u32, action: KeyAction, modifiers: Modifier
 
 #[test]
 fn search_pointer_only_scrolls_history() {
+    use MousePhase::{Cancel, Motion, Press, Release};
+
     let mut pane = ready_pane(
         "stty -echo; printf '\\033[?1003;1006h'; seq 1 20; printf 'READY\\n'; \
-         IFS= read -r go; printf '\\033[?1003l\\033[?1049;1007hALT\\n'; exec cat",
+         press=$(printf '\\033[<2;1;1M'); release=$(printf '\\033[<2;1;1m'); \
+         IFS= read -r reports; \
+         if [ \"$reports\" = \"$press$release$press$release\" ]; then \
+             printf '\\033[?1003l\\033[?1049;1007hALT\\n'; \
+         fi; exec cat",
         &request_environment(),
     );
     let event = |phase| MouseEvent {
@@ -236,17 +242,36 @@ fn search_pointer_only_scrolls_history() {
         pixel: [0.0; 2],
         modifiers: KeyModifiers::default(),
     };
-    for phase in [
-        MousePhase::Press(Button::Right),
-        MousePhase::Motion,
-        MousePhase::Release(Button::Right),
-        MousePhase::Cancel,
-    ] {
+    let right = Button::Right;
+    let scenarios: [&[(bool, MousePhase, bool)]; 2] = [
+        &[
+            (true, Press(right), false),
+            (true, Motion, false),
+            (true, Release(right), false),
+            (true, Cancel, false),
+        ],
+        &[
+            (false, Press(right), true),
+            (true, Motion, false),
+            (false, Release(right), true),
+            (false, Press(right), true),
+            (true, Release(right), true),
+            (true, Press(right), false),
+            (false, Release(right), false),
+        ],
+    ];
+    let mut searching = false;
+    for (next, phase, reported) in scenarios.into_iter().flatten().copied() {
+        if next != searching {
+            pane.reset_pointer_gestures();
+            searching = next;
+        }
         assert!(matches!(
-            input::pointer(&mut pane, true, event(phase)).unwrap(),
+            input::pointer(&mut pane, searching, event(phase)).unwrap(),
             PaneEffect::None
         ));
-        assert!(pane.pty.input_fd().is_none());
+        assert_eq!(pane.pty.input_fd().is_some(), reported);
+        assert!(pane.pty.flush_input().unwrap());
     }
 
     let wheel = event(MousePhase::Wheel(-120.0));
@@ -258,7 +283,7 @@ fn search_pointer_only_scrolls_history() {
     assert!(!pane.terminal.at_bottom().unwrap());
     assert!(pane.pty.input_fd().is_none());
 
-    pane.command(PaneCommand::Text(b"alt\n")).unwrap();
+    pane.command(PaneCommand::Text(b"\n")).unwrap();
     assert!(pane.pty.flush_input().unwrap());
     wait_for_line(&mut pane, "ALT");
     input::pointer(&mut pane, true, wheel).unwrap();

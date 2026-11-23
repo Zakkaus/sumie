@@ -17,6 +17,11 @@ unsafe extern "C" {
         cap: u16,
         row: *mut RowData,
     ) -> bool;
+    fn sumie_search_check_rows(
+        reference: *const ffi::GridRef,
+        stamps: *mut Stamp,
+        len: usize,
+    ) -> bool;
     fn sumie_search_line_start(reference: *const ffi::GridRef, boundary: u32) -> u32;
     fn sumie_search_graphemes(
         reference: *const ffi::GridRef,
@@ -50,7 +55,7 @@ impl Cell {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct Size {
     pub cols: u16,
     pub rows: u32,
@@ -130,6 +135,70 @@ pub(super) struct RowData {
     pub wrapped: bool,
 }
 
+#[repr(C)]
+#[derive(Default)]
+pub(super) struct Stamp {
+    hash: u64,
+    pub dirty: bool,
+    pub neutral: bool,
+}
+
+/// Writes during a sweep invalidate its visited prefix, not its cursor.
+#[derive(Default)]
+pub(super) struct Recheck {
+    remaining: std::ops::Range<usize>,
+    prefix: usize,
+}
+
+impl Recheck {
+    pub(super) fn schedule(&mut self, rows: usize) {
+        self.prefix = self.prefix.max(self.remaining.start);
+        self.remaining.end = rows;
+    }
+
+    pub(super) fn pending(&self) -> bool {
+        !self.remaining.is_empty()
+    }
+
+    pub(super) fn advance(
+        &mut self,
+        terminal: &Terminal,
+        grid: Size,
+        stamps: &mut [Stamp],
+        deadline: std::time::Instant,
+    ) -> Result<(), Error> {
+        let batch = (16_384 / usize::from(grid.cols)).max(1);
+        while self.pending() {
+            let start = self.remaining.start;
+            let end = (start + batch).min(self.remaining.end);
+            let row = grid.active + u32::try_from(start).map_err(|_| Error(ffi::INVALID_VALUE))?;
+            let reference = grid_ref(terminal, row)?;
+            check_stamps(&reference, &mut stamps[start..end])?;
+            self.remaining.start = end;
+            if self.remaining.is_empty() {
+                self.remaining = 0..std::mem::take(&mut self.prefix);
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn check_row(terminal: &Terminal, row: u32, stamp: &mut Stamp) -> Result<(), Error> {
+    check_stamps(&grid_ref(terminal, row)?, std::slice::from_mut(stamp))
+}
+
+fn check_stamps(reference: &ffi::GridRef, stamps: &mut [Stamp]) -> Result<(), Error> {
+    // SAFETY: The caller holds the terminal borrow. Zig writes at most stamps.len() entries.
+    if unsafe { sumie_search_check_rows(reference, stamps.as_mut_ptr(), stamps.len()) } {
+        Ok(())
+    } else {
+        Err(Error(ffi::INVALID_VALUE))
+    }
+}
+
 pub(super) struct Row<'a> {
     reference: ffi::GridRef,
     pub data: RowData,
@@ -137,6 +206,14 @@ pub(super) struct Row<'a> {
 }
 
 impl Row<'_> {
+    pub(super) fn stamp(&self, neutral: bool) -> Result<Stamp, Error> {
+        let mut stamp = Stamp::default();
+        check_stamps(&self.reference, std::slice::from_mut(&mut stamp))?;
+        stamp.dirty = false;
+        stamp.neutral = neutral;
+        Ok(stamp)
+    }
+
     pub(super) fn graphemes<'a>(
         &self,
         col: u16,

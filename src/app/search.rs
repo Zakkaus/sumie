@@ -137,12 +137,17 @@ impl Bar {
         let scan = &mut scan.search;
         let old_count = scan.matches().len();
         self.complete = scan.advance(vt)?;
-        Ok(self.complete || scan.matches().len() != old_count)
+        Ok(self.complete || scan.has_full_results() || scan.matches().len() != old_count)
     }
 
     fn select(&mut self, vt: &mut Terminal) -> Result<bool> {
         let matches = self.matches();
-        if matches.is_empty() || !self.complete {
+        if matches.is_empty()
+            || !self
+                .scan
+                .as_ref()
+                .is_some_and(|s| s.search.has_full_results())
+        {
             return Ok(false);
         }
         let old = self.position()?;
@@ -238,11 +243,11 @@ impl Session {
     }
 
     pub(super) fn advance_search(&mut self) -> Result<()> {
-        if let Some(bar) = self.search.as_mut().filter(|bar| !bar.complete) {
-            self.frame_dirty |= bar.advance(&self.pane.terminal)?;
-            if bar.complete {
-                self.select_match()?;
-            }
+        if let Some(bar) = self.search.as_mut().filter(|bar| !bar.complete)
+            && bar.advance(&self.pane.terminal)?
+        {
+            self.frame_dirty = true;
+            self.select_match()?;
         }
         Ok(())
     }

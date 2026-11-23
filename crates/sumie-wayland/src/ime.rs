@@ -24,6 +24,7 @@ struct Batch {
     commit: Option<String>,
     preedit: String,
     cursor: Option<(u32, u32)>,
+    enabled_before_leave: Option<u32>,
 }
 
 #[derive(Default)]
@@ -57,6 +58,15 @@ impl ImeState {
         }
     }
 
+    fn keyboard_leave(&mut self, generation: u64, events: &mut VecDeque<Event>) {
+        // Keyboard leave can precede done for an already queued commit.
+        let commit = self.pending.commit.take();
+        let enabled_before_leave = self.enabled_at;
+        self.disable(generation, events);
+        self.pending.commit = commit;
+        self.pending.enabled_before_leave = enabled_before_leave;
+    }
+
     fn next_cursor(&mut self, desired: Option<CursorRect>) -> Option<CursorRect> {
         let rect = desired?;
         if self.enabled_at.is_none() || self.wait_for_match || self.sent_rect == Some(rect) {
@@ -71,8 +81,9 @@ impl ImeState {
             commit,
             preedit,
             cursor,
+            enabled_before_leave,
         } = std::mem::take(&mut self.pending);
-        let Some(enabled_at) = self.enabled_at else {
+        let Some(enabled_at) = self.enabled_at.or(enabled_before_leave) else {
             return;
         };
         // Only a serial from this recipient may apply text. A mismatch within
@@ -159,16 +170,20 @@ impl State {
         }
         self.input_generation = generation;
         self.cursor_rect = None;
-        if let Some(ime) = self
+        let Some(ime) = self
             .keyboard
             .as_mut()
             .and_then(|keyboard| keyboard.ime.as_mut())
-            && ime.state.enabled_at.is_some()
-        {
-            ime.disable();
-            if ime.enable(None) {
-                self.commit_ime_surface();
-            }
+        else {
+            return;
+        };
+        if ime.state.enabled_at.is_none() {
+            ime.state.pending = Batch::default();
+            return;
+        }
+        ime.disable();
+        if ime.enable(None) {
+            self.commit_ime_surface();
         }
     }
 
@@ -202,7 +217,8 @@ impl State {
             && ime.state.enabled_at.is_some()
         {
             // If text-input leave arrives first, the compositor already disabled the object.
-            ime.state.disable(self.input_generation, &mut self.events);
+            ime.state
+                .keyboard_leave(self.input_generation, &mut self.events);
             if ime.disable() {
                 self.commit_ime_surface();
             }
@@ -322,25 +338,38 @@ mod tests {
         ime.enable();
         ime.serial = 2;
         let mut events = VecDeque::new();
-        for (serial, commit, preedit, sync) in [(1, Some("字"), "ㄅ", false), (2, None, "", true)]
-        {
+        let generation = 1;
+        for (serial, commit, preedit, sync, keyboard_left) in [
+            (1, Some("字"), "ㄅ", false, false),
+            (2, None, "", true, false),
+            (2, Some("水"), "ㄅ", false, true),
+        ] {
             ime.pending = Batch {
                 commit: commit.map(str::to_owned),
                 preedit: preedit.to_owned(),
                 cursor: (!preedit.is_empty()).then_some((0, 3)),
+                ..Batch::default()
             };
-            ime.done(serial, 0, &mut events);
+            if keyboard_left {
+                ime.keyboard_leave(generation, &mut events);
+                ime.serial = ime.serial.wrapping_add(1);
+            }
+            ime.done(serial, generation, &mut events);
             if let Some(commit) = commit {
+                assert!(matches!(
+                    events.pop_front(),
+                    Some(Event::ImeCommit { text, generation: g }) if text == commit && g == generation
+                ));
+            }
+            if !keyboard_left {
                 assert!(
-                    matches!(events.pop_front(), Some(Event::ImeCommit { text, .. }) if text == commit)
+                    matches!(events.pop_front(), Some(Event::ImePreedit { text, cursor, .. })
+                    if text == preedit && cursor == (!preedit.is_empty()).then_some((0, 3)))
                 );
             }
-            assert!(
-                matches!(events.pop_front(), Some(Event::ImePreedit { text, cursor, .. })
-                if text == preedit && cursor == (!preedit.is_empty()).then_some((0, 3)))
-            );
             assert!(events.is_empty());
-            assert_eq!(ime.next_cursor(Some(NEXT)), sync.then_some(NEXT));
+            let rect = if keyboard_left { FIRST } else { NEXT };
+            assert_eq!(ime.next_cursor(Some(rect)), sync.then_some(rect));
         }
     }
 

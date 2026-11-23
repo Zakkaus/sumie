@@ -36,6 +36,12 @@ pub struct Search {
     cells: Vec<grid::Cell>,
     graphemes: Vec<u32>,
     matches: Vec<SearchMatch>,
+    active_rows: Vec<grid::Stamp>,
+    recheck: grid::Recheck,
+    next_repair: usize,
+    row_started: bool,
+    repair_from: Option<usize>,
+    replacement: Vec<SearchMatch>,
 }
 
 impl Search {
@@ -54,6 +60,12 @@ impl Search {
             cells: Vec::new(),
             graphemes: Vec::new(),
             matches: Vec::new(),
+            active_rows: Vec::new(),
+            recheck: grid::Recheck::default(),
+            next_repair: 0,
+            row_started: false,
+            repair_from: None,
+            replacement: Vec::new(),
         }
     }
 
@@ -62,10 +74,13 @@ impl Search {
     /// # Errors
     /// Returns an error if Ghostty cannot read the grid or it exceeds the coordinate range.
     pub fn advance(&mut self, terminal: &Terminal) -> Result<bool, Error> {
+        self.advance_until(terminal, Instant::now() + BUDGET)
+    }
+
+    fn advance_until(&mut self, terminal: &Terminal, deadline: Instant) -> Result<bool, Error> {
         if self.pattern.needle.is_empty() {
             return Ok(true);
         }
-        let deadline = Instant::now() + BUDGET;
         let grid = if let Some(grid) = self.grid {
             grid
         } else {
@@ -74,13 +89,27 @@ impl Search {
             grid
         };
         if self.row == grid.rows {
-            return Ok(true);
+            self.recheck
+                .advance(terminal, grid, &mut self.active_rows, deadline)?;
+            if !self.begin_repair(grid.active) {
+                return Ok(!self.recheck.pending());
+            }
         }
         self.cells.resize(usize::from(grid.cols), grid::Cell(0));
         let mut rows = grid::Rows::at(terminal, self.row)?;
         self.save_checkpoint(grid.active);
         while self.row < grid.rows {
             let row = rows.read(&mut self.cells, grid.cols)?;
+            if !self.row_started && self.row >= grid.active {
+                let i = (self.row - grid.active) as usize;
+                let current = row.stamp(self.progress.is_empty())?;
+                if let Some(stamp) = self.active_rows.get_mut(i) {
+                    *stamp = current;
+                } else {
+                    self.active_rows.push(current);
+                }
+                self.row_started = true;
+            }
             if !self.scan_row(&row, deadline)? {
                 return Ok(false);
             }
@@ -89,12 +118,27 @@ impl Search {
             }
             self.row += 1;
             self.col = 0;
+            self.row_started = false;
+            if self.repair_from.is_some()
+                && (self.row == grid.rows
+                    || (self.progress.is_empty()
+                        && self
+                            .active_rows
+                            .get((self.row - grid.active) as usize)
+                            .is_some_and(|s| s.neutral && !s.dirty)))
+            {
+                self.next_repair = (self.row - grid.active) as usize;
+                self.finish_repair(grid.rows);
+                break;
+            }
             self.save_checkpoint(grid.active);
             if self.row.is_multiple_of(ROW_BATCH) && Instant::now() >= deadline {
                 break;
             }
         }
-        Ok(self.row == grid.rows)
+        Ok(self.row == grid.rows
+            && !self.recheck.pending()
+            && !self.active_rows.iter().any(|stamp| stamp.dirty))
     }
 
     /// After a write, preserve search progress before the first possibly changed
@@ -113,11 +157,32 @@ impl Search {
             return Ok(());
         };
         let grid = grid::Size::read(terminal)?;
+        if trimmed == 0 && grid == old && dirty_from == grid.active {
+            // Never rewind an in-flight scan. Revisit changed rows after reaching
+            // the tail, even when a program redraws before every time slice.
+            self.recheck.schedule(self.active_rows.len());
+            if self.row_started {
+                // A row resumed between writes could mix two versions even if
+                // a later write restores its original contents before recheck.
+                let stamp = &mut self.active_rows[(self.row - grid.active) as usize];
+                grid::check_row(terminal, self.row, stamp)?;
+            }
+            return Ok(());
+        }
+        if self.repair_from.take().is_some() {
+            self.row = old.rows;
+            self.col = 0;
+            self.replacement.clear();
+        }
+        self.active_rows.clear();
+        self.recheck = grid::Recheck::default();
+        self.next_repair = 0;
+        self.row_started = false;
         if old.cols == grid.cols {
             if trimmed != 0 {
                 self.trim(trimmed);
             }
-            let dirty = dirty_from.min(grid.rows);
+            let dirty = dirty_from.min(grid.active);
             self.checkpoint = self.checkpoint.filter(|&row| row <= dirty);
             if self.row > dirty || (self.row == dirty && self.col != 0) {
                 self.restart_at(terminal, dirty)?;
@@ -134,6 +199,45 @@ impl Search {
     #[must_use]
     pub fn matches(&self) -> &[SearchMatch] {
         &self.matches
+    }
+
+    /// All rows have been visited; existing matches remain navigable while
+    /// replacements for newly dirtied rows are prepared.
+    #[must_use]
+    pub fn has_full_results(&self) -> bool {
+        self.repair_from.is_some() || self.grid.is_some_and(|grid| self.row == grid.rows)
+    }
+
+    fn begin_repair(&mut self, active: u32) -> bool {
+        let (before, after) = self.active_rows.split_at(self.next_repair);
+        let Some(dirty) = after
+            .iter()
+            .position(|s| s.dirty)
+            .map(|i| self.next_repair + i)
+            .or_else(|| before.iter().position(|s| s.dirty))
+        else {
+            return false;
+        };
+        // A neutral boundary carries neither a partial match nor pending spaces
+        // from an earlier row. Otherwise use the immutable history checkpoint.
+        let start = self.active_rows[..=dirty].iter().rposition(|s| s.neutral);
+        self.progress.clear();
+        self.row = active;
+        if let Some(i) = start {
+            self.row += u32::try_from(i).expect("active row index fits u32");
+        } else {
+            self.progress.copy_from(&self.saved_progress);
+        }
+        let cutoff = self.match_cutoff();
+        self.repair_from = Some(self.matches.partition_point(|m| m.end < cutoff));
+        true
+    }
+
+    fn finish_repair(&mut self, rows: u32) {
+        let start = self.repair_from.take().expect("active repair");
+        let end = self.matches.partition_point(|m| m.end.0 < self.row);
+        self.matches.splice(start..end, self.replacement.drain(..));
+        self.row = rows;
     }
 
     fn save_checkpoint(&mut self, active: u32) {
@@ -156,14 +260,17 @@ impl Search {
         self.col = 0;
         // Pending blanks can produce matches ending before the checkpoint once
         // later text arrives. Revalidate those matches with the suffix.
-        let cutoff = self
-            .progress
-            .blanks
-            .front()
-            .map_or((self.row, 0), |run| (run.row, run.next));
+        let cutoff = self.match_cutoff();
         self.matches
             .truncate(self.matches.partition_point(|m| m.end < cutoff));
         Ok(())
+    }
+
+    fn match_cutoff(&self) -> Position {
+        self.progress
+            .blanks
+            .front()
+            .map_or((self.row, 0), |run| (run.row, run.next))
     }
 
     fn trim(&mut self, trimmed: u32) {
@@ -237,7 +344,11 @@ impl Search {
                 start,
                 end,
                 &mut self.progress.positions,
-                &mut self.matches,
+                if self.repair_from.is_some() {
+                    &mut self.replacement
+                } else {
+                    &mut self.matches
+                },
             );
         }
         Ok(())
@@ -256,7 +367,11 @@ impl Search {
                 pos,
                 pos,
                 &mut self.progress.positions,
-                &mut self.matches,
+                if self.repair_from.is_some() {
+                    &mut self.replacement
+                } else {
+                    &mut self.matches
+                },
             );
             count += 1;
             if count == CELL_BATCH {
@@ -277,6 +392,10 @@ struct Progress {
 }
 
 impl Progress {
+    fn is_empty(&self) -> bool {
+        self.positions.is_empty() && self.blanks.is_empty()
+    }
+
     fn copy_from(&mut self, other: &Self) {
         self.positions.clone_from(&other.positions);
         self.blanks.clone_from(&other.blanks);
@@ -404,138 +523,4 @@ fn prefix_len(needle: &[(u32, usize)], mut len: usize, cp: u32) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fmt::Write;
-
-    use super::*;
-
-    #[test]
-    fn matches_logical_lines() {
-        let mut terminal = Terminal::new(5, 2).unwrap();
-        terminal.write("0abc界e\u{301}Z\r\n0ABC界e\u{301}z\r\nXY".as_bytes());
-        assert_eq!(terminal.viewport_top().unwrap(), 3);
-        terminal.reveal_search(0, 0).unwrap();
-        terminal.reveal_search(1, 1).unwrap();
-        assert_eq!(terminal.viewport_top().unwrap(), 0);
-        terminal.write("\r\nAAAAA\r\nx\x1b[3Gz\r\nΟΣ".as_bytes());
-        for (query, expected) in [
-            ("c界e\u{301}z", &[((0, 3), (1, 3)), ((2, 3), (3, 3))][..]),
-            ("C界", &[((2, 3), (3, 1))]),
-            ("\u{301}", &[((1, 2), (1, 2)), ((3, 2), (3, 2))]),
-            ("z0", &[]),
-            (
-                "aaa",
-                &[((5, 0), (5, 2)), ((5, 1), (5, 3)), ((5, 2), (5, 4))],
-            ),
-            ("x z", &[((6, 0), (6, 2))]),
-            ("z ", &[]),
-            ("ος", &[((7, 0), (7, 1))]),
-            ("Ος", &[]),
-        ] {
-            let mut search = Search::new(query);
-            while !search.advance(&terminal).unwrap() {}
-            let matches: Vec<_> = search.matches().iter().map(|m| (m.start, m.end)).collect();
-            assert_eq!(matches, expected, "{query:?}");
-        }
-        if std::env::var_os("SUMIE_SEARCH_BENCH").is_some() {
-            time_scrollback_search();
-        }
-    }
-
-    #[test]
-    fn refresh_keeps_history_and_rescans_edited_wrap() {
-        let mut terminal = Terminal::new(5, 2).unwrap();
-        terminal.write(b"def\r\nabcdeFghijkdef");
-        assert_eq!(terminal.viewport_top().unwrap(), 2);
-        let mut search = Search::new("def");
-        while !search.advance(&terminal).unwrap() {}
-        let prefix = SearchMatch {
-            start: (0, 0),
-            end: (0, 2),
-        };
-        let wrapped = SearchMatch {
-            start: (1, 3),
-            end: (2, 0),
-        };
-        let suffix = SearchMatch {
-            start: (3, 1),
-            end: (3, 3),
-        };
-        assert_eq!(search.matches(), &[prefix, wrapped, suffix]);
-
-        terminal.write(b"\x1b[1A\rZ");
-        search.refresh(&terminal, 0, 2).unwrap();
-        assert_eq!(search.row, 2);
-        assert_eq!(search.matches(), &[prefix]);
-        while !search.advance(&terminal).unwrap() {}
-        assert_eq!(search.matches(), &[prefix, suffix]);
-
-        terminal.write(b"\rF");
-        search.refresh(&terminal, 0, 2).unwrap();
-        terminal.write(b"\x1b[2;1H\r\ndef");
-        search.refresh(&terminal, 0, 2).unwrap();
-        assert_eq!(search.row, 2);
-        let appended = SearchMatch {
-            start: (4, 0),
-            end: (4, 2),
-        };
-        while !search.advance(&terminal).unwrap() {}
-        assert_eq!(search.matches(), &[prefix, wrapped, suffix, appended]);
-
-        terminal.write(b"\x1b[3J");
-        assert_eq!(terminal.viewport_top().unwrap(), 0);
-        search.refresh(&terminal, 3, 2).unwrap();
-        assert!(search.advance(&terminal).unwrap());
-        assert_eq!(
-            search.matches(),
-            &[
-                SearchMatch {
-                    start: (0, 1),
-                    end: (0, 3),
-                },
-                SearchMatch {
-                    start: (1, 0),
-                    end: (1, 2),
-                },
-            ]
-        );
-    }
-
-    fn time_scrollback_search() {
-        let mut terminal = Terminal::new(80, 24).unwrap();
-        terminal.set_scrollback_bytes(usize::MAX).unwrap();
-        let mut text = String::new();
-        for line in 1..=100_000 {
-            write!(text, "{line}\r\n").unwrap();
-        }
-        terminal.write(text.as_bytes());
-        assert!(terminal.viewport_top().unwrap() > 99_000);
-        for (phase, query, expected) in [
-            ("pass", "9999", 20),
-            ("keystroke", "9", 50_000),
-            ("keystroke", "99", 4_000),
-            ("keystroke", "999", 300),
-            ("keystroke", "9999", 20),
-        ] {
-            let start = Instant::now();
-            let mut search = Search::new(query);
-            let mut longest = Duration::ZERO;
-            let mut chunks = 0;
-            loop {
-                let start = Instant::now();
-                let done = search.advance(&terminal).unwrap();
-                longest = longest.max(start.elapsed());
-                chunks += 1;
-                if done {
-                    break;
-                }
-            }
-            eprintln!(
-                "100k {phase} {query:?}: {:?} total, {longest:?} max chunk ({chunks} chunks, {} matches)",
-                start.elapsed(),
-                search.matches().len()
-            );
-            assert_eq!(search.matches().len(), expected);
-        }
-    }
-}
+mod tests;
