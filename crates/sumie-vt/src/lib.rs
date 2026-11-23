@@ -5,6 +5,7 @@ mod anchor;
 mod cursor;
 mod effects;
 mod ffi;
+mod graphics;
 mod identity;
 mod key;
 mod mouse;
@@ -21,9 +22,11 @@ pub use search::{Search, SearchMatch};
 pub use style::{CellStyle, Underline};
 
 use effects::Effects;
+use graphics::Graphics;
 use std::ffi::{c_int, c_void};
 use std::fmt;
 use std::ptr::{from_mut, null, null_mut};
+use sumie_core::graphics::Placement;
 
 /// A cell in the visible grid.
 #[derive(Debug, PartialEq, Eq)]
@@ -36,6 +39,8 @@ pub struct Cell {
     pub wide_wrap_spacer: bool,
     pub foreground: Rgb,
     pub background: Rgb,
+    /// Whether the cell uses the terminal background without a cell-level reverse or override.
+    pub default_background: bool,
     pub style: CellStyle,
 }
 
@@ -44,6 +49,8 @@ pub type Rgb = [u8; 3];
 #[derive(Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub rows: Vec<Vec<Cell>>,
+    /// Visible placements shared by snapshots until Ghostty changes their geometry or pixels.
+    pub images: std::sync::Arc<Vec<Placement>>,
     pub cursor: Option<Cursor>,
     pub foreground: Rgb,
     pub background: Rgb,
@@ -89,6 +96,7 @@ pub struct Terminal {
     render: ffi::RenderState,
     row_iter: ffi::RenderStateRowIterator,
     cell_iter: ffi::RenderStateRowCells,
+    graphics: Graphics,
     effects: *mut Effects,
 }
 
@@ -103,6 +111,7 @@ impl Terminal {
             render: null_mut(),
             row_iter: null_mut(),
             cell_iter: null_mut(),
+            graphics: Graphics::new()?,
             effects: Box::into_raw(Box::<Effects>::default()),
         };
         // SAFETY: The constructors accept a null allocator and write to the corresponding
@@ -157,6 +166,7 @@ impl Terminal {
                 std::ptr::from_ref(&effects::OUTPUT_LIMIT).cast(),
             ))?;
         }
+        terminal.configure_graphics()?;
         Ok(terminal)
     }
 
@@ -303,7 +313,7 @@ impl Terminal {
         Ok(self.render_snapshot()?.rows)
     }
 
-    /// Copy visible cells, effective colors and the cursor into owned Rust data.
+    /// Copy visible cells, image placements, effective colors and the cursor into owned Rust data.
     ///
     /// # Errors
     /// Returns an error if Ghostty cannot update or read the render state.
@@ -329,6 +339,7 @@ impl Terminal {
                 from_mut(&mut self.row_iter).cast(),
             ))?;
         }
+        let images = self.snapshot_images()?;
         let mut colors = self.colors()?;
         let cursor = self.cursor(colors.cursor)?;
         let mut screen = Vec::with_capacity(usize::from(rows));
@@ -338,6 +349,7 @@ impl Terminal {
         }
         Ok(Snapshot {
             rows: screen,
+            images,
             cursor,
             foreground: colors.foreground,
             background: colors.background,
@@ -416,10 +428,11 @@ impl Terminal {
             ffi::CELL_WIDE_SPACER_TAIL => 0,
             _ => return Err(Error(ffi::INVALID_VALUE)),
         };
-        let mut foreground =
-            self.cell_color(ffi::RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, colors.foreground)?;
-        let mut background =
-            self.cell_color(ffi::RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, colors.background)?;
+        let mut foreground = self
+            .cell_color(ffi::RENDER_STATE_ROW_CELLS_DATA_FG_COLOR)?
+            .unwrap_or(colors.foreground);
+        let cell_background = self.cell_color(ffi::RENDER_STATE_ROW_CELLS_DATA_BG_COLOR)?;
+        let mut background = cell_background.unwrap_or(colors.background);
         let mut style = ffi::Style::default();
         // SAFETY: STYLE writes a 16-byte GhosttyStyle for the current cell.
         check(unsafe {
@@ -429,7 +442,8 @@ impl Terminal {
                 from_mut(&mut style).cast(),
             )
         })?;
-        if style.flags & ffi::STYLE_INVERSE != 0 {
+        let inverse = style.flags & ffi::STYLE_INVERSE != 0;
+        if inverse {
             std::mem::swap(&mut foreground, &mut background);
         }
         let is_spacer = matches!(
@@ -437,7 +451,7 @@ impl Terminal {
             ffi::CELL_WIDE_SPACER_HEAD | ffi::CELL_WIDE_SPACER_TAIL
         );
         let text = if !is_spacer && style.flags & ffi::STYLE_INVISIBLE == 0 {
-            self.cell_text()?
+            self.cell_text(cell)?
         } else {
             String::new()
         };
@@ -447,6 +461,7 @@ impl Terminal {
             wide_wrap_spacer: wide == ffi::CELL_WIDE_SPACER_HEAD,
             foreground,
             background,
+            default_background: cell_background.is_none() && !inverse,
             // Ghostty copies the current SGR onto spacers, but only the wide cell draws ink.
             style: if is_spacer {
                 CellStyle::default()
@@ -456,19 +471,20 @@ impl Terminal {
         })
     }
 
-    fn cell_color(&self, data: c_int, default: Rgb) -> Result<Rgb, Error> {
-        let mut rgb = default;
+    fn cell_color(&self, data: c_int) -> Result<Option<Rgb>, Error> {
+        let mut rgb = [0; 3];
         // SAFETY: Both color keys used here write exactly one RGB value for the current cell.
         let result = unsafe {
             ffi::ghostty_render_state_row_cells_get(self.cell_iter, data, rgb.as_mut_ptr().cast())
         };
-        if result != ffi::NO_VALUE {
-            check(result)?;
+        if result == ffi::NO_VALUE {
+            return Ok(None);
         }
-        Ok(rgb)
+        check(result)?;
+        Ok(Some(rgb))
     }
 
-    fn cell_text(&self) -> Result<String, Error> {
+    fn cell_text(&self, cell: ffi::Cell) -> Result<String, Error> {
         let mut stack = [0; 32];
         let mut buffer = ffi::Buffer {
             ptr: stack.as_mut_ptr(),
@@ -477,6 +493,18 @@ impl Terminal {
         };
         let result = self.read_cell_text(&mut buffer);
         if result == ffi::OUT_OF_SPACE {
+            let mut codepoint = 0_u32;
+            // SAFETY: CODEPOINT writes a u32 for the raw cell captured by the row iterator.
+            check(unsafe {
+                ffi::ghostty_cell_get(
+                    cell,
+                    ffi::CELL_DATA_CODEPOINT,
+                    from_mut(&mut codepoint).cast(),
+                )
+            })?;
+            if codepoint == u32::from(graphics::PLACEHOLDER) {
+                return Ok(String::new());
+            }
             let mut bytes = Vec::with_capacity(buffer.len);
             buffer.ptr = bytes.as_mut_ptr();
             buffer.cap = bytes.capacity();
@@ -489,7 +517,11 @@ impl Terminal {
         }
         check(result)?;
         // SAFETY: On success Ghostty wrote valid UTF-8 into the initialized prefix of stack.
-        Ok(unsafe { std::str::from_utf8_unchecked(&stack[..buffer.len]) }.to_owned())
+        let text = unsafe { std::str::from_utf8_unchecked(&stack[..buffer.len]) };
+        if text.starts_with(graphics::PLACEHOLDER) {
+            return Ok(String::new());
+        }
+        Ok(text.to_owned())
     }
 
     fn read_cell_text(&self, buffer: &mut ffi::Buffer) -> c_int {

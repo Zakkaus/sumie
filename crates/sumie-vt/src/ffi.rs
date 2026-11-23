@@ -1,5 +1,6 @@
 //! Subset of libghostty-vt-sys bindings at cd4d497e8c698b27054a677ce19d1bd1a1a4d8bf.
 //! Source: <https://github.com/Uzaaft/libghostty-rs> (MIT, see `../LICENSE.bindings`).
+//! Kitty graphics declarations follow the pinned Ghostty C headers.
 
 use std::ffi::{c_int, c_void};
 
@@ -26,6 +27,24 @@ pub struct RenderStateRowCellsImpl {
     _unused: [u8; 0],
 }
 pub type RenderStateRowCells = *mut RenderStateRowCellsImpl;
+
+#[repr(C)]
+pub struct RenderStateImageIteratorImpl {
+    _unused: [u8; 0],
+}
+pub type RenderStateImageIterator = *mut RenderStateImageIteratorImpl;
+
+#[repr(C)]
+pub struct KittyGraphicsImpl {
+    _unused: [u8; 0],
+}
+pub type KittyGraphics = *mut KittyGraphicsImpl;
+
+#[repr(C)]
+pub struct KittyGraphicsImageImpl {
+    _unused: [u8; 0],
+}
+pub type KittyGraphicsImage = *const KittyGraphicsImageImpl;
 
 // The wrapper passes NULL to select Ghostty's default allocator.
 #[repr(C)]
@@ -231,6 +250,7 @@ pub const SGR_UNDERLINE_DOUBLE: u16 = 2;
 pub const SGR_UNDERLINE_CURLY: u16 = 3;
 pub const SGR_UNDERLINE_DOTTED: u16 = 4;
 pub const SGR_UNDERLINE_DASHED: u16 = 5;
+pub const CELL_DATA_CODEPOINT: c_int = 1;
 pub const CELL_DATA_WIDE: c_int = 3;
 pub const CELL_DATA_HAS_HYPERLINK: c_int = 7;
 pub const CELL_WIDE_NARROW: c_int = 0;
@@ -376,4 +396,28 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn ghostty_cell_get(cell: Cell, data: c_int, out: *mut c_void) -> c_int;
     pub fn ghostty_row_get(row: Row, data: c_int, out: *mut c_void) -> c_int;
+    pub fn ghostty_render_state_image_iterator_new(
+        allocator: *const Allocator,
+        out_iterator: *mut RenderStateImageIterator,
+    ) -> c_int;
+    pub fn ghostty_render_state_image_iterator_free(iterator: RenderStateImageIterator);
+    pub fn ghostty_render_state_image_iterator_next(iterator: RenderStateImageIterator) -> bool;
+    pub fn ghostty_render_state_image_get_multi(
+        iterator: RenderStateImageIterator,
+        count: usize,
+        keys: *const c_int,
+        values: *mut *mut c_void,
+        written: *mut usize,
+    ) -> c_int;
+    pub fn ghostty_kitty_graphics_image(
+        graphics: KittyGraphics,
+        image_id: u32,
+    ) -> KittyGraphicsImage;
+    pub fn ghostty_kitty_graphics_image_get_multi(
+        image: KittyGraphicsImage,
+        count: usize,
+        keys: *const c_int,
+        values: *mut *mut c_void,
+        written: *mut usize,
+    ) -> c_int;
 }

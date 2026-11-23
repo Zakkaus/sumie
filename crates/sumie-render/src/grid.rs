@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use sumie_core::graphics::Placement;
 
 use crate::{AtlasRect, AtlasUpload};
 
@@ -109,6 +110,14 @@ pub struct DrawList<'a> {
     pub origin: [i32; 2],
     /// One background per cell, in row-major order.
     pub backgrounds: &'a [Rgba],
+    /// Terminal default color; its RGB is used as the opaque base for below-background images.
+    pub default_background: Rgba,
+    /// One flag per row-major cell. `true` lets below-background images show through;
+    /// an empty slice means no holes.
+    pub default_backgrounds: &'a [bool],
+    pub images: &'a [Placement],
+    /// Terminal UI rectangles that images must not cover, in device pixels.
+    pub image_exclusions: [Option<PixelRect>; 2],
     pub glyphs: &'a [GlyphQuad],
     pub cursor: Option<Cursor>,
     pub chrome: Option<ChromeLayer<'a>>,
@@ -159,6 +168,34 @@ impl Instance {
     }
 }
 
+pub(crate) struct GridLayers {
+    pub base: Option<PixelRect>,
+    pub backgrounds: u32,
+    pub text: u32,
+    pub end: u32,
+}
+
+struct BlockCursor {
+    cursor: Cursor,
+    columns: std::ops::Range<u32>,
+    row: u32,
+}
+
+impl BlockCursor {
+    fn owns(&self, glyph: &GlyphQuad) -> bool {
+        let [column, row] = glyph.cell;
+        row == self.row && self.columns.contains(&column)
+    }
+}
+
+fn instance_writer(bytes: wgpu::WriteOnly<'_, [u8]>) -> impl FnMut(Instance) + '_ {
+    let mut out = bytes
+        .into_chunks::<{ size_of::<Instance>() }>()
+        .0
+        .into_iter();
+    move |instance| out.next().unwrap().write(bytemuck::cast(instance))
+}
+
 impl DrawList<'_> {
     pub(crate) fn grid_instances(&self) -> u32 {
         let [columns, rows] = self.grid_size;
@@ -172,12 +209,67 @@ impl DrawList<'_> {
     }
 
     pub(crate) fn write_instances(&self, bytes: wgpu::WriteOnly<'_, [u8]>) {
-        let mut out = bytes
-            .into_chunks::<{ size_of::<Instance>() }>()
-            .0
-            .into_iter();
-        let mut write = |instance| out.next().unwrap().write(bytemuck::cast(instance));
+        let mut write = instance_writer(bytes);
         self.write_grid(&mut write);
+        self.write_chrome(write);
+    }
+
+    pub(crate) fn image_layers(&self, base: Option<PixelRect>, grid: u32) -> GridLayers {
+        let mut backgrounds = self.backgrounds.len();
+        if base.is_some() {
+            let holes = self.default_backgrounds;
+            assert!(holes.is_empty() || holes.len() == backgrounds);
+            backgrounds = 1 + backgrounds - holes.iter().filter(|&&hole| hole).count();
+        }
+        let cursor_glyphs = self.block_cursor().map_or(0, |block| {
+            self.glyphs.iter().filter(|glyph| block.owns(glyph)).count()
+        });
+        let convert = |count| u32::try_from(count).expect("too many grid instances");
+        GridLayers {
+            base,
+            backgrounds: convert(backgrounds),
+            text: convert(backgrounds + self.glyphs.len() - cursor_glyphs),
+            end: grid - convert(self.backgrounds.len()) + convert(backgrounds),
+        }
+    }
+
+    pub(crate) fn write_layered(&self, bytes: wgpu::WriteOnly<'_, [u8]>, layers: &GridLayers) {
+        let stride = size_of::<Instance>();
+        let (text, rest) = bytes.split_at(layers.text as usize * stride);
+        let (cursor, chrome) = rest.split_at((layers.end - layers.text) as usize * stride);
+        let mut write = instance_writer(text);
+        let mut write_cursor = instance_writer(cursor);
+        if let Some(base) = layers.base {
+            let [r, g, b, _] = self.default_background;
+            write(Instance::solid(base, [r, g, b, 255]));
+        }
+        if layers.base.is_some() && !self.default_backgrounds.is_empty() {
+            self.write_backgrounds::<true>(&mut write);
+        } else {
+            self.write_backgrounds::<false>(&mut write);
+        }
+        let block = self.block_cursor();
+        if let Some(cursor) = self.cursor {
+            cursor.write(&mut write_cursor);
+        }
+        for glyph in self.glyphs {
+            let background = self.glyph_background(glyph);
+            if let Some(block) = &block
+                && block.owns(glyph)
+            {
+                write_cursor(Instance::cursor_glyph(
+                    glyph,
+                    background,
+                    block.cursor.color,
+                ));
+            } else {
+                write(Instance::glyph(glyph, background));
+            }
+        }
+        self.write_chrome(instance_writer(chrome));
+    }
+
+    fn write_chrome(&self, mut write: impl FnMut(Instance)) {
         if let Some(layer) = &self.chrome {
             for fill in layer.fills {
                 write(Instance::solid(fill.rect, fill.color));
@@ -188,10 +280,13 @@ impl DrawList<'_> {
         }
     }
 
-    fn write_grid(&self, mut write: impl FnMut(Instance)) {
+    fn write_backgrounds<const SKIP_DEFAULT: bool>(&self, mut write: impl FnMut(Instance)) {
         let columns = self.grid_size[0] as usize;
         for (row, backgrounds) in self.backgrounds.chunks(columns.max(1)).enumerate() {
             for (col, &color) in backgrounds.iter().enumerate() {
+                if SKIP_DEFAULT && self.default_backgrounds[row * columns + col] {
+                    continue;
+                }
                 let offset = [
                     i32::try_from(col * self.cell_size[0] as usize).expect("grid too wide"),
                     i32::try_from(row * self.cell_size[1] as usize).expect("grid too tall"),
@@ -203,39 +298,53 @@ impl DrawList<'_> {
                 write(Instance::solid(rect, color));
             }
         }
-        let (cursor_cells, overlay) = match self.cursor {
-            Some(
-                cursor @ Cursor {
-                    shape:
-                        CursorShape::Block {
-                            cell: [col, row],
-                            columns,
-                        },
-                    ..
-                },
-            ) => {
-                cursor.write(&mut write);
-                (
-                    Some((col..col + u32::from(columns), row, cursor.color)),
-                    None,
-                )
-            }
-            overlay => (None, overlay),
+    }
+
+    fn block_cursor(&self) -> Option<BlockCursor> {
+        let cursor = self.cursor?;
+        let CursorShape::Block {
+            cell: [col, row],
+            columns,
+        } = cursor.shape
+        else {
+            return None;
         };
+        Some(BlockCursor {
+            cursor,
+            columns: col..col + u32::from(columns),
+            row,
+        })
+    }
+
+    fn glyph_background(&self, glyph: &GlyphQuad) -> Rgba {
+        let [col, row] = glyph.cell;
+        debug_assert!(col < self.grid_size[0] && row < self.grid_size[1]);
+        self.backgrounds[row as usize * self.grid_size[0] as usize + col as usize]
+    }
+
+    fn write_grid(&self, mut write: impl FnMut(Instance)) {
+        self.write_backgrounds::<false>(&mut write);
+        let block = self.block_cursor();
+        if let Some(block) = &block {
+            block.cursor.write(&mut write);
+        }
         for glyph in self.glyphs {
-            let [col, row] = glyph.cell;
-            debug_assert!(col < self.grid_size[0] && row < self.grid_size[1]);
-            let background = self.backgrounds[row as usize * columns + col as usize];
-            if let Some((cells, cursor_row, fill)) = &cursor_cells
-                && row == *cursor_row
-                && cells.contains(&col)
+            let background = self.glyph_background(glyph);
+            if let Some(block) = &block
+                && block.owns(glyph)
             {
-                write(Instance::cursor_glyph(glyph, background, *fill));
+                write(Instance::cursor_glyph(
+                    glyph,
+                    background,
+                    block.cursor.color,
+                ));
             } else {
                 write(Instance::glyph(glyph, background));
             }
         }
-        if let Some(cursor) = overlay {
+        if block.is_none()
+            && let Some(cursor) = self.cursor
+        {
             cursor.write(write);
         }
     }

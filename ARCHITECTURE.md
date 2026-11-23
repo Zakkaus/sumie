@@ -99,6 +99,8 @@ The VT `selection` module uses libghostty-vt's word and line helpers. A Zig brid
 
 Before compiling the extracted source, the build script links `src/search/grid.zig` into the pinned Ghostty module and enables uucode's simple-fold table. The bridge uses Ghostty's page types directly; Rust does not depend on Ghostty's internal cell layout.
 
+`sumie-core::graphics` carries immutable RGBA images and viewport-relative placement geometry between VT snapshots and the renderer. Ghostty owns protocol parsing, replies, image IDs, cursor movement and grid anchors. The VT `graphics` module reads Ghostty's render-state iterator on the owner thread; the renderer never borrows a native pointer. The build selects Ghostty's existing Wuffs PNG decoder, which uses the native image allocator. File transfers can block during a VT write. On Linux the pinned file loader opens only regular files below `/tmp` or `/dev/shm`; the file policy does not parse graphics commands.
+
 ## Font pipeline (`sumie-font`)
 
 `FontSystem` owns font discovery, loaded faces, shaping and rasterization scratch space, and one CPU atlas. Linux uses `fontconfig` for family aliases and locale-aware charset matches. On macOS, Core Text selects the primary font by name. The font file's PostScript names identify faces within collections. If the preferred fallback cannot be loaded or has no usable outline for the character (for example, an `hvgl`-only face), discovery tries Core Text's default cascade in order. Last Resort placeholders do not count as coverage. Exhausting the cascade reports a missing glyph for that character. Font discovery and the first use of a fallback face can block on file I/O.
@@ -124,6 +126,8 @@ The caller owns the process-wide wgpu instance, adapter, and device and passes d
 The renderer uploads instances through a reusable staging belt and draws backgrounds, glyphs, and the optional cursor in that order in one render pass. The shader adjusts glyph contrast toward the configured minimum (default 1.1) by moving its RGB toward black or white. Following Ghostty, it corrects grayscale coverage so the resulting luminance matches an sRGB interpolation, then blends premultiplied colors in linear light into an sRGB attachment. wgpu supplies the transient command encoder and acquired surface image each frame. The pipeline persists, and draw buffers and bindings change only when capacity or atlas dimensions change.
 
 On the render thread, call `upload_atlas` and `draw` only after releasing the terminal lock. The caller schedules frames; the renderer never draws or presents on its own. `Renderer` draws to a reusable offscreen target. `SurfaceRenderer` owns a caller-created surface, configures it at nonzero device-pixel sizes, and presents once per successful draw. `resize` may wait for swapchain GPU work. Drop `SurfaceRenderer` on the render thread; its renderer resources drop before its surface.
+
+The renderer caches image textures separately from glyph atlases. A frame draws images in Kitty z-order relative to cell backgrounds and glyphs, clipped to the terminal grid before drawing window chrome. GPU eviction does not delete a protocol image: a later visible placement can upload it again from the VT snapshot.
 
 The workspace tests use the same pixel checks on the selected backend and on Linux GLES. Set `SUMIE_REQUIRE_GPU=1` to fail instead of skipping when an adapter is unavailable. Set `SUMIE_RENDER_ARTIFACT_DIR` to an existing directory to save `grid.png` from the selected backend test.
 

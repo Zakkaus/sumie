@@ -182,6 +182,26 @@ impl Glyphs {
 }
 
 impl View {
+    pub(super) fn set_overlay_bounds(&mut self, banner: bool) {
+        self.search_box = self
+            .search_bar
+            .as_ref()
+            .map(|_| SearchBox::place(self.grid, banner, &self.search_highlights));
+        let search = self.search_box.map(|b| {
+            let mut rect = b.bounds(self.cell);
+            rect.origin[1] += self.glyphs.offset[1];
+            rect
+        });
+        self.glyphs.cover = search.map(Mask::Outside);
+        self.image_exclusions = [
+            banner.then(|| PixelRect {
+                origin: self.glyphs.offset,
+                size: [self.grid[0] * self.cell[0], self.cell[1]],
+            }),
+            search,
+        ];
+    }
+
     pub(crate) fn frame_presented(&mut self) {
         self.tabs.presented();
         self.presented_search = self.search_box.map(|panel| PresentedSearch {
@@ -247,6 +267,11 @@ impl View {
             self.backgrounds[row + panel.left as usize..row + rail as usize].fill(rgba(field));
             self.backgrounds[row + rail as usize..row + panel.columns().end as usize]
                 .fill(rgba(controls));
+            if !self.default_backgrounds.is_empty() {
+                self.default_backgrounds
+                    [row + panel.left as usize..row + panel.columns().end as usize]
+                    .fill(false);
+            }
         }
         let first = self.glyphs.quads.len();
         self.draw_query(panel, rail, readable(ink, field));
@@ -327,6 +352,10 @@ impl View {
             let backgrounds =
                 &mut self.backgrounds[offset + usize::from(first)..=offset + usize::from(last)];
             let weight = if current { 4 } else { 2 };
+            if !self.default_backgrounds.is_empty() {
+                self.default_backgrounds[offset + usize::from(first)..=offset + usize::from(last)]
+                    .fill(false);
+            }
             let accent = [255, 183, 71].map(|channel| channel * weight);
             for (background, cell) in backgrounds.iter_mut().zip(cells) {
                 if !cell.wide_wrap_spacer {

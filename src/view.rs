@@ -5,6 +5,7 @@ use std::{
     mem::{Discriminant, discriminant},
 };
 
+use sumie_core::graphics::Placement;
 use sumie_core::{CellPosition, CellRange, FontZoom};
 use sumie_font::{FontError, FontStyle, FontSystem};
 use sumie_pty::Size;
@@ -43,6 +44,10 @@ pub(crate) struct View {
     presented_search: Option<overlays::PresentedSearch>,
     grid: [u32; 2],
     backgrounds: Vec<Rgba>,
+    default_background: Rgba,
+    default_backgrounds: Vec<bool>,
+    images: std::sync::Arc<Vec<Placement>>,
+    image_exclusions: [Option<PixelRect>; 2],
     selection_foreground: Option<Rgb>,
     selection_background: Option<Rgb>,
     glyphs: Glyphs,
@@ -107,6 +112,10 @@ impl View {
             search_box: None,
             presented_search: None,
             backgrounds: Vec::new(),
+            default_background: [0, 0, 0, 255],
+            default_backgrounds: Vec::new(),
+            images: std::sync::Arc::default(),
+            image_exclusions: [None; 2],
             selection_foreground: colors.selection_foreground(),
             selection_background: colors.selection_background(),
             glyphs: Glyphs::default(),
@@ -237,17 +246,12 @@ impl View {
         focused: bool,
     ) {
         self.backgrounds.clear();
+        self.images.clone_from(&snapshot.images);
+        self.default_background = rgba(snapshot.background);
+        self.default_backgrounds.clear();
         self.glyphs.quads.clear();
         self.glyphs.offset = [0, self.bar_height().cast_signed()];
-        self.search_box = self
-            .search_bar
-            .as_ref()
-            .map(|_| SearchBox::place(self.grid, banner.is_some(), &self.search_highlights));
-        self.glyphs.cover = self.search_box.map(|b| {
-            let mut rect = b.bounds(self.cell);
-            rect.origin[1] += self.glyphs.offset[1];
-            overlays::Mask::Outside(rect)
-        });
+        self.set_overlay_bounds(banner.is_some());
         let overlay = self
             .search_box
             .is_none()
@@ -256,6 +260,10 @@ impl View {
             .filter(|&(row, _, _)| row != 0 || banner.is_none());
         if let Some(message) = banner {
             self.draw_banner(snapshot, message);
+            if !self.images.is_empty() {
+                self.default_backgrounds
+                    .resize(self.grid[0] as usize, false);
+            }
         }
         self.draw_terminal(
             snapshot,
@@ -320,6 +328,10 @@ impl View {
                 } else {
                     background
                 }));
+                if !self.images.is_empty() {
+                    self.default_backgrounds
+                        .push(cell.default_background && !highlighted && !covered);
+                }
                 if cell.width == 0 {
                     continue;
                 }
@@ -425,6 +437,10 @@ impl View {
             cell_size: self.cell,
             origin: [0, self.bar_height().cast_signed()],
             backgrounds: &self.backgrounds,
+            images: &self.images,
+            default_background: self.default_background,
+            default_backgrounds: &self.default_backgrounds,
+            image_exclusions: self.image_exclusions,
             glyphs: &self.glyphs.quads,
             cursor: self.cursor.filter(|_| !cursor_hidden),
             chrome: self.tabs.layer(),

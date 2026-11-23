@@ -137,8 +137,44 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
     #[cfg(target_os = "linux")]
     attributes::assert_decorations(&mut renderer, &device, &queue);
     #[cfg(target_os = "linux")]
+    assert_image(&mut renderer, &device, &queue);
+    #[cfg(target_os = "linux")]
     tabs::assert_tab_bar(&mut renderer, &device, &queue);
     assert_cursor_shapes(&mut renderer, &device, &queue, &target);
+}
+
+#[cfg(target_os = "linux")]
+fn assert_image(renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+    use crate::view::{FontSettings, View};
+
+    const DEVICE: [u32; 2] = [200, 150];
+    let config = sumie_config::Config::default();
+    let font = FontSettings::from_config(config.font).unwrap();
+    let mut view = View::new(150, [160, 120], DEVICE, font, &config.colors).unwrap();
+    let size = view.size();
+    let mut terminal = sumie_vt::Terminal::new(size.cols, size.rows).unwrap();
+    terminal
+        .resize_pixels(size.cols, size.rows, view.cell)
+        .unwrap();
+    // Red, green, blue, white. Keep the native size and put it in the second row.
+    terminal.write(b"\x1b[2;2H\x1b_Ga=T,f=32,s=2,v=2,i=1,C=1;/wAA/wD/AP8AAP///////w==\x1b\\");
+    let snapshot = terminal.render_snapshot().unwrap();
+    view.build(&snapshot, None, None, true);
+    renderer.upload_atlas(&view.atlas());
+    let target = renderer.create_offscreen(DEVICE);
+    renderer.draw(&view.draw_list(true), &target);
+    let pixels = readback(device, queue, target.texture());
+    let bg = snapshot.background;
+    for (dx, dy, color) in [
+        (0, 0, [255, 0, 0, 255]),
+        (1, 0, [0, 255, 0, 255]),
+        (0, 1, [0, 0, 255, 255]),
+        (1, 1, [255; 4]),
+        (2, 1, [bg[0], bg[1], bg[2], 255]),
+    ] {
+        let index = (((view.cell[1] + dy) * DEVICE[0] + view.cell[0] + dx) * 4) as usize;
+        assert_eq!(&pixels[index..index + 4], &color);
+    }
 }
 
 fn upload_atlas(renderer: &mut Renderer) {
@@ -191,6 +227,10 @@ const GRID: DrawList<'static> = DrawList {
     chrome: None,
     origin: [2, 1],
     cell_size: CELL,
+    images: &[],
+    image_exclusions: [None; 2],
+    default_background: [0, 0, 0, 255],
+    default_backgrounds: &[],
     backgrounds: &[
         [12, 25, 40, 255],
         [16, 60, 128, 255],
@@ -281,6 +321,10 @@ fn assert_cursor_shapes(
                 chrome: None,
                 cell_size: SIZE,
                 origin: [2, 1],
+                images: &[],
+                image_exclusions: [None; 2],
+                default_background: BACKGROUND,
+                default_backgrounds: &[],
                 backgrounds: &[BACKGROUND],
                 glyphs: &[],
                 cursor: Some(Cursor {

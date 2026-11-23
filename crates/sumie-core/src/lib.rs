@@ -11,6 +11,7 @@
 //! ```
 
 mod link;
+pub mod graphics;
 pub mod mouse;
 mod selection;
 mod tabs;

@@ -5,6 +5,7 @@
 
 mod atlas;
 mod grid;
+mod images;
 mod renderer;
 mod surface;
 

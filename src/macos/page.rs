@@ -178,6 +178,10 @@ impl Page {
             cell_size: self.cell,
             origin: self.cell.map(u32::cast_signed),
             backgrounds: &self.backgrounds,
+            images: &[],
+            image_exclusions: [None; 2],
+            default_background: [0, 0, 0, 255],
+            default_backgrounds: &[],
             glyphs: &self.glyphs,
             cursor: show_cursor.then_some(self.cursor),
         }

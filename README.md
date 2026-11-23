@@ -24,6 +24,8 @@ On Wayland, terminal programs can use OSC 52 to write up to 1 MiB of decoded dat
 
 The wheel scrolls three history lines per notch. If the program tracks the mouse, it receives wheel reports instead. In alternate-screen programs such as `less`, the wheel sends three arrow keys per notch when mode 1007 is enabled (the default). With mouse tracking on, hold Shift when you start a selection. You can release Shift while dragging without sending mouse motion to the program. Scrolling clears the selection; typing returns to the bottom.
 
+On Linux, programs can display PNG, RGB and RGBA images with the Kitty graphics protocol. Direct transfers work over SSH. Local file transfers (`t=f` and `t=t`) accept absolute paths under `/tmp` or `/dev/shm`, without symlinks or hard links, up to 320 MiB per file. A temporary file's basename must contain `tty-graphics-protocol`; sumie removes it when it opens the image for reading. Use a direct transfer for images elsewhere. Animation and video playback are not supported.
+
 ## Build and checks
 
 Build the workspace from the repository root with `cargo build --workspace --locked`. The VT crate needs Rust 1.96 or later, Zig 0.17 (on `PATH` or set `ZIG`), and `curl`, `tar`, and `shasum` to fetch, verify, and unpack Ghostty on the first build.

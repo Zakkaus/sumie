@@ -11,6 +11,7 @@ fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=src/search/grid.zig");
     println!("cargo::rerun-if-changed=src/selection.zig");
+    println!("cargo::rerun-if-changed=src/image_file.zig");
     for var in [
         "ZIG",
         "PATH",
@@ -32,6 +33,7 @@ fn main() {
     resolve_cursor_default_at_snapshot(&source);
     install_search_bridge(&source);
     install_selection_bridge(&source);
+    install_graphics_policy(&source);
     let prefix = out.join("ghostty-install");
     let mut build = Command::new(zig);
     build
@@ -127,6 +129,38 @@ fn install_selection_bridge(source: &Path) {
     }
 "#,
     );
+}
+
+fn install_graphics_policy(source: &Path) {
+    // Wuffs is already linked for pixel operations. Select Ghostty's bounded PNG decoder
+    // at build time instead of mutating its process-wide callback after startup.
+    insert_once(
+        &source.join("src/terminal/sys.zig"),
+        "pub var decode_png: ?DecodePngFn = png: {\n",
+        "    if (build_options.kitty_graphics) break :png &decodePngWuffs;\n",
+    );
+    let kitty = source.join("src/terminal/kitty");
+    fs::write(
+        kitty.join("sumie_file.zig"),
+        include_str!("src/image_file.zig"),
+    )
+    .expect("install confined image file opener");
+    // Keep upstream's APC parser, chunk assembler, file reader, limits and decoder.
+    // The public ABI only has a boolean for t=f; interpose at its only file open.
+    let path = kitty.join("graphics_image.zig");
+    let mut text = fs::read_to_string(&path).expect("read pinned image loader");
+    let replacement = "const file = try @import(\"sumie_file.zig\").open(io, path, medium == .temporary_file, t.offset, t.size);\n        defer file.close(io);\n\n        ";
+    if !text.contains(replacement) {
+        let start = text
+            .find("// Some Windows paths are dangerous to even open,")
+            .expect("find pinned file open");
+        let end = start
+            + text[start..]
+                .find("var buf: [4096]u8 = undefined;")
+                .expect("find pinned image reader");
+        text.replace_range(start..end, replacement);
+        fs::write(path, text).expect("confine Ghostty file transports");
+    }
 }
 
 fn insert_once(path: &Path, anchor: &str, addition: &str) {

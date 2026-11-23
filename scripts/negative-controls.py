@@ -176,12 +176,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           replace_once("solid([x, y + 1], [1, h - 2]);", "solid([x, y + 1], [2, h - 2]);"),
           "test grid_tests::grid_on_selected_backend ... FAILED")
     probe("block cursor covers cell glyphs", "test", "crates/sumie-render/src/grid.rs",
-          replace_once("cursor.write(&mut write);\n"
-                       "                (\n"
-                       "                    Some((col..col + u32::from(columns), row, cursor.color)),\n"
-                       "                    None,\n"
-                       "                )",
-                       "(Some((col..col + u32::from(columns), row, cursor.color)), Some(cursor))"),
+          lambda source: replace_once("if block.is_none()\n            && let Some(cursor)",
+                                      "if let Some(cursor)")(
+              replace_once("block.cursor.write(&mut write);", "let _ = block;")(source)),
           "test grid_tests::grid_on_selected_backend ... FAILED")
     probe("oversized OSC 52 clipboard write", "test", "crates/sumie-vt/src/effects.rs",
           replace_once("if len > OUTPUT_LIMIT - self.clipboard_bytes {",
@@ -216,6 +213,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("Some(event.pixel.map(f32::to_bits))));\n                Dispatch::Ignore",
                            "Some(event.pixel.map(f32::to_bits))));\n                Dispatch::OpenLink"),
               "test tests::ctrl_click_a_link_bypasses_mouse_tracking ... FAILED")
+        probe("VT image dropped from the frame", "test", "src/view.rs",
+              replace_once("self.images.clone_from(&snapshot.images);",
+                           "self.images = Default::default();"),
+              "test grid_tests::grid_on_selected_backend ... FAILED")
         probe("two tabs lose their bar", "test", "crates/sumie-ui/src/tabs.rs",
               replace_once("if count < 2 {", "if count < 3 {"),
               "test grid_tests::grid_on_selected_backend ... FAILED")
