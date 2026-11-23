@@ -67,6 +67,12 @@ impl ImeState {
         self.pending.enabled_before_leave = enabled_before_leave;
     }
 
+    /// Keyboard leave can arrive before the IME's last commit; keep accepting text
+    /// until text-input leave disables the object.
+    fn accepts_text(&self) -> bool {
+        self.enabled_at.is_some() || self.pending.enabled_before_leave.is_some()
+    }
+
     fn next_cursor(&mut self, desired: Option<CursorRect>) -> Option<CursorRect> {
         let rect = desired?;
         if self.enabled_at.is_none() || self.wait_for_match || self.sent_rect == Some(rect) {
@@ -268,14 +274,14 @@ impl Dispatch<ZwpTextInputV3, ()> for State {
                 text,
                 cursor_begin,
                 cursor_end,
-            } if ime.state.enabled_at.is_some() => {
+            } if ime.state.accepts_text() => {
                 ime.state.pending.preedit = text.unwrap_or_default();
                 ime.state.pending.cursor = u32::try_from(cursor_begin)
                     .ok()
                     .zip(u32::try_from(cursor_end).ok());
                 false
             }
-            zwp_text_input_v3::Event::CommitString { text } if ime.state.enabled_at.is_some() => {
+            zwp_text_input_v3::Event::CommitString { text } if ime.state.accepts_text() => {
                 ime.state.pending.commit = text;
                 false
             }
@@ -371,6 +377,18 @@ mod tests {
             let rect = if keyboard_left { FIRST } else { NEXT };
             assert_eq!(ime.next_cursor(Some(rect)), sync.then_some(rect));
         }
+    }
+
+    #[test]
+    fn commit_after_keyboard_leave_is_delivered() {
+        let mut ime = ImeState::default();
+        ime.enable();
+        let mut events = VecDeque::new();
+        ime.keyboard_leave(0, &mut events);
+        assert!(ime.accepts_text());
+        ime.pending.commit = Some("水".to_owned());
+        ime.done(ime.serial, 0, &mut events);
+        assert!(matches!(events.pop_front(), Some(Event::ImeCommit { text, .. }) if text == "水"));
     }
 
     #[test]
