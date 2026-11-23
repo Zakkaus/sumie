@@ -75,6 +75,10 @@ impl Gpu {
         self.target.presented_thumbnail_layers()
     }
 
+    pub(crate) fn viewer_presented(&self, pane: usize) -> bool {
+        self.target.viewer_presented(pane)
+    }
+
     pub(crate) fn loop_handle(&self) -> SourceHandle {
         self.window.loop_handle()
     }

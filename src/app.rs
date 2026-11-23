@@ -97,7 +97,7 @@ struct PaneState {
     exited: bool,
     paste_recipient: Option<u64>,
     search: Option<search::Bar>,
-    viewer: Option<sumie_core::graphics::Placement>,
+    viewer: Option<viewer::Viewer>,
     selection: Selection,
     selected_text: String,
     pane: LocalPane,
@@ -469,7 +469,7 @@ impl Session {
                 dirty: pane.frame_dirty,
                 active: id == active.id,
                 window_focused: focused,
-                viewer: pane.viewer.as_ref(),
+                viewer: pane.viewer.as_ref().map(|viewer| &viewer.placement),
             };
             self.view.build_pane(
                 rect,
@@ -510,7 +510,7 @@ impl Session {
                 .panes
                 .iter()
                 .any(|&(id, _)| tab.get(id).frame_dirty);
-        if !dirty && self.cursor_hidden == cursor_hidden {
+        if !dirty && self.cursor_hidden == cursor_hidden && !self.view.thumbnail_hover_dirty() {
             return Ok(false);
         }
         if dirty {
@@ -535,9 +535,7 @@ impl Session {
                 self.view.frame_presented();
                 self.view.images_presented(gpu.presented_thumbnails());
                 self.pane_pointer.present_layout(tab);
-                for pane in &mut tab.panes {
-                    pane.frame_dirty = false;
-                }
+                self.panes_presented(gpu)?;
                 self.cursor_hidden = cursor_hidden;
                 tracing::debug!(count = gpu.present_count(), "submitted terminal frame");
                 if suboptimal {

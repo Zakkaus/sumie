@@ -36,6 +36,8 @@ fn main() {
     install_graphics_policy(&source);
     install_thumbnail_policy(&source);
     expose_thumbnail_flag(&source.join("src/terminal"));
+    install_placement_lifetime(&source);
+    install_screen_clear_epoch(&source);
     let prefix = out.join("ghostty-install");
     let mut build = Command::new(zig);
     build
@@ -186,24 +188,7 @@ pub fn sumie_set_thumbnail_rows(terminal: Terminal, rows: u16) callconv(lib.call
         "        @export(&c.terminal_set, .{ .name = \"ghostty_terminal_set\" });\n",
         "        @export(&@import(\"terminal/c/terminal.zig\").sumie_set_thumbnail_rows, .{ .name = \"sumie_set_thumbnail_rows\" });\n",
     );
-    insert_once(
-        &terminal.join("kitty/graphics_exec.zig"),
-        "        if (terminal.height_px / terminal.rows > 0) p.y_offset = cell_offset.y;\n",
-        r"
-        // Use row-only sizing before adding the placement or moving the cursor.
-        // Virtual placements take their footprint from application-written cells.
-        const rows = terminal.sumie_thumbnail_rows;
-        const cell_height = terminal.height_px / terminal.rows;
-        if (!d.virtual_placement and rows > 0 and cell_height > 0 and p.columns == 0 and p.rows == 0) {
-            const source = p.sourceRect(img);
-            const max_height = cell_height *| @as(u32, rows) - cell_offset.y;
-            if (source.width > 0 and source.height > max_height) {
-                p.rows = rows;
-                p.sumie_thumbnail = true;
-            }
-        }
-",
-    );
+    cap_new_placements(&terminal.join("kitty/graphics_exec.zig"));
     insert_once(
         &terminal.join("kitty/graphics_storage.zig"),
         "        z: i32 = 0,\n",
@@ -229,6 +214,39 @@ pub fn sumie_set_thumbnail_rows(terminal: Terminal, rows: u16) callconv(lib.call
     );
 }
 
+fn cap_new_placements(path: &Path) {
+    // Replace the existing policy when Cargo reuses a previously patched extraction.
+    let mut text = fs::read_to_string(path).expect("read pinned placement code");
+    let anchor =
+        "        if (terminal.height_px / terminal.rows > 0) p.y_offset = cell_offset.y;\n";
+    let start = text.find(anchor).expect("find placement offset clamp") + anchor.len();
+    let end = start
+        + text[start..]
+            .find("\n        break :placement p;")
+            .expect("find placement end");
+    let policy = r"
+        // Change the footprint only for inline output that advances the cursor.
+        const rows = terminal.sumie_thumbnail_rows;
+        const cell_height = terminal.height_px / terminal.rows;
+        if (terminal.screens.active_key == .primary and location == .pin and
+            d.cursor_movement == .after and rows > 0 and cell_height > 0 and
+            p.columns == 0 and p.rows == 0)
+        {
+            const source = p.sourceRect(img);
+            // cellOffset clamps Y to cell_height - 1, even for oversized requests.
+            const max_height = (cell_height *| @as(u32, rows)) -| cell_offset.y;
+            if (source.width > 0 and source.height > max_height) {
+                p.rows = rows;
+                p.sumie_thumbnail = true;
+            }
+        }
+";
+    if text[start..end] != *policy {
+        text.replace_range(start..end, policy);
+        fs::write(path, text).expect("patch pinned placement code");
+    }
+}
+
 fn expose_thumbnail_flag(terminal: &Path) {
     insert_once(
         &terminal.join("render.zig"),
@@ -250,6 +268,141 @@ fn expose_thumbnail_flag(terminal: &Path) {
         &render,
         "            .kitty => |kitty| out.* = kitty.kind,\n        },\n",
         "        .sumie_thumbnail => switch (p.protocol) {\n            .kitty => |kitty| out.* = kitty.sumie_thumbnail,\n        },\n",
+    );
+}
+
+fn install_placement_lifetime(source: &Path) {
+    let terminal = source.join("src/terminal");
+    let storage = terminal.join("kitty/graphics_storage.zig");
+    insert_once(
+        &storage,
+        "    pub const Placement = struct {\n",
+        "        sumie_revision: u64 = 0,\n\n",
+    );
+    insert_once(
+        &storage,
+        "        gop.value_ptr.* = p;\n\n        // This always mutates\n        self.markMutated(io);\n",
+        "        gop.value_ptr.sumie_revision = self.generation;\n",
+    );
+    expose_placement_key(&terminal);
+    insert_once(
+        &terminal.join("c/terminal.zig"),
+        "    wrapper.terminal.sumie_thumbnail_rows = rows;\n}\n",
+        r"
+pub fn sumie_has_image_placement(
+    terminal: Terminal,
+    image_id: u32,
+    image_generation: u64,
+    storage_id: u64,
+    revision: u64,
+) callconv(lib.calling_conv) bool {
+    if (comptime !build_options.kitty_graphics) return false;
+    const wrapper = terminal orelse return false;
+    const storage = &wrapper.terminal.screens.active.kitty_images;
+    const image = storage.images.getPtr(image_id) orelse return false;
+    if (image.generation != image_generation or revision == 0) return false;
+
+    const Storage = @TypeOf(storage.*);
+    const key: Storage.PlacementKey = .{
+        .image_id = image_id,
+        .placement_id = @bitCast(std.math.cast(u33, storage_id) orelse return false),
+    };
+    const placement = storage.placements.getPtr(key) orelse return false;
+    if (placement.sumie_revision != revision) return false;
+
+    return switch (placement.location) {
+        .pin => |pin| !pin.garbage,
+        .virtual => true,
+        .relative => |rel| if (storage.resolveChain(rel)) |chain| switch (chain.root.location) {
+            .pin => |pin| !pin.garbage,
+            .virtual => true,
+            .relative => unreachable,
+        } else false,
+    };
+}
+
+pub fn sumie_screen_clear_epoch(terminal: Terminal) callconv(lib.calling_conv) u64 {
+    const wrapper = terminal orelse return 0;
+    return wrapper.terminal.sumie_screen_clear_epoch;
+}
+",
+    );
+    insert_once(
+        &source.join("src/lib_vt.zig"),
+        "        @export(&@import(\"terminal/c/terminal.zig\").sumie_set_thumbnail_rows, .{ .name = \"sumie_set_thumbnail_rows\" });\n",
+        concat!(
+            "        @export(&@import(\"terminal/c/terminal.zig\").sumie_has_image_placement, .{ .name = \"sumie_has_image_placement\" });\n",
+            "        @export(&@import(\"terminal/c/terminal.zig\").sumie_screen_clear_epoch, .{ .name = \"sumie_screen_clear_epoch\" });\n",
+        ),
+    );
+}
+
+fn expose_placement_key(terminal: &Path) {
+    let render = terminal.join("render.zig");
+    insert_once(
+        &render,
+        "        sumie_thumbnail: bool = false,\n",
+        "        sumie_storage_key: [2]u64 = .{ 0, 0 },\n",
+    );
+    insert_once(
+        &render,
+        "                .sumie_thumbnail = p.sumie_thumbnail,\n",
+        "                .sumie_storage_key = .{ @as(u33, @bitCast(key.placement_id)), p.sumie_revision },\n",
+    );
+    insert_once(
+        &render,
+        "                            .kind = .virtual,\n",
+        "                            .sumie_storage_key = g.sumie_storage_key,\n",
+    );
+    insert_once(
+        &render,
+        "        pub const Geometry = struct {\n            image_generation: u64,\n",
+        "            sumie_storage_key: [2]u64 = .{ 0, 0 },\n",
+    );
+    insert_once(
+        &render,
+        "        run.geometry = .{\n",
+        "            .sumie_storage_key = .{ @as(u33, @bitCast(target.key.placement_id)), target.placement.sumie_revision },\n",
+    );
+    let c_render = terminal.join("c/render.zig");
+    insert_once(
+        &c_render,
+        "    sumie_thumbnail = 20,\n",
+        "    sumie_storage_key = 21,\n",
+    );
+    insert_once(
+        &c_render,
+        "            .sumie_thumbnail => bool,\n",
+        "            .sumie_storage_key => [2]u64,\n",
+    );
+    insert_once(
+        &c_render,
+        "            .kitty => |kitty| out.* = kitty.sumie_thumbnail,\n        },\n",
+        "        .sumie_storage_key => switch (p.protocol) {\n            .kitty => |kitty| out.* = kitty.sumie_storage_key,\n        },\n",
+    );
+}
+
+fn install_screen_clear_epoch(source: &Path) {
+    let terminal = source.join("src/terminal/Terminal.zig");
+    insert_once(
+        &terminal,
+        "sumie_thumbnail_rows: u16 = 0,\n",
+        "sumie_screen_clear_epoch: u64 = 0,\n",
+    );
+    insert_once(
+        &terminal,
+        "            // All active area\n",
+        "            self.sumie_screen_clear_epoch +%= 1;\n",
+    );
+    insert_once(
+        &terminal,
+        "                self.eraseDisplay(.complete, protected_req);\n                return;\n            };\n",
+        "            self.sumie_screen_clear_epoch +%= 1;\n",
+    );
+    insert_once(
+        &terminal,
+        "pub fn fullReset(self: *Terminal) void {\n",
+        "    self.sumie_screen_clear_epoch +%= 1;\n",
     );
 }
 

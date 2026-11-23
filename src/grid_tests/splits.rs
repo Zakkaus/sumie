@@ -32,6 +32,62 @@ fn gpu_split_pixels_gl() {
     check(wgpu::Backends::GL);
 }
 
+#[test]
+fn gpu_viewers_precede_terminal_images_at_texture_cap() {
+    let Some((device, queue)) = gpu_device(backends()) else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let target = renderer.create_offscreen([WIDTH, HEIGHT]);
+    let terminal: Vec<_> = (1..=4096)
+        .map(|id| {
+            let x = u32::try_from((id - 1).min(2)).unwrap();
+            image(id, BLUE, [x, 0], [1, 1], 0)
+        })
+        .collect();
+    let viewers = [
+        image(4097, RED, [0, 0], [1, 1], 0),
+        image(4098, GREEN, [0, 0], [1, 1], 0),
+    ];
+    let mut panes = [0, 8, 16].map(|x| PaneDraw {
+        rect: Rect {
+            x,
+            y: 0,
+            width: 8,
+            height: 8,
+        },
+        draw: grid([i32::try_from(x).unwrap(), 0], [8, 8], &[BLACK], BLACK, &[]),
+        viewer: None,
+        thumbnails: None,
+    });
+    panes[0].draw.images = &terminal;
+    for open in [true, true, false] {
+        for (pane, placement) in panes[1..].iter_mut().zip(&viewers) {
+            pane.viewer = open.then(|| ImageViewer {
+                placement,
+                dest: rect([i32::try_from(pane.rect.x).unwrap(), 0], [8, 8]),
+                backdrop: BLACK,
+            });
+        }
+        renderer.draw_frame(
+            &FrameDraw {
+                background: BLACK,
+                panes: panes.into_iter(),
+                fills: &[],
+                chrome: None,
+            },
+            &target,
+        );
+        let pixels = readback(&device, &queue, target.texture());
+        // Both viewers displace the two backmost ordinary placements.
+        assert_pixel(&pixels, 0, 0, if open { BLACK } else { BLUE }, 0);
+        assert_pixel(&pixels, 1, 0, if open { BLACK } else { BLUE }, 0);
+        assert_pixel(&pixels, 2, 0, BLUE, 0);
+        assert_pixel(&pixels, 8, 0, if open { RED } else { BLACK }, 0);
+        assert_pixel(&pixels, 16, 0, if open { GREEN } else { BLACK }, 0);
+    }
+}
+
 fn check(backend: wgpu::Backends) {
     let Some((device, queue)) = gpu_device(backend) else {
         return;
@@ -41,7 +97,8 @@ fn check(backend: wgpu::Backends) {
     upload_atlas(&mut renderer);
     let target = renderer.create_offscreen([WIDTH, HEIGHT]);
 
-    let left_images = [image(1, RED, [1, 1], [30, 22], 0)];
+    let mut left_images = [image(1, RED, [1, 1], [30, 22], 0)];
+    left_images[0].thumbnail = true;
     // Both panes use protocol image ID 1, but each image revision has a unique generation.
     let right_images = [
         image(2, BLUE, [1, 1], [17, 25], -1),
@@ -54,6 +111,7 @@ fn check(backend: wgpu::Backends) {
             width: 16,
             height: 25,
         },
+        thumbnails: None,
         viewer: None,
         draw: DrawList {
             image_exclusions: [None, Some(rect([22, 10], [2, 3]))],
@@ -73,6 +131,7 @@ fn check(backend: wgpu::Backends) {
             width: 14,
             height: 25,
         },
+        thumbnails: Some(sumie_ui::Palette::for_luminance(0.0).thumbnails(150, None)),
         viewer: None,
         draw: DrawList {
             image_exclusions: [Some(rect([5, 10], [2, 3])), None],
@@ -95,24 +154,27 @@ fn check(backend: wgpu::Backends) {
                 background: CLEAR,
                 panes: panes.into_iter(),
                 fills: &fills,
-                chrome: Some(ChromeLayer {
-                    fills: &[fill([0, 0], [WIDTH, 4], WHITE)],
-                    glyphs: &[],
-                    text_background: BLACK,
-                    atlas: AtlasUpload {
-                        width: 1,
-                        height: 1,
-                        bytes: &[0],
-                        dirty: &[],
-                    },
-                }),
+                chrome: Some(TEST_STRIP),
             },
             &target,
         );
         assert_split(&readback(&device, &queue, target.texture()));
     }
     assert_viewer(&mut renderer, &device, &queue, &target, &mut [right, left]);
+    assert_thumbnail_chrome(&mut renderer, &device, &queue, &target);
 }
+
+const TEST_STRIP: ChromeLayer<'static> = ChromeLayer {
+    fills: &[fill([0, 0], [WIDTH, 4], WHITE)],
+    glyphs: &[],
+    text_background: BLACK,
+    atlas: AtlasUpload {
+        width: 1,
+        height: 1,
+        bytes: &[0],
+        dirty: &[],
+    },
+};
 
 fn assert_viewer(
     renderer: &mut Renderer,
@@ -137,10 +199,69 @@ fn assert_viewer(
     );
     let pixels = readback(device, queue, target.texture());
     assert_pixel(&pixels, 4, 8, [187, 0, 0, 255], 1);
+    assert_pixel(&pixels, 12, 24, RED, 0); // No thumbnail border on the expanded image.
     assert_pixel(&pixels, 15, 29, RED, 0); // Cropped source covers the glyph in the pane gutter.
     assert_pixel(&pixels, 16, 29, CLEAR, 0);
     assert_pixel(&pixels, 21, 8, BLUE, 0);
     assert_pixel(&pixels, 15, 30, CLEAR, 0);
+}
+
+fn assert_thumbnail_chrome(
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    target: &OffscreenTarget,
+) {
+    let style = sumie_ui::Palette::for_luminance(0.0).thumbnails(150, Some(1));
+    let images = [
+        Placement {
+            thumbnail: true,
+            cell: [-1, 0],
+            ..image(4, BLACK, [WIDTH - 1, 1], [9, 17], 0)
+        },
+        Placement {
+            thumbnail: true,
+            ..image(5, RED, [9, 1], [25, 24], 0)
+        },
+        image(6, GREEN, [9, 1], [4, 3], 1),
+    ];
+    let pane = PaneDraw {
+        rect: Rect {
+            x: 0,
+            y: 0,
+            width: WIDTH,
+            height: HEIGHT,
+        },
+        draw: DrawList {
+            image_exclusions: [Some(rect([33, 17], [1, 1])), None],
+            ..grid([0, 0], [WIDTH, HEIGHT], &[BLACK], BLACK, &images)
+        },
+        thumbnails: Some(style),
+        viewer: None,
+    };
+    renderer.draw_frame(
+        &FrameDraw {
+            background: CLEAR,
+            panes: std::iter::once(pane),
+            fills: &[],
+            chrome: None,
+        },
+        target,
+    );
+    let pixels = readback(device, queue, target.texture());
+    for (x, y, color) in [
+        (0, 4, BLACK), // Clipping the natural left edge must not create a new border.
+        (7, 4, [83, 84, 85, 255]), // Dark Astryx rule blended over black in linear light.
+        (9, 4, style.accent),
+        (10, 4, RED),          // Still one device pixel wide at 125% scale.
+        (9, 1, GREEN),         // Higher-z, unmarked image covers the hover border.
+        (33, 17, BLACK),       // Exclusion also clips the affordance.
+        (13, 4, style.accent), // Chip corner and both arrowheads.
+        (28, 8, style.on_accent),
+        (17, 19, style.on_accent),
+    ] {
+        assert_pixel(&pixels, x, y, color, 1);
+    }
 }
 
 fn assert_split(pixels: &[u8]) {
@@ -198,6 +319,7 @@ fn image(generation: u64, color: Rgba, offset: [u32; 2], size: [u32; 2], z: i32)
         }),
         image_id: 1,
         placement_id: 1,
+        storage_key: [0; 2],
         z,
         cell: [0, 0],
         offset,

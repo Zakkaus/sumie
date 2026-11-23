@@ -388,6 +388,7 @@ impl View {
                 .map(move |pane| PaneDraw {
                     rect: pane.rect,
                     draw: pane.draw_list(self.cell, cursor_hidden),
+                    thumbnails: self.thumbnail_chrome(pane),
                     viewer: pane.viewer.as_ref().map(|viewer| viewer.draw(backdrop)),
                 }),
             fills: &self.fills,

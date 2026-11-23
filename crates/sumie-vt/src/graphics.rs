@@ -33,6 +33,7 @@ const PLACEMENT_SOURCE_WIDTH: c_int = 16;
 const PLACEMENT_SOURCE_HEIGHT: c_int = 17;
 const PLACEMENT_KITTY_ID: c_int = 18;
 const PLACEMENT_SUMIE_THUMBNAIL: c_int = 20;
+const PLACEMENT_SUMIE_STORAGE_KEY: c_int = 21;
 const IMAGE_WIDTH: c_int = 3;
 const IMAGE_HEIGHT: c_int = 4;
 const IMAGE_FORMAT: c_int = 5;
@@ -60,6 +61,7 @@ struct Geometry {
     image_id: u32,
     generation: u64,
     placement_id: u32,
+    storage_key: [u64; 2],
     z: i32,
     cell: [i32; 2],
     offset: [u32; 2],
@@ -88,7 +90,7 @@ impl Graphics {
         let [offset_x, offset_y] = &mut geometry.offset;
         let [width, height] = &mut geometry.size;
         let [src_x, src_y, src_w, src_h] = &mut geometry.source;
-        let fields: [(c_int, *mut c_void); 15] = [
+        let fields: [(c_int, *mut c_void); 16] = [
             (PLACEMENT_IMAGE_ID, from_mut(&mut geometry.image_id).cast()),
             (
                 PLACEMENT_IMAGE_GENERATION,
@@ -112,6 +114,10 @@ impl Graphics {
             (
                 PLACEMENT_SUMIE_THUMBNAIL,
                 from_mut(&mut geometry.thumbnail).cast(),
+            ),
+            (
+                PLACEMENT_SUMIE_STORAGE_KEY,
+                from_mut(&mut geometry.storage_key).cast(),
             ),
         ];
         let keys = fields.map(|(key, _)| key);
@@ -139,10 +145,36 @@ impl Drop for Graphics {
 }
 
 impl Terminal {
-    /// Cap new natural Kitty placements at this many rows; zero disables the cap.
+    /// Cap new natural-size Kitty placements that advance the primary-screen cursor.
+    /// Zero disables the cap.
     pub fn set_thumbnail_rows(&mut self, rows: u16) {
         // SAFETY: The terminal is live and exclusively borrowed.
         unsafe { ffi::sumie_set_thumbnail_rows(self.raw, rows) };
+    }
+
+    /// Whether the exact placement and pixel revision remain in the active screen's
+    /// image storage, even when outside the viewport. Does not update the render state.
+    #[must_use]
+    pub fn has_image_placement(&self, placement: &Placement) -> bool {
+        let [storage_id, revision] = placement.storage_key;
+        // SAFETY: The terminal is live and Ghostty only reads its active storage.
+        unsafe {
+            ffi::sumie_has_image_placement(
+                self.raw,
+                placement.image_id,
+                placement.image.generation,
+                storage_id,
+                revision,
+            )
+        }
+    }
+
+    /// Changes on a full display erase or full terminal reset, including when
+    /// that operation preserves placements in scrollback.
+    #[must_use]
+    pub fn screen_clear_epoch(&self) -> u64 {
+        // SAFETY: The terminal is live and Ghostty only reads its clear epoch.
+        unsafe { ffi::sumie_screen_clear_epoch(self.raw) }
     }
 
     /// Omit images too large for the target device before allocating snapshot pixels.
@@ -223,6 +255,7 @@ impl Terminal {
                 image,
                 image_id: geometry.image_id,
                 placement_id: geometry.placement_id,
+                storage_key: geometry.storage_key,
                 z: geometry.z,
                 cell: geometry.cell,
                 offset: geometry.offset,

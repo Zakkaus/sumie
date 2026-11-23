@@ -364,6 +364,9 @@ impl Session {
             tab.pane.leave_tab()?;
         }
         if tab_changed {
+            for pane in &mut self.tabs.active_mut().expect("live window").panes {
+                pane.hide_viewer();
+            }
             self.pointer.change_recipient();
             self.pane_pointer = super::pane_input::Pointer::default();
         } else {
@@ -448,6 +451,16 @@ impl Session {
                 let mut changed = false;
                 pane.exited |=
                     pane.service(gpu, pane.id == active, self.host.as_bytes(), &mut changed)?;
+                if pane.snapshot_dirty && pane.viewer_removed() {
+                    self.pane_pointer.image_click.dismiss(
+                        pane,
+                        (pane.id == active).then_some((
+                            &mut self.view,
+                            &mut self.routing,
+                            &mut *gpu,
+                        )),
+                    );
+                }
                 exited |= pane.exited;
                 labels_changed |= changed && pane.id == focused;
                 if changed && pane.id == active {

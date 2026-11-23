@@ -132,19 +132,22 @@ fn kitty_commands_query_transmit_place_and_delete() {
 fn kitty_thumbnails_size_and_advance_before_rendering() {
     let pixels = "AAAA".repeat(12 * 80);
     let transmit = format!("\x1b_Ga=t,i=7,f=24,s=12,v=80,q=2;{pixels}\x1b\\");
-    for (rows, args, size, cursor, thumbnail) in [
-        (3, "", [7, 48], [1, 2], true),
-        (0, "", [12, 80], [2, 4], false),
-        (3, ",r=10", [24, 160], [3, 9], false),
-        (2, ",c=2", [16, 107], [2, 6], false),
-        (2, ",c=3,r=5", [24, 80], [3, 4], false),
-        (2, ",h=24", [12, 24], [2, 1], false),
-        (2, ",h=32", [12, 32], [2, 1], false),
-        (1, ",w=1", [1, 16], [1, 0], true),
-        (2, ",C=1", [5, 32], [0, 0], true),
+    for (prefix, rows, args, size, cursor, thumbnail) in [
+        (b"".as_slice(), 3, "", [7, 48], [1, 2], true),
+        (b"", 0, "", [12, 80], [2, 4], false),
+        (b"", 3, ",r=10", [24, 160], [3, 9], false),
+        (b"", 2, ",c=2", [16, 107], [2, 6], false),
+        (b"", 2, ",c=3,r=5", [24, 80], [3, 4], false),
+        (b"", 2, ",h=24", [12, 24], [2, 1], false),
+        (b"", 2, ",h=32", [12, 32], [2, 1], false),
+        (b"", 1, ",w=1", [1, 16], [1, 0], true),
+        (b"", 2, ",C=1", [12, 80], [0, 0], false),
+        (b"", 1, ",Y=4294967295", [1, 1], [1, 0], true),
+        (b"\x1b[?1049h", 2, "", [12, 80], [2, 4], false),
     ] {
         let mut vt = Terminal::new(12, 12).unwrap();
         vt.resize_pixels(12, 12, [8, 16]).unwrap();
+        vt.write(prefix);
         vt.set_thumbnail_rows(3);
         vt.write(transmit.as_bytes());
         vt.set_thumbnail_rows(rows);
@@ -156,6 +159,10 @@ fn kitty_thumbnails_size_and_advance_before_rendering() {
         let placement = &snapshot.images[0];
         assert_eq!(placement.cell, [0, 0], "{rows}: {args}");
         assert_eq!(placement.size, size, "{rows}: {args}");
+        assert_eq!(
+            placement.offset[1],
+            if args.starts_with(",Y=") { 15 } else { 0 }
+        );
         assert_eq!(placement.thumbnail, thumbnail, "{rows}: {args}");
         assert_eq!(placement.image.size, [12, 80], "{rows}: {args}");
     }
@@ -179,4 +186,100 @@ fn kitty_thumbnail_keeps_source_crop_and_offsets_after_reload() {
     assert_eq!(placement.offset, [3, 4]);
     assert_eq!(placement.source, [4, 8, 8, 48]);
     assert_eq!(placement.image.size, [12, 80]);
+}
+
+#[test]
+fn kitty_relative_and_virtual_placements_keep_natural_size() {
+    let pixels = "AAAA".repeat(12 * 80);
+    let mut vt = Terminal::new(12, 12).unwrap();
+    vt.resize_pixels(12, 12, [8, 16]).unwrap();
+    vt.set_thumbnail_rows(2);
+    let transmit = format!("\x1b_Ga=T,i=7,p=1,f=24,s=12,v=80,C=1,q=2;{pixels}\x1b\\");
+    vt.write(transmit.as_bytes());
+    vt.write(b"\x1b_Ga=p,i=7,p=2,P=7,Q=1,H=2,q=2\x1b\\");
+    vt.write(b"\x1b_Ga=p,i=7,p=3,U=1,q=2\x1b\\");
+    // The fifth row would be outside a virtual placement shortened to two rows.
+    vt.write("\x1b[38;5;7m\u{10eeee}\u{0312}\u{0305}\x1b[0m@".as_bytes());
+    let snapshot = vt.render_snapshot().unwrap();
+    assert_eq!(snapshot.rows[0][1].text, "@");
+    assert_eq!(snapshot.images.len(), 3);
+    assert!(
+        snapshot
+            .images
+            .iter()
+            .all(|p| !p.thumbnail && vt.has_image_placement(p))
+    );
+    let child = snapshot
+        .images
+        .iter()
+        .find(|p| p.placement_id == 2)
+        .unwrap();
+    assert_eq!((child.cell, child.size), ([2, 0], [12, 80]));
+}
+
+const KITTY_TEST_PIXEL: &[u8] = b"\x1b_Ga=T,i=7,p=2,f=24,s=1,v=1,C=1,q=2;AAAA\x1b\\";
+
+#[test]
+fn kitty_placement_lifetime_checks_current_screen_and_exact_revisions() {
+    for (change, clears) in [
+        (b"\x1b_Ga=d,d=i,i=7,p=2,q=2\x1b\\".as_slice(), false),
+        (b"\x1b_Ga=p,i=7,p=2,C=1,q=2\x1b\\", false),
+        (KITTY_TEST_PIXEL, false),
+        (b"\x1b[2J", true),
+        (b"\x1bc", true),
+        (b"\x1b[?47h", false),
+    ] {
+        let mut vt = Terminal::new(6, 3).unwrap();
+        vt.resize_pixels(6, 3, [8, 16]).unwrap();
+        vt.write(KITTY_TEST_PIXEL);
+        let snapshot = vt.render_snapshot().unwrap();
+        let placement = &snapshot.images[0];
+        let epoch = vt.screen_clear_epoch();
+        assert!(vt.has_image_placement(placement));
+        vt.write(change);
+        assert!(!vt.has_image_placement(placement), "{change:?}");
+        assert_eq!(epoch != vt.screen_clear_epoch(), clears, "{change:?}");
+    }
+}
+
+#[test]
+fn kitty_placement_lifetime_distinguishes_anonymous_placements() {
+    let mut vt = Terminal::new(6, 3).unwrap();
+    vt.resize_pixels(6, 3, [8, 16]).unwrap();
+    vt.write(b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1,q=2;AAAA\x1b\\");
+    vt.write(b"\x1b[2G\x1b_Ga=p,i=7,C=1,q=2\x1b\\");
+    vt.write(b"\x1b[3G\x1b_Ga=p,i=7,p=1,C=1,q=2\x1b\\");
+    let snapshot = vt.render_snapshot().unwrap();
+    let placement = |col| snapshot.images.iter().find(|p| p.cell == [col, 0]).unwrap();
+    assert!(snapshot.images.iter().all(|p| vt.has_image_placement(p)));
+    vt.write(b"\x1b[2G\x1b_Ga=d,d=c,q=2\x1b\\");
+    assert!(vt.has_image_placement(placement(0)));
+    assert!(!vt.has_image_placement(placement(1)));
+    assert!(vt.has_image_placement(placement(2)));
+}
+
+#[test]
+fn kitty_placement_lifetime_is_independent_of_viewport_and_clear_epoch() {
+    let mut vt = Terminal::new(6, 3).unwrap();
+    vt.resize_pixels(6, 3, [8, 16]).unwrap();
+    vt.write(KITTY_TEST_PIXEL);
+    let snapshot = vt.render_snapshot().unwrap();
+    let placement = &snapshot.images[0];
+    let epoch = vt.screen_clear_epoch();
+    vt.write(b"A\r\nB\r\nC\r\nD\r\n");
+    assert!(vt.render_snapshot().unwrap().images.is_empty());
+    vt.scroll_rows(-100).unwrap();
+    assert_eq!(vt.render_snapshot().unwrap().images.len(), 1);
+    vt.scroll_bottom().unwrap();
+    assert!(vt.has_image_placement(placement));
+    assert_eq!(vt.screen_clear_epoch(), epoch);
+    vt.write(b"\x1b[2J");
+    assert_ne!(vt.screen_clear_epoch(), epoch);
+    assert!(vt.has_image_placement(placement));
+    let epoch = vt.screen_clear_epoch();
+    vt.write(b"\x1b[22J");
+    assert_ne!(vt.screen_clear_epoch(), epoch);
+    assert!(vt.has_image_placement(placement));
+    vt.write(b"\x1b[3J");
+    assert!(!vt.has_image_placement(placement));
 }

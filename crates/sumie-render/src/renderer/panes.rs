@@ -40,21 +40,44 @@ impl Renderer {
             .draw(pass, 0, images.terminal_end..images.end, vertices);
     }
 
-    pub(super) fn prepare_images<'a>(
+    fn reserve_viewers<'a>(
         &mut self,
         panes: impl Iterator<Item = PaneDraw<'a>>,
-        batches: &mut Batches,
-        capacity: u32,
+        remaining: &mut u64,
     ) {
+        for (pane, batch) in panes.zip(&mut self.panes) {
+            if let (Some(viewer), Some(candidates)) = (pane.viewer, &mut batch.candidates) {
+                self.images.reserve_viewer(
+                    &self.device,
+                    &self.queue,
+                    viewer.placement,
+                    candidates,
+                    remaining,
+                );
+            }
+        }
+    }
+
+    pub(super) fn prepare_images<'a>(
+        &mut self,
+        panes: impl Clone + Iterator<Item = PaneDraw<'a>>,
+        batches: &mut Batches,
+        mut remaining: u64,
+        has_viewers: bool,
+    ) {
+        // Pin viewers and reserve their instance bytes before any terminal image can fill them.
+        if has_viewers {
+            self.reserve_viewers(panes.clone(), &mut remaining);
+        }
         batches.grid = 0;
         for (pane, batch) in panes.zip(&mut self.panes) {
-            if let Some(candidates) = batch.candidates.take()
+            if let Some(candidates) = &batch.candidates
                 && let Some(images) = self.images.admit(
                     &self.device,
                     &self.queue,
-                    &pane,
+                    &pane.draw,
                     candidates,
-                    capacity - batches.images,
+                    &mut remaining,
                     batches.images,
                 )
             {
@@ -87,6 +110,12 @@ impl Renderer {
             batches.grid += batch.count;
         }
         self.images.finish_frame(batches.images);
+    }
+
+    pub(crate) fn viewer_presented(&self, pane_index: usize) -> bool {
+        self.panes
+            .get(pane_index)
+            .is_some_and(|pane| pane.backdrop.is_some())
     }
 
     pub(crate) fn thumbnail_layers(&self) -> impl Iterator<Item = (usize, usize, PixelRect)> + '_ {

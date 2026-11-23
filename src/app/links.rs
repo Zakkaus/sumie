@@ -10,7 +10,7 @@ use super::{Gpu, PaneState, Result, Session};
 #[derive(Default)]
 pub(super) struct Pointer {
     position: Option<(f64, f64)>,
-    modifiers: Modifiers,
+    pub(super) modifiers: Modifiers,
 }
 
 impl Pointer {
@@ -144,7 +144,9 @@ impl Session {
         let tab = self.tabs.active_mut().expect("live window");
         let focused = tab.tree.focused();
         let modifiers = self.link_pointer.modifiers;
-        let mut hand = false;
+        let mut hand = self
+            .view
+            .hover_thumbnail(target, |id| tab.get(id).can_hover_thumbnail(modifiers));
         for pane in &mut tab.panes {
             let active = pane.id == focused;
             let hit = target
@@ -163,9 +165,6 @@ impl Session {
             hand |= hit.is_some_and(|hit| {
                 pane.hover.uri().is_some() && pane.hover.checked.is_some_and(|(pos, _)| pos == hit)
             });
-            if let Some((_, position)) = target.filter(|(id, _)| *id == pane.id) {
-                hand |= pane.thumbnail_at(&self.view, position, modifiers).is_some();
-            }
         }
         gpu.set_link_cursor(hand);
         Ok(())

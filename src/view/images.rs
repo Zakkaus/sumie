@@ -1,12 +1,15 @@
 //! Fit pane-local viewers and retain hit targets only for images the renderer drew.
 
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::Range,
+    sync::{Arc, Weak},
+};
 
 use sumie_core::{graphics::Placement, splits::Rect};
-use sumie_render::{ImageViewer, PixelRect, Rgba};
+use sumie_render::{ImageViewer, PixelRect, Rgba, ThumbnailChrome};
 use sumie_ui::IMAGE_VIEWER_MARGIN;
 
-use super::View;
+use super::{PanePaint, View};
 
 pub(super) struct ViewerPaint {
     placement: Placement,
@@ -56,6 +59,8 @@ impl ViewerPaint {
 pub(super) struct PresentedImages {
     panes: Vec<PresentedPane>,
     bounds: Vec<(usize, PixelRect)>,
+    hovered: Option<HoveredThumbnail>,
+    hover_dirty: bool,
 }
 
 struct PresentedPane {
@@ -65,10 +70,42 @@ struct PresentedPane {
     hits: Range<usize>,
 }
 
+struct HoveredThumbnail {
+    pane: u64,
+    // Do not keep the old pane's image buffers alive after a replacement frame.
+    images: Weak<Vec<Placement>>,
+    index: usize,
+}
+
+impl HoveredThumbnail {
+    fn index_in(&self, pane: u64, images: &Arc<Vec<Placement>>) -> Option<usize> {
+        (self.pane == pane && self.images.as_ptr() == Arc::as_ptr(images)).then_some(self.index)
+    }
+}
+
 impl PresentedImages {
     pub(super) fn clear(&mut self) {
         self.panes.clear();
         self.bounds.clear();
+        self.hovered = None;
+        self.hover_dirty = false;
+    }
+
+    fn hit(&self, pixel: [f64; 2], id: u64) -> Option<(&PresentedPane, usize)> {
+        let pane = self.panes.iter().find(|pane| pane.id == id)?;
+        let contains = |rect: PixelRect| {
+            (0..2).all(|i| {
+                (0.0..f64::from(rect.size[i])).contains(&(pixel[i] - f64::from(rect.origin[i])))
+            })
+        };
+        if pane.exclusions.into_iter().flatten().any(contains) {
+            return None;
+        }
+        let &(index, _) = self.bounds[pane.hits.clone()]
+            .iter()
+            .rev()
+            .find(|(_, rect)| contains(*rect))?;
+        pane.images[index].thumbnail.then_some((pane, index))
     }
 }
 
@@ -79,7 +116,9 @@ impl View {
         admitted: impl Iterator<Item = (usize, usize, PixelRect)>,
     ) {
         let presented = &mut self.presented_images;
-        presented.clear();
+        presented.panes.clear();
+        presented.bounds.clear();
+        presented.hover_dirty = false;
         let mut last_pane = None;
         for (pane_index, image_index, bounds) in admitted {
             let pane = &self.panes[pane_index];
@@ -100,22 +139,52 @@ impl View {
 
     /// Find a thumbnail only if it is the foremost image at this logical window position.
     pub(crate) fn thumbnail_hit(&self, position: (f64, f64), pane_id: u64) -> Option<&Placement> {
-        let presented = &self.presented_images;
-        let pane = presented.panes.iter().find(|pane| pane.id == pane_id)?;
-        let pixel = self.window_pixel(position);
-        let contains = |rect: PixelRect| {
-            (0..2).all(|i| {
-                (0.0..f64::from(rect.size[i])).contains(&(pixel[i] - f64::from(rect.origin[i])))
-            })
-        };
-        if pane.exclusions.into_iter().flatten().any(contains) {
-            return None;
+        let (pane, index) = self
+            .presented_images
+            .hit(self.window_pixel(position), pane_id)?;
+        Some(&pane.images[index])
+    }
+
+    /// A pointer move only changes the image pass, not the cached terminal paint.
+    pub(crate) fn hover_thumbnail(
+        &mut self,
+        target: Option<(u64, (f64, f64))>,
+        eligible: impl FnOnce(u64) -> bool,
+    ) -> bool {
+        let target = target.map(|(pane, position)| (pane, self.window_pixel(position)));
+        let presented = &mut self.presented_images;
+        let hit = target
+            .and_then(|(pane, pixel)| presented.hit(pixel, pane))
+            .filter(|(pane, _)| eligible(pane.id));
+        let over = hit.is_some();
+        match (&presented.hovered, hit) {
+            (None, None) => return false,
+            (Some(old), Some((pane, index)))
+                if old.index_in(pane.id, &pane.images) == Some(index) =>
+            {
+                return true;
+            }
+            _ => (),
         }
-        let (index, _) = presented.bounds[pane.hits.clone()]
-            .iter()
-            .rev()
-            .find(|(_, rect)| contains(*rect))?;
-        let placement = &pane.images[*index];
-        placement.thumbnail.then_some(placement)
+        presented.hovered = hit.map(|(pane, index)| HoveredThumbnail {
+            pane: pane.id,
+            images: Arc::downgrade(&pane.images),
+            index,
+        });
+        presented.hover_dirty = true;
+        over
+    }
+
+    pub(crate) const fn thumbnail_hover_dirty(&self) -> bool {
+        self.presented_images.hover_dirty
+    }
+
+    pub(super) fn thumbnail_chrome(&self, pane: &PanePaint) -> Option<ThumbnailChrome> {
+        let images = pane.images.as_ref()?;
+        let hovered = self.presented_images.hovered.as_ref().and_then(|hover| {
+            // A pending snapshot can have a different placement at the same draw-list index.
+            hover.index_in(pane.id?, images)
+        });
+        Some(self.palette.thumbnails(self.scale_units(), hovered))
     }
 }

@@ -137,12 +137,26 @@ pub struct ImageViewer<'a> {
     pub backdrop: Rgba,
 }
 
+/// In-image chrome for placements marked as reduced thumbnails.
+#[derive(Clone, Copy)]
+pub struct ThumbnailChrome {
+    /// Index in the pane's draw list, not its sorted GPU instance list.
+    pub hovered: Option<usize>,
+    pub border: Rgba,
+    /// Opaque hover border and expand-chip background.
+    pub accent: Rgba,
+    pub on_accent: Rgba,
+    /// Preferred chip side in device pixels; the border is always one device pixel.
+    pub chip_size: u32,
+}
+
 /// One leaf of a split frame. Its bounds include any space left over by whole cells.
 #[derive(Clone, Copy)]
 pub struct PaneDraw<'a> {
     pub rect: Rect,
     /// Window-relative geometry, with cell ownership relative to this grid. The frame owns chrome.
     pub draw: DrawList<'a>,
+    pub thumbnails: Option<ThumbnailChrome>,
     pub viewer: Option<ImageViewer<'a>>,
 }
 

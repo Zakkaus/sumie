@@ -91,7 +91,7 @@ impl View {
         self.tabs.height = tab_bar_height(self.tabs.count, self.scale_units(), self.device[1]);
     }
 
-    fn scale_units(&self) -> u16 {
+    pub(super) fn scale_units(&self) -> u16 {
         u16::try_from(self.scale).expect("validated device scale")
     }
 

@@ -207,6 +207,7 @@ impl Renderer {
                 rect: full_rect(size),
                 draw: *list,
                 viewer: None,
+                thumbnails: None,
             }),
             fills: &[],
             chrome: list.chrome,
@@ -338,7 +339,7 @@ impl Renderer {
         };
         self.panes.clear();
         self.images.clear();
-        let mut image_fills = 0u32;
+        let mut has_viewers = false;
         let dimension_limit = self.device.limits().max_texture_dimension_2d;
         for pane in frame.panes.clone() {
             let rect = clip_rect(pane.rect, full);
@@ -361,12 +362,12 @@ impl Renderer {
                     });
                 }
                 batch.count = pane.draw.grid_instances() + u32::from(batch.base.is_some());
-                if !pane.draw.images.is_empty() || pane.viewer.is_some() {
+                let open = pane.viewer.is_some();
+                if !pane.draw.images.is_empty() || open {
                     batch.candidates =
                         self.images
                             .gather(&pane, [full.width, full.height], rect, dimension_limit);
-                    image_fills += u32::from(batch.candidates.is_some())
-                        * (1 + u32::from(pane.viewer.is_some()));
+                    has_viewers |= open;
                 }
             }
             batches.grid = batches
@@ -381,12 +382,8 @@ impl Renderer {
             .and_then(|n| n.checked_add(batches.chrome))
             .expect("too many frame instances");
         if self.images.begin_frame() {
-            let spare = self
-                .frame_limit
-                .saturating_sub(grid_limit.saturating_add(image_fills));
-            let capacity = u32::try_from(u64::from(spare) * INSTANCE_SIZE / IMAGE_INSTANCE_SIZE)
-                .unwrap_or(u32::MAX);
-            self.prepare_images(frame.panes.clone(), &mut batches, capacity);
+            let remaining = u64::from(self.frame_limit.saturating_sub(grid_limit)) * INSTANCE_SIZE;
+            self.prepare_images(frame.panes.clone(), &mut batches, remaining, has_viewers);
         }
         batches
     }

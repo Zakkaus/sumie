@@ -4,11 +4,15 @@
 //! and JSON Schema generation. Does not manage windows or render.
 
 mod changes;
+mod cursor;
+mod images;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[cfg_attr(target_os = "macos", path = "watch_macos.rs")]
 mod watch;
 
 pub use changes::Changes;
+pub use cursor::{Cursor, CursorStyle};
+pub use images::Images;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use watch::Watch;
 #[cfg(target_os = "macos")]
@@ -85,7 +89,7 @@ impl Config {
         self.font.overlay(file.font);
         self.colors.overlay(&file.colors);
         self.cursor.overlay(file.cursor);
-        self.images.thumbnail_rows = file.images.thumbnail_rows.or(self.images.thumbnail_rows);
+        self.images.overlay(&file.images);
         self.shell.overlay(&file.shell);
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
         self.scrollback_limit = file.scrollback_limit.or(self.scrollback_limit);
@@ -109,67 +113,6 @@ fn deserialize_contrast<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f6
             "minimum contrast must be between 1.0 and 21.0",
         ))
     }
-}
-
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
-pub struct Images {
-    /// Maximum height of new natural-size placements, in rows. Set to 0 to disable thumbnails.
-    #[schemars(with = "u16", default = "default_thumbnail_rows")]
-    thumbnail_rows: Option<u16>,
-}
-
-const fn default_thumbnail_rows() -> u16 {
-    3
-}
-
-impl Images {
-    #[must_use]
-    pub fn thumbnail_rows(&self) -> u16 {
-        self.thumbnail_rows.unwrap_or_else(default_thumbnail_rows)
-    }
-}
-
-/// Default cursor appearance; terminal applications can override it with DECSCUSR.
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub struct Cursor {
-    /// Cursor shape: block, bar, or underline.
-    #[schemars(with = "CursorStyle", default = "CursorStyle::default")]
-    style: Option<CursorStyle>,
-    /// Blink while the window is focused.
-    #[schemars(with = "bool", default = "default_cursor_blink")]
-    blink: Option<bool>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CursorStyle {
-    #[default]
-    Block,
-    Bar,
-    Underline,
-}
-
-impl Cursor {
-    #[must_use]
-    pub fn style(self) -> CursorStyle {
-        self.style.unwrap_or_default()
-    }
-
-    #[must_use]
-    pub fn blink(self) -> bool {
-        self.blink.unwrap_or_else(default_cursor_blink)
-    }
-
-    fn overlay(&mut self, file: Self) {
-        self.style = file.style.or(self.style);
-        self.blink = file.blink.or(self.blink);
-    }
-}
-
-const fn default_cursor_blink() -> bool {
-    true
 }
 
 /// A six-digit sRGB color in `#rrggbb` notation.

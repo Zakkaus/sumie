@@ -12,7 +12,7 @@ mod surface;
 pub use atlas::{AtlasRect, AtlasUpload};
 pub use grid::{
     ChromeLayer, Cursor, CursorShape, DrawList, Fill, FrameDraw, GlyphQuad, ImageViewer, PaneDraw,
-    PixelRect, Rgba,
+    PixelRect, Rgba, ThumbnailChrome,
 };
 pub use renderer::{OffscreenTarget, Renderer};
 pub use surface::{SurfaceError, SurfaceFrame, SurfaceRenderer};

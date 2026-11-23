@@ -4,12 +4,17 @@ use sumie_core::graphics::{IMAGE_BUDGET, Image, Placement, texture_bytes};
 use sumie_core::splits::Rect;
 use wgpu::util::StagingBelt;
 
-use crate::{DrawList, PaneDraw, PixelRect, atlas};
+use crate::{DrawList, PaneDraw, PixelRect, atlas, grid::Instance};
 
 mod cache;
+mod quad;
+
+use quad::Quad;
 
 const BELOW_BACKGROUND: i32 = -(1 << 30);
 pub(crate) const QUAD_SIZE: usize = size_of::<Quad>();
+const FILL_SIZE: u64 = size_of::<Instance>() as u64;
+const VIEWER_SIZE: u64 = QUAD_SIZE as u64 + FILL_SIZE;
 
 type Exclusions = [[f32; 4]; 2];
 
@@ -33,6 +38,7 @@ pub(crate) struct Layers {
 pub(crate) struct Candidates {
     range: Range<usize>,
     base: Option<PixelRect>,
+    viewer: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -102,7 +108,12 @@ impl Images {
                             + i64::from(list.origin[i])
                             + i64::from(p.offset[i])
                     });
-                    Draw::new(index, p, origin, p.size, clip, ndc, dimension_limit)
+                    let mut draw = Draw::new(index, p, origin, p.size, clip, ndc, dimension_limit)?;
+                    if let Some(style) = pane.thumbnails.filter(|_| p.thumbnail) {
+                        draw.quad
+                            .decorate(origin, p.size, style, style.hovered == Some(index));
+                    }
+                    Some(draw)
                 }));
             // Larger z values are foremost, and selected first if the frame fills the cache.
             self.draws[start..].sort_unstable_by_key(|draw| {
@@ -110,8 +121,8 @@ impl Images {
                 (p.z, p.image_id, p.placement_id, draw.index)
             });
         }
-        if let Some(viewer) = pane.viewer {
-            self.draws.extend(Draw::new(
+        let viewer = pane.viewer.and_then(|viewer| {
+            Draw::new(
                 list.images.len(),
                 viewer.placement,
                 viewer.dest.origin.map(i64::from),
@@ -119,12 +130,15 @@ impl Images {
                 Clip::scissor(scissor),
                 ndc,
                 dimension_limit,
-            ));
-        }
+            )
+        });
+        let has_viewer = viewer.is_some();
+        self.draws.extend(viewer);
         let end = self.draws.len();
         (start != end).then(|| Candidates {
             range: start..end,
             base: grid.map(Clip::pixel_rect),
+            viewer: has_viewer,
         })
     }
 
@@ -137,38 +151,69 @@ impl Images {
         true
     }
 
+    pub(crate) fn reserve_viewer(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        placement: &Placement,
+        candidates: &mut Candidates,
+        remaining: &mut u64,
+    ) {
+        if candidates.viewer {
+            if *remaining >= VIEWER_SIZE
+                && self.acquire(device, queue, candidates.range.end - 1, placement)
+            {
+                *remaining -= VIEWER_SIZE;
+            } else {
+                candidates.range.end -= 1;
+                candidates.viewer = false;
+            }
+        }
+    }
+
+    fn acquire(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        index: usize,
+        placement: &Placement,
+    ) -> bool {
+        let draw = &self.draws[index];
+        self.cache.acquire(draw.generation, draw.bytes, || {
+            self.pipeline
+                .get_or_insert_with(|| BoundPipeline::new(device, self.format))
+                .bind_texture(device, queue, &placement.image)
+        })
+    }
+
     pub(crate) fn admit(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        pane: &PaneDraw<'_>,
-        candidates: Candidates,
-        available: u32,
+        list: &DrawList<'_>,
+        candidates: &Candidates,
+        remaining: &mut u64,
         start: u32,
     ) -> Option<Layers> {
-        let format = self.format;
+        let viewer = candidates.viewer;
         let end = candidates.range.end;
-        let mut first = end;
-        let mut remaining = available;
-        for index in candidates.range.rev() {
-            if remaining == 0 {
+        let terminal = end - usize::from(viewer);
+        let mut first = terminal;
+        let mut has_base = false;
+        for index in (candidates.range.start..terminal).rev() {
+            let placement = &list.images[self.draws[index].index];
+            let needs_base = !has_base && placement.z < BELOW_BACKGROUND;
+            // The base costs at most one fill; it may replace default backgrounds.
+            let cost = QUAD_SIZE as u64 + u64::from(needs_base) * FILL_SIZE;
+            if *remaining < cost {
                 break;
             }
-            let draw = &self.draws[index];
-            let placement = pane
-                .draw
-                .images
-                .get(draw.index)
-                .unwrap_or_else(|| pane.viewer.expect("viewer image candidate").placement);
-            if self.cache.acquire(draw.generation, draw.bytes, || {
-                self.pipeline
-                    .get_or_insert_with(|| BoundPipeline::new(device, format))
-                    .bind_texture(device, queue, &placement.image)
-            }) {
-                remaining -= 1;
+            if self.acquire(device, queue, index, placement) {
+                *remaining -= cost;
+                has_base |= needs_base;
                 first -= 1;
                 if first != index {
-                    self.draws[first] = *draw;
+                    self.draws[first] = self.draws[index];
                 }
             }
         }
@@ -176,18 +221,16 @@ impl Images {
             return None;
         }
         let boundary = |z| {
-            let count = self.draws[first..end]
-                .partition_point(|d| pane.draw.images.get(d.index).is_some_and(|p| p.z < z));
+            let count = self.draws[first..terminal].partition_point(|d| list.images[d.index].z < z);
             start + u32::try_from(count).unwrap()
         };
         let below_background = boundary(BELOW_BACKGROUND);
         let below_text = boundary(0);
-        let viewer = self.draws[end - 1].index == pane.draw.images.len();
-        let has_thumbnail = pane.viewer.is_none()
-            && self.draws[first..end]
+        let has_thumbnail = !viewer
+            && self.draws[first..terminal]
                 .iter()
-                .any(|d| pane.draw.images[d.index].thumbnail);
-        let end_instance = start + (available - remaining);
+                .any(|d| list.images[d.index].thumbnail);
+        let terminal_end = start + u32::try_from(terminal - first).unwrap();
         // Pack admitted placements without touching candidates for the following panes.
         if first != start as usize {
             self.draws.copy_within(first..end, start as usize);
@@ -196,9 +239,9 @@ impl Images {
             start,
             below_background,
             below_text,
-            terminal_end: end_instance - u32::from(viewer),
-            end: end_instance,
-            base: candidates.base.filter(|_| below_background != start),
+            terminal_end,
+            end: terminal_end + u32::from(viewer),
+            base: candidates.base.filter(|_| has_base),
             has_thumbnail,
         })
     }
@@ -335,67 +378,6 @@ impl Clip {
                 u32::try_from(bottom - top).unwrap(),
             ],
         }
-    }
-}
-
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-struct Quad {
-    dest: [f32; 4],
-    source: [f32; 4],
-    // A negative exclusive end marks an axis drawn at native size.
-    crop: [i32; 4],
-}
-
-impl Quad {
-    const ATTRS: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Sint32x4];
-
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "GPU vertex coordinates are f32"
-    )]
-    fn clipped(
-        p: &Placement,
-        origin: [i64; 2],
-        size: [u32; 2],
-        bounds: Clip,
-        ndc: [f64; 2],
-    ) -> Option<Self> {
-        let axis = |i: usize| {
-            let source_size = p.source[2 + i];
-            let source_start = p.source[i];
-            let texture_size = p.image.size[i];
-            if source_size == 0 || source_start > texture_size.checked_sub(source_size)? {
-                return None;
-            }
-            let [first, last] = bounds.0[i];
-            let screen = |edge| {
-                let pixel = f64::from(u32::try_from(edge).unwrap());
-                (pixel * ndc[i] - ndc[i].signum()) as f32
-            };
-            let source = |edge| {
-                let offset = f64::from(u32::try_from(edge - origin[i]).unwrap());
-                (f64::from(source_start) + offset * f64::from(source_size) / f64::from(size[i]))
-                    as f32
-            };
-            let end = i32::try_from(source_start + source_size).ok()?;
-            Some((
-                [screen(first), screen(last)],
-                [source(first), source(last)],
-                [
-                    i32::try_from(source_start).ok()?,
-                    if source_size == size[i] { -end } else { end },
-                ],
-            ))
-        };
-        let ([left, right], [x0, x1], [crop_left, crop_right]) = axis(0)?;
-        let ([top, bottom], [y0, y1], [crop_top, crop_bottom]) = axis(1)?;
-        Some(Self {
-            dest: [left, top, right, bottom],
-            source: [x0, y0, x1, y1],
-            crop: [crop_left, crop_top, crop_right, crop_bottom],
-        })
     }
 }
 

@@ -219,6 +219,7 @@ fn assert_image_sampling(
         }),
         image_id: 1,
         placement_id: 1,
+        storage_key: [0; 2],
         z: 0,
         cell: [-1, 0],
         offset: [7, 0],

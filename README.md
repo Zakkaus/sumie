@@ -31,7 +31,9 @@ The wheel scrolls three history lines per notch. If the program tracks the mouse
 
 On Linux, programs can display PNG, RGB and RGBA images with the Kitty graphics protocol. Direct transfers work over SSH. Local file transfers (`t=f` and `t=t`) accept regular files up to 320 MiB on tmpfs, ramfs or devtmpfs under `/tmp` or `/dev/shm`. Paths must be absolute, with no symlinks or hard links. With `t=t`, sumie checks that the path contains `tty-graphics-protocol` and still names the opened file before removing it. Use a direct transfer for images elsewhere, including on a disk-backed `/tmp`. Animation and video playback are not supported.
 
-Images taller than three rows appear as thumbnails unless the program specifies a row or column count. Click a thumbnail to fit it to the pane; if the program tracks the mouse, hold Shift while clicking. Press Esc or click the viewer to close it. Set `thumbnail-rows` in `[images]` to change the height limit for new placements, or set it to `0` to keep their natural size.
+On the primary screen, inline images taller than three rows appear as thumbnails. The terminal leaves the size unchanged on the alternate screen or when the program specifies a size, manages the cursor itself, or uses relative placements or Unicode placeholders. Click a thumbnail to fit it to the pane; hold Shift if the program tracks the mouse. Press Esc or click the viewer to close it.
+
+Set `thumbnail-rows` in `[images]` to change the limit for new images. Use `thumbnail-rows = 0` with `timg --grid`: on the primary screen, its grid layout assumes natural image sizes even though it uses inline placements.
 
 ## Build and checks
 

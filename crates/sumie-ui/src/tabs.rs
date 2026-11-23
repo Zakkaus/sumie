@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use sumie_render::{Fill, PixelRect, Rgba};
+use sumie_render::{Fill, PixelRect, Rgba, ThumbnailChrome};
 
 use crate::tokens;
 
@@ -12,6 +12,7 @@ pub struct Palette {
     pub label: Rgba,
     pub selected: Rgba,
     pub(crate) accent: Rgba,
+    pub(crate) on_accent: Rgba,
     pub rule: Rgba,
     pub inactive_pane: Rgba,
     pub overlay: Rgba,
@@ -25,6 +26,17 @@ impl Palette {
             tokens::LIGHT
         } else {
             tokens::DARK
+        }
+    }
+
+    #[must_use]
+    pub fn thumbnails(self, scale: u16, hovered: Option<usize>) -> ThumbnailChrome {
+        ThumbnailChrome {
+            hovered,
+            border: self.rule,
+            accent: self.accent,
+            on_accent: self.on_accent,
+            chip_size: scaled(tokens::THUMBNAIL_CHIP, scale),
         }
     }
 }

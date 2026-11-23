@@ -53,7 +53,7 @@ pub(super) struct Pointer {
     held: [bool; 3],
     presented: Option<LayoutKey>,
     pressed_layout: Option<LayoutKey>,
-    image_click: super::viewer::Click,
+    pub(super) image_click: super::viewer::Click,
 }
 
 impl Pointer {
@@ -185,7 +185,12 @@ impl Session {
                 .pointer_modifiers_changed(input::key_modifiers(modifiers));
             return Ok(None);
         }
-        if pane.viewer_input(&event, &mut self.view, &mut self.routing, gpu)? {
+        if pane.viewer_presented() {
+            if super::viewer::escape_pressed(&event) {
+                self.pane_pointer
+                    .image_click
+                    .dismiss(pane, Some((&mut self.view, &mut self.routing, gpu)));
+            }
             return Ok(None);
         }
         if matches!(

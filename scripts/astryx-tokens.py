@@ -52,7 +52,8 @@ def main():
     lines = [f"//! Astryx {CLI_VERSION}; exported by `python3 scripts/astryx-tokens.py`. Do not edit.", "",
              "use super::Palette;", ""]
     sizes = {"TAB_HEIGHT": "size-element-md", "PADDING": "spacing-3",
-             "RAIL_GAP": "spacing-1", "RULE": "border-width", "INDICATOR": "spacing-0-5"}
+             "RAIL_GAP": "spacing-1", "RULE": "border-width", "INDICATOR": "spacing-0-5",
+             "THUMBNAIL_CHIP": "spacing-4"}
     for key, token in sizes.items():
         lines.append(f"pub(super) const {key}: u32 = {pixels(scalar(token))};")
     lines.append(f"pub const IMAGE_VIEWER_MARGIN: u32 = {pixels(scalar('spacing-4'))};")
@@ -62,8 +63,8 @@ def main():
     family = scalar("font-family-code").rsplit(",", 1)[-1].strip()
     lines.append(f"pub const LABEL_FAMILY: &str = {json.dumps(family)};")
     colors = {"surface": "background-body", "label": "text-secondary", "selected": "text-primary",
-              "accent": "accent", "rule": "border", "inactive_pane": "background-muted",
-              "overlay": "overlay"}
+              "accent": "accent", "on_accent": "on-accent", "rule": "border",
+              "inactive_pane": "background-muted", "overlay": "overlay"}
     for i, mode in enumerate(("LIGHT", "DARK")):
         lines += ["", f"pub(super) const {mode}: Palette = Palette {{"]
         for field, token in colors.items():

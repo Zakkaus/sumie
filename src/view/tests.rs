@@ -95,12 +95,9 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     assert!(view.link_cell(gutter, left, false).is_none());
 }
 
-#[test]
-fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
-    let mut view = view();
-    let rect = view.content_rect();
+fn thumbnail_snapshot(view: &View) -> Snapshot {
     let [w, h] = view.cell;
-    let mut snapshot = snapshot(&view, rect);
+    let mut snapshot = snapshot(view, view.content_rect());
     let thumbnail = Placement {
         image: Arc::new(Image {
             generation: 1,
@@ -109,6 +106,7 @@ fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
         }),
         image_id: 1,
         placement_id: 1,
+        storage_key: [0; 2],
         z: 0,
         cell: [1, -1],
         offset: [0, h - 2],
@@ -127,6 +125,15 @@ fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
             ..thumbnail
         },
     ]);
+    snapshot
+}
+
+#[test]
+fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
+    let mut view = view();
+    let rect = view.content_rect();
+    let [w, h] = view.cell;
+    let mut snapshot = thumbnail_snapshot(&view);
     view.build(&snapshot, None, &[], None, true);
     // The renderer clips the two pixels above the scrolled viewport.
     let bounds = PixelRect {
@@ -142,14 +149,43 @@ fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
     assert!(view.thumbnail_hit(inside, 0).is_none());
     view.images_presented([(0, 0, bounds), (0, 1, covering)].into_iter());
     assert_eq!(view.thumbnail_hit(inside, 0), snapshot.images.first());
-    assert!(view.thumbnail_hit(logical_y(rect.y), 0).is_none());
-    assert!(view.thumbnail_hit(logical_y(rect.y + h), 0).is_none());
-    assert!(view.thumbnail_hit(logical_y(rect.y - 1), 0).is_none());
-    assert!(view.thumbnail_hit(inside, 1).is_none());
+    for (point, pane) in [
+        (logical_y(rect.y), 0),
+        (logical_y(rect.y + h), 0),
+        (logical_y(rect.y - 1), 0),
+        (inside, 1),
+    ] {
+        assert!(view.thumbnail_hit(point, pane).is_none());
+    }
+    for (point, eligible, hovered) in [
+        (logical_y(rect.y), true, false),
+        (inside, false, false),
+        (inside, true, true),
+    ] {
+        assert_eq!(
+            view.hover_thumbnail(Some((0, point)), |_| eligible),
+            hovered
+        );
+        assert_eq!(view.thumbnail_hover_dirty(), hovered);
+    }
+    assert_eq!(
+        view.thumbnail_chrome(&view.panes[0]).unwrap().hovered,
+        Some(0)
+    );
+    view.images_presented([(0, 0, bounds), (0, 1, covering)].into_iter());
+    let steady = view.hover_thumbnail(Some((0, inside)), |_| true);
+    assert_eq!((steady, view.thumbnail_hover_dirty()), (true, false));
+
+    // A fresh list at the same index must not inherit the previous placement's hover.
+    Arc::make_mut(&mut snapshot.images)[0].placement_id = 3;
+    view.build(&snapshot, None, &[], None, true);
+    assert_eq!(view.thumbnail_chrome(&view.panes[0]).unwrap().hovered, None);
 
     snapshot.images = Arc::default();
     view.build(&snapshot, None, &[], None, true);
     assert!(view.thumbnail_hit(inside, 0).is_some());
     view.images_presented(std::iter::empty());
     assert!(view.thumbnail_hit(inside, 0).is_none());
+    let cleared = view.hover_thumbnail(Some((0, inside)), |_| true);
+    assert_eq!((cleared, view.thumbnail_hover_dirty()), (false, true));
 }

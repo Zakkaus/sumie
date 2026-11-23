@@ -187,6 +187,13 @@ impl<'window> SurfaceRenderer<'window> {
         Ok(SurfaceFrame::Presented { suboptimal })
     }
 
+    /// Returns whether the given pane index had a viewer in the last successful presentation.
+    /// The index is the pane's position in the frame's `panes` iterator.
+    #[must_use]
+    pub fn viewer_presented(&self, pane_index: usize) -> bool {
+        self.renderer.viewer_presented(pane_index)
+    }
+
     /// Hit layers from the last presentation, including non-thumbnail images that can cover
     /// a thumbnail. Items give the pane index, placement index, and clipped device bounds in
     /// draw order.
