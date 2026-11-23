@@ -34,9 +34,8 @@ impl OffscreenTarget {
 
 /// GPU resources for one render target. The device and queue may be shared.
 pub struct Renderer {
-    bindings: wgpu::BindGroup,
-    atlas: wgpu::Texture,
-    atlas_uploaded: bool,
+    grid_atlas: BoundAtlas,
+    chrome_atlas: Option<BoundAtlas>,
     frame: wgpu::Buffer,
     minimum_contrast: f32,
     pipeline: wgpu::RenderPipeline,
@@ -58,13 +57,11 @@ impl Renderer {
         format: wgpu::TextureFormat,
     ) -> Self {
         let pipeline = pipeline(device, format);
-        let atlas = atlas::create(device, [1, 1]);
         let frame = frame_buffer(device, INITIAL_INSTANCES);
-        let bindings = bindings(device, &pipeline, &atlas, &frame);
+        let grid_atlas = BoundAtlas::new(device, &pipeline, &frame, [1, 1]);
         Self {
-            bindings,
-            atlas,
-            atlas_uploaded: false,
+            grid_atlas,
+            chrome_atlas: None,
             staging: StagingBelt::new(device.clone(), frame.size()),
             frame,
             minimum_contrast: 1.1,
@@ -100,28 +97,13 @@ impl Renderer {
     /// Queue atlas transfers for the next draw. Do not hold a terminal lock.
     /// The first upload and any change in dimensions use the full atlas.
     pub fn upload_atlas(&mut self, upload: &AtlasUpload<'_>) {
-        let size = [upload.width, upload.height];
-        if size != [self.atlas.width(), self.atlas.height()] {
-            self.atlas = atlas::create(&self.device, size);
-            self.rebind();
-            self.atlas_uploaded = false;
-        }
-        if self.atlas_uploaded {
-            for &rect in upload.dirty {
-                atlas::write(&self.queue, &self.atlas, upload, rect);
-            }
-        } else {
-            atlas::write(
-                &self.queue,
-                &self.atlas,
-                upload,
-                AtlasRect {
-                    origin: [0, 0],
-                    size,
-                },
-            );
-            self.atlas_uploaded = true;
-        }
+        self.grid_atlas.upload(
+            &self.device,
+            &self.queue,
+            &self.pipeline,
+            &self.frame,
+            upload,
+        );
     }
 
     /// Submit one render pass to a target on this device. Do not hold a terminal lock.
@@ -146,7 +128,22 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("sumie frame"),
             });
-        let count = list.instance_count();
+        let grid = list.grid_instances();
+        let chrome = list.chrome.as_ref().map_or(0, |layer| {
+            let size = [layer.atlas.width, layer.atlas.height];
+            let atlas = self.chrome_atlas.get_or_insert_with(|| {
+                BoundAtlas::new(&self.device, &self.pipeline, &self.frame, size)
+            });
+            atlas.upload(
+                &self.device,
+                &self.queue,
+                &self.pipeline,
+                &self.frame,
+                &layer.atlas,
+            );
+            layer.instance_count()
+        });
+        let count = grid.checked_add(chrome).expect("too many frame instances");
         if count != 0 {
             self.stage_instances(&mut encoder, list, size, count);
         }
@@ -166,9 +163,16 @@ impl Renderer {
             });
             if count != 0 {
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bindings, &[]);
+                pass.set_bind_group(0, &self.grid_atlas.bindings, &[]);
                 pass.set_vertex_buffer(0, self.frame.slice(FRAME_SIZE..));
-                pass.draw(0..4, 0..count);
+                pass.draw(0..4, 0..grid);
+                if chrome != 0 {
+                    let atlas = self.chrome_atlas.as_ref().expect("uploaded chrome atlas");
+                    pass.set_bind_group(0, &atlas.bindings, &[]);
+                    let offset = FRAME_SIZE + u64::from(grid) * INSTANCE_SIZE;
+                    pass.set_vertex_buffer(0, self.frame.slice(offset..));
+                    pass.draw(0..4, 0..chrome);
+                }
             }
         }
         self.staging.finish_and_recall_on_submit(&encoder);
@@ -185,7 +189,11 @@ impl Renderer {
         let bytes = FRAME_SIZE + u64::from(count) * INSTANCE_SIZE;
         if bytes > self.frame.size() {
             self.frame = frame_buffer(&self.device, count.next_power_of_two());
-            self.rebind();
+            self.grid_atlas
+                .rebind(&self.device, &self.pipeline, &self.frame);
+            if let Some(atlas) = &mut self.chrome_atlas {
+                atlas.rebind(&self.device, &self.pipeline, &self.frame);
+            }
         }
         let mut staging =
             self.staging
@@ -198,9 +206,66 @@ impl Renderer {
         }));
         list.write_instances(instances);
     }
+}
 
-    fn rebind(&mut self) {
-        self.bindings = bindings(&self.device, &self.pipeline, &self.atlas, &self.frame);
+struct BoundAtlas {
+    texture: wgpu::Texture,
+    bindings: wgpu::BindGroup,
+    uploaded: bool,
+}
+
+impl BoundAtlas {
+    fn new(
+        device: &wgpu::Device,
+        pipeline: &wgpu::RenderPipeline,
+        frame: &wgpu::Buffer,
+        size: [u32; 2],
+    ) -> Self {
+        let texture = atlas::create(device, size);
+        Self {
+            bindings: bindings(device, pipeline, &texture, frame),
+            texture,
+            uploaded: false,
+        }
+    }
+
+    fn rebind(
+        &mut self,
+        device: &wgpu::Device,
+        pipeline: &wgpu::RenderPipeline,
+        frame: &wgpu::Buffer,
+    ) {
+        self.bindings = bindings(device, pipeline, &self.texture, frame);
+    }
+
+    fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pipeline: &wgpu::RenderPipeline,
+        frame: &wgpu::Buffer,
+        upload: &AtlasUpload<'_>,
+    ) {
+        let size = [upload.width, upload.height];
+        if size != [self.texture.width(), self.texture.height()] {
+            *self = Self::new(device, pipeline, frame, size);
+        }
+        if self.uploaded {
+            for &rect in upload.dirty {
+                atlas::write(queue, &self.texture, upload, rect);
+            }
+        } else {
+            atlas::write(
+                queue,
+                &self.texture,
+                upload,
+                AtlasRect {
+                    origin: [0, 0],
+                    size,
+                },
+            );
+            self.uploaded = true;
+        }
     }
 }
 

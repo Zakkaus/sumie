@@ -6,6 +6,10 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 按 Ctrl+Shift+F 可搜尋畫面與捲動記錄。搜尋會接續自動換行的文字，只有搜尋字串含大寫字母時才區分大小寫。結果由舊到新編號。按 Enter 或 F3 可跳到較舊的結果，同時按住 Shift 則跳到較新的結果。按 Escape 會回到開啟搜尋列前的位置；若原本在底部，則繼續跟隨輸出。
 
+在 Wayland 上，按 Ctrl+Shift+T 可新增分頁。新分頁沿用目前 shell 透過 OSC 7 回報的本機目錄；若沒有可用的目錄，則從 `$HOME` 開始。新視窗一律從 `$HOME` 開始。按 Ctrl+Shift+W 可關閉目前分頁，子程序結束時也會關閉分頁。最後一個分頁關閉時，視窗會一併關閉。
+
+按 Ctrl+Tab 或 Ctrl+PageDown 切換到下一個分頁，按 Ctrl+Shift+Tab 或 Ctrl+PageUp 切換到上一個。Alt+1 至 Alt+8 依位置選取分頁，Alt+9 選取最後一個。按 Ctrl+Shift+PageUp 或 Ctrl+Shift+PageDown 可將目前分頁向左或向右移動。開啟第二個分頁後才會顯示分頁列。按左鍵選取分頁，按中鍵關閉分頁，在分頁列上捲動滾輪可切換分頁。
+
 在 macOS 13 以上版本，sumie 會開啟 Metal 測試頁，不啟動 shell。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
 
 在 Linux 上首次啟動時，sumie 使用 ncurses 的 `tic` 將 `xterm-sumie` 安裝到 `$XDG_DATA_HOME/sumie/terminfo`（預設為 `~/.local/share/sumie/terminfo`）。內附的原始碼有變更時才重新編譯；若無法安裝，sumie 會改用 `TERM=xterm-256color` 啟動 shell。

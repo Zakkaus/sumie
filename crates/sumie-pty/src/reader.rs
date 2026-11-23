@@ -12,7 +12,8 @@ use crate::child::Cleanup;
 use crate::wake::Wake;
 
 const CHUNK_SIZE: usize = 8192;
-const OUTPUT_SLOTS: usize = 64;
+/// Maximum number of chunks waiting for the terminal owner thread.
+pub const OUTPUT_SLOTS: usize = 64;
 
 pub(super) struct Reader {
     output: Option<Receiver<Vec<u8>>>,

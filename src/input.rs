@@ -1,5 +1,7 @@
 use sumie_core::mouse::{Button, MouseEvent, MousePhase, SelectStep};
-use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect, Shortcut, Shortcuts};
+use sumie_core::{
+    KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect, Shortcut, Shortcuts, TabAction,
+};
 use sumie_wayland::Event;
 
 use crate::{Error, Result, pane::LocalPane};
@@ -13,6 +15,7 @@ pub(crate) enum Effect {
     Select(SelectStep),
     ViewportChanged,
     Search(SearchAction),
+    Tab(TabAction),
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
@@ -131,10 +134,13 @@ pub(crate) fn route(
             let shortcut = routing
                 .shortcuts
                 .match_key(physical, symbol, modifiers, action);
-            if searching {
-                return Ok(routing.search_key(physical, keysym, modifiers, utf8, action, shortcut));
-            }
             match shortcut {
+                Some(Shortcut::Tab(action)) => return Ok(Effect::Tab(action)),
+                shortcut if searching => {
+                    return Ok(
+                        routing.search_key(physical, keysym, modifiers, utf8, action, shortcut)
+                    );
+                }
                 Some(Shortcut::Copy) => return Ok(Effect::Copy(serial)),
                 Some(Shortcut::Paste) => return Ok(Effect::ReadClipboard),
                 Some(Shortcut::Search) => return Ok(Effect::Search(SearchAction::Open)),

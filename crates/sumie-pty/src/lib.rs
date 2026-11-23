@@ -22,6 +22,7 @@ use rustix::process::Pid;
 use rustix::termios::{Winsize, tcsetwinsize};
 
 use child::{Child, Cleanup, ExitWatch};
+pub use reader::OUTPUT_SLOTS;
 use reader::Reader;
 
 pub const INPUT_LIMIT: usize = 1024 * 1024;
@@ -64,6 +65,8 @@ pub struct SpawnOptions<'a> {
     /// Complete child environment, including any `TERM` and `COLORTERM` values.
     pub env: &'a BTreeMap<OsString, OsString>,
     pub size: Size,
+    /// Initial child working directory; `None` inherits the caller's directory.
+    pub cwd: Option<&'a Path>,
     /// Time between SIGHUP and SIGKILL. Must not exceed five seconds.
     pub close_grace: Duration,
 }
@@ -79,6 +82,7 @@ impl<'a> SpawnOptions<'a> {
             command,
             env,
             size,
+            cwd: None,
             close_grace: Duration::from_secs(3),
         }
     }
@@ -95,6 +99,11 @@ impl<'a> SpawnOptions<'a> {
                 arg0.push(name);
                 PtyCommand::new(shell).arg0(arg0)
             }
+        };
+        let command = if let Some(cwd) = self.cwd {
+            command.current_dir(cwd)
+        } else {
+            command
         };
         Ok(command.env_clear().envs(self.env))
     }

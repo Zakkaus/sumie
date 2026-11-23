@@ -174,6 +174,7 @@ impl Page {
     pub(super) fn draw_list(&self, show_cursor: bool) -> DrawList<'_> {
         DrawList {
             grid_size: [self.columns, ROWS],
+            chrome: None,
             cell_size: self.cell,
             origin: self.cell.map(u32::cast_signed),
             backgrounds: &self.backgrounds,

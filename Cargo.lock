@@ -1797,6 +1797,7 @@ dependencies = [
  "sumie-macos",
  "sumie-pty",
  "sumie-render",
+ "sumie-ui",
  "sumie-vt",
  "sumie-wayland",
  "tracing",
@@ -1866,6 +1867,9 @@ dependencies = [
 [[package]]
 name = "sumie-ui"
 version = "0.0.0"
+dependencies = [
+ "sumie-render",
+]
 
 [[package]]
 name = "sumie-vt"

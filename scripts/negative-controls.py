@@ -156,6 +156,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           append("#[test]\nfn test_probe() -> Result<(), &'static str> {\n"
                  '    Err("deliberate unit test failure")\n}\n'),
           "test test_probe ... FAILED")
+    probe("closing an earlier tab loses the active pane", "test", "crates/sumie-core/src/tabs.rs",
+          replace_once("self.active -= 1;", "self.active = 0;"),
+          "test tabs::tests::close_preserves_active_identity_or_selects_a_neighbor ... FAILED")
     probe("contrast above the supported range", "test", "crates/sumie-config/src/lib.rs",
           replace_once("(1.0..=21.0).contains(&ratio)", "(1.0..=22.0).contains(&ratio)"),
           "test tests::load_configuration ... FAILED")
@@ -209,6 +212,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                        "== next.minimum_contrast().to_bits()"),
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("two tabs lose their bar", "test", "crates/sumie-ui/src/tabs.rs",
+              replace_once("if count < 2 {", "if count < 3 {"),
+              "test grid_tests::grid_on_selected_backend ... FAILED")
         probe("sprite shifted off cell origin", "test", "crates/sumie-font/src/sprite.rs",
               replace_once("top: 0,", "top: 1,"),
               "test tests::linux::sprites_fill_their_grid_cells ... FAILED")

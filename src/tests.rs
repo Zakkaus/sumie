@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use sumie_core::mouse::{Button, MouseEvent, MousePhase};
-use sumie_core::{CellPosition, KeyAction, KeyModifiers, Pane, PaneCommand};
-use sumie_pty::{Command, Size};
+use sumie_core::{CellPosition, KeyAction, KeyModifiers, Pane, PaneCommand, TabAction};
+use sumie_pty::{Command, Size, SpawnOptions};
 use sumie_wayland::{Event, Modifiers};
 
 use crate::{
@@ -127,9 +127,68 @@ fn matched_shortcuts_never_reach_the_pty() {
             );
         }
     }
+    tab_shortcuts_never_reach_the_pty(&mut pane, &mut routing);
     search_modal_routes(&mut pane, &mut routing);
     pane.command(PaneCommand::Close).unwrap();
     crate::sources::reap(&mut pane.pty).unwrap();
+}
+
+fn tab_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut input::Routing) {
+    use KeyAction::{Press, Release, Repeat};
+    use input::Effect;
+    use xkeysym::key;
+
+    let plain = Modifiers::default();
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..plain
+    };
+    let ctrl_shift = Modifiers {
+        shift: true,
+        ..ctrl
+    };
+    let alt = Modifiers { alt: true, ..plain };
+    let chords = [
+        (20, key::Cyrillic_TE, ctrl_shift, TabAction::Open),
+        (17, key::W, ctrl_shift, TabAction::Close),
+        (15, key::Tab, ctrl, TabAction::Next),
+        (15, key::ISO_Left_Tab, ctrl_shift, TabAction::Previous),
+        (109, key::Page_Down, ctrl, TabAction::Next),
+        (104, key::Page_Up, ctrl, TabAction::Previous),
+        (104, key::Page_Up, ctrl_shift, TabAction::MoveLeft),
+        (109, key::Page_Down, ctrl_shift, TabAction::MoveRight),
+    ];
+    let digits = (0_u8..9).map(|index| {
+        let action = if index == 8 {
+            TabAction::Last
+        } else {
+            TabAction::Select(usize::from(index))
+        };
+        (u32::from(index + 2), u32::from(b'1' + index), alt, action)
+    });
+    for (physical, symbol, modifiers, tab_action) in chords.into_iter().chain(digits) {
+        for (action, modifiers, expected) in [
+            (Press, modifiers, Effect::Tab(tab_action)),
+            (Repeat, plain, Effect::None),
+            (Release, plain, Effect::None),
+        ] {
+            let event = key_event(physical, symbol, action, modifiers);
+            assert_eq!(input::route(pane, routing, false, event).unwrap(), expected);
+            assert!(pane.pty.input_fd().is_none(), "matched tab key: {physical}");
+        }
+    }
+
+    let press = key_event(15, key::ISO_Left_Tab, Press, ctrl_shift);
+    assert_eq!(
+        input::route(pane, routing, true, press).unwrap(),
+        Effect::Tab(TabAction::Previous)
+    );
+    let release = key_event(15, key::Tab, Release, plain);
+    assert_eq!(
+        input::route(pane, routing, false, release).unwrap(),
+        Effect::None
+    );
+    assert!(pane.pty.input_fd().is_none());
 }
 
 fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
@@ -144,7 +203,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
                 shift: newer,
                 ..Default::default()
             };
-            let event = search_key(28, symbol, Press, modifiers);
+            let event = key_event(28, symbol, Press, modifiers);
             let effect = input::route(pane, routing, true, event).unwrap();
             assert_eq!(effect, Effect::Search(SearchAction::Navigate { newer }));
         }
@@ -169,9 +228,9 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
         text: "paste".into(),
         generation,
     };
-    let escape = |action| search_key(1, key::Escape, action, plain);
-    let typed = |action| search_key(30, key::a, action, plain);
-    let paste_key = |action, modifiers| search_key(47, key::v, action, modifiers);
+    let escape = |action| key_event(1, key::Escape, action, plain);
+    let typed = |action| key_event(30, key::a, action, plain);
+    let paste_key = |action, modifiers| key_event(47, key::v, action, modifiers);
     let insert = |text: &str| Effect::Search(SearchAction::Insert(text.into()));
     let mut searching = true;
     for (event, expected) in [
@@ -192,7 +251,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
         (commit(1), Effect::None),
         (paste(1), Effect::None),
         (
-            search_key(33, key::F, Press, ctrl_shift),
+            key_event(33, key::F, Press, ctrl_shift),
             Effect::Search(SearchAction::Open),
         ),
         (preedit(1), Effect::None),
@@ -210,7 +269,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
     }
 }
 
-fn search_key(physical: u32, keysym: u32, action: KeyAction, modifiers: Modifiers) -> Event {
+fn key_event(physical: u32, keysym: u32, action: KeyAction, modifiers: Modifiers) -> Event {
     let pressed = !matches!(action, KeyAction::Release);
     Event::Key {
         serial: 1,
@@ -320,9 +379,7 @@ fn ready_pane(script: &str, env: &std::collections::BTreeMap<OsString, OsString>
         height_px: 240,
     };
     let mut pane = LocalPane::spawn(
-        command,
-        env,
-        size,
+        SpawnOptions::new(command, env, size),
         [12, 24],
         &sumie_config::Config::default(),
     )

@@ -12,8 +12,10 @@
 
 pub mod mouse;
 mod selection;
+mod tabs;
 
 pub use selection::{CellPosition, CellRange, Selection, SelectionPoint};
+pub use tabs::{TabAction, WindowTabs};
 
 /// Key action before encoding against the active terminal modes.
 #[derive(Clone, Copy)]
@@ -47,6 +49,7 @@ pub enum Shortcut {
     Copy,
     Paste,
     Search,
+    Tab(TabAction),
     Consume,
 }
 
@@ -67,9 +70,6 @@ impl Shortcuts {
         modifiers: KeyModifiers,
         action: KeyAction,
     ) -> Option<Shortcut> {
-        const KEY_C: u32 = 46;
-        const KEY_F: u32 = 33;
-        const KEY_V: u32 = 47;
         if let Some(index) = self.consumed.iter().position(|&held| held == evdev) {
             if !matches!(action, KeyAction::Repeat) {
                 self.consumed.swap_remove(index);
@@ -78,28 +78,68 @@ impl Shortcuts {
                 return Some(Shortcut::Consume);
             }
         }
-        if matches!(action, KeyAction::Press)
-            && modifiers.control
-            && modifiers.shift
-            && !modifiers.alt
-            && !modifiers.super_key
-        {
+        if !matches!(action, KeyAction::Press) || modifiers.super_key {
+            return None;
+        }
+        let shortcut = match (modifiers.control, modifiers.alt, modifiers.shift) {
+            (true, false, shift) => control_shortcut(evdev, symbol, shift),
+            (false, true, false) => alt_tab_shortcut(evdev, symbol).map(Shortcut::Tab),
+            _ => None,
+        }?;
+        self.consumed.push(evdev);
+        Some(shortcut)
+    }
+}
+
+fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Shortcut> {
+    const KEY_TAB: u32 = 15;
+    const KEY_W: u32 = 17;
+    const KEY_T: u32 = 20;
+    const KEY_F: u32 = 33;
+    const KEY_C: u32 = 46;
+    const KEY_V: u32 = 47;
+    const KEY_PAGE_UP: u32 = 104;
+    const KEY_PAGE_DOWN: u32 = 109;
+
+    let action = match (evdev, shift) {
+        (KEY_TAB | KEY_PAGE_DOWN, false) => TabAction::Next,
+        (KEY_TAB, true) | (KEY_PAGE_UP, false) => TabAction::Previous,
+        (KEY_PAGE_UP, true) => TabAction::MoveLeft,
+        (KEY_PAGE_DOWN, true) => TabAction::MoveRight,
+        (_, false) => return None,
+        (_, true) => {
             let key = match evdev {
                 KEY_C => Some('c'),
                 KEY_F => Some('f'),
                 KEY_V => Some('v'),
+                KEY_T => Some('t'),
+                KEY_W => Some('w'),
                 _ => symbol,
             };
-            let shortcut = match key {
-                Some('c' | 'C') => Shortcut::Copy,
-                Some('f' | 'F') => Shortcut::Search,
-                Some('v' | 'V') => Shortcut::Paste,
+            match key?.to_ascii_lowercase() {
+                'c' => return Some(Shortcut::Copy),
+                'f' => return Some(Shortcut::Search),
+                'v' => return Some(Shortcut::Paste),
+                't' => TabAction::Open,
+                'w' => TabAction::Close,
                 _ => return None,
-            };
-            self.consumed.push(evdev);
-            return Some(shortcut);
+            }
         }
-        None
+    };
+    Some(Shortcut::Tab(action))
+}
+
+fn alt_tab_shortcut(evdev: u32, symbol: Option<char>) -> Option<TabAction> {
+    const KEY_1: u32 = 2;
+    const KEY_9: u32 = 10;
+    let digit = match evdev {
+        KEY_1..=KEY_9 => evdev - KEY_1 + 1,
+        _ => symbol?.to_digit(10)?,
+    };
+    match digit {
+        1..=8 => Some(TabAction::Select((digit - 1) as usize)),
+        9 => Some(TabAction::Last),
+        _ => None,
     }
 }
 

@@ -1,13 +1,12 @@
 mod attributes;
 
 use std::{
-    borrow::Cow,
     collections::HashSet,
     mem::{Discriminant, discriminant},
 };
 
 use sumie_core::{CellPosition, CellRange};
-use sumie_font::{FontError, FontOptions, FontStyle, FontSystem, Hinting};
+use sumie_font::{FontError, FontStyle, FontSystem};
 use sumie_pty::Size;
 use sumie_render::{
     AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, PixelRect, Rgba, wgpu,
@@ -20,6 +19,10 @@ use attributes::{Decorations, Ink, glyph_quad};
 
 mod overlays;
 use overlays::{Glyphs, SearchBox};
+mod settings;
+mod tabs;
+pub(crate) use settings::FontSettings;
+use tabs::Tabs;
 
 pub(crate) struct View {
     font: FontSystem,
@@ -27,6 +30,7 @@ pub(crate) struct View {
     font_errors: FontErrors,
     logical: [u32; 2],
     scale: u32,
+    tabs: Tabs,
     pub(crate) device: [u32; 2],
     pub(crate) cell: [u32; 2],
     pub(crate) preedit: String,
@@ -80,14 +84,17 @@ impl View {
         font_settings: FontSettings,
         colors: &sumie_config::Colors,
     ) -> Result<Self> {
+        u16::try_from(device[0])?;
+        u16::try_from(device[1])?;
         let font = font_settings.at_scale(scale)?;
         let cell = [font.metrics().width, font.metrics().height];
-        let grid = grid_size(device, cell)?;
+        let grid = grid_size(device, cell);
         Ok(Self {
             font,
             font_settings,
             font_errors: FontErrors::default(),
             scale,
+            tabs: Tabs::default(),
             logical,
             device,
             cell,
@@ -109,14 +116,20 @@ impl View {
     }
 
     pub(crate) fn resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<()> {
+        u16::try_from(device[0])?;
+        u16::try_from(device[1])?;
         if scale != self.scale {
-            self.font = self.font_settings.at_scale(scale)?;
+            let font = self.font_settings.at_scale(scale)?;
+            self.tabs.rescale(scale)?;
+            self.font = font;
             self.scale = scale;
             self.cell = [self.font.metrics().width, self.font.metrics().height];
         }
         self.logical = logical;
         self.device = device;
-        self.grid = grid_size(device, self.cell)?;
+        self.resize_strip();
+        self.grid = grid_size(self.terminal_device(), self.cell);
+        self.reset_hits();
         self.search_box = None;
         Ok(())
     }
@@ -129,7 +142,8 @@ impl View {
         }
         let font = settings.at_scale(self.scale)?;
         let cell = [font.metrics().width, font.metrics().height];
-        self.grid = grid_size(self.device, cell)?;
+        self.grid = grid_size(self.terminal_device(), cell);
+        self.reset_hits();
         self.search_box = None;
         self.cell = cell;
         self.font = font;
@@ -147,7 +161,7 @@ impl View {
             .grid
             .map(|value| u16::try_from(value).expect("validated grid"));
         let [width_px, height_px] = self
-            .device
+            .terminal_device()
             .map(|value| u16::try_from(value).expect("validated device size"));
         Size {
             cols,
@@ -159,8 +173,9 @@ impl View {
 
     pub(crate) fn pointer_position(&self, (x, y): (f64, f64)) -> (CellPosition, [f32; 2]) {
         // Viewporter stretches the rounded buffer to the exact logical size.
-        let pixel = std::array::from_fn(|axis| {
-            let pos = [x, y][axis] * f64::from(self.device[axis]) / f64::from(self.logical[axis]);
+        let pos = self.window_pixel((x, y));
+        let relative = [pos[0], pos[1] - f64::from(self.bar_height())];
+        let pixel = relative.map(|pos| {
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "native mouse coordinates are f32"
@@ -194,11 +209,16 @@ impl View {
     ) {
         self.backgrounds.clear();
         self.glyphs.quads.clear();
+        self.glyphs.offset = [0, self.bar_height().cast_signed()];
         self.search_box = self
             .search_bar
             .as_ref()
             .map(|_| SearchBox::place(self.grid, banner.is_some(), &self.search_highlights));
-        self.glyphs.cover = self.search_box.map(|b| b.bounds(self.cell));
+        self.glyphs.cover = self.search_box.map(|b| {
+            let mut rect = b.bounds(self.cell);
+            rect.origin[1] += self.glyphs.offset[1];
+            overlays::Mask::Outside(rect)
+        });
         let overlay = self
             .search_box
             .is_none()
@@ -230,7 +250,7 @@ impl View {
         } else {
             self.set_cursor(snapshot, overlay, banner.is_some(), focused);
         }
-        self.collect_atlas_dirty();
+        collect_dirty(&self.font, &mut self.atlas_dirty);
     }
 
     fn draw_terminal(
@@ -293,20 +313,6 @@ impl View {
                 self.finish_run([start, row], ink);
             }
         }
-    }
-
-    fn collect_atlas_dirty(&mut self) {
-        self.atlas_dirty.clear();
-        self.atlas_dirty.extend(
-            self.font
-                .atlas()
-                .dirty_regions()
-                .iter()
-                .map(|rect| AtlasRect {
-                    origin: [rect.x, rect.y],
-                    size: [rect.width, rect.height],
-                }),
-        );
     }
 
     fn set_cursor(
@@ -385,22 +391,16 @@ impl View {
         DrawList {
             grid_size: self.grid,
             cell_size: self.cell,
-            origin: [0, 0],
+            origin: [0, self.bar_height().cast_signed()],
             backgrounds: &self.backgrounds,
             glyphs: &self.glyphs.quads,
             cursor: self.cursor.filter(|_| !cursor_hidden),
+            chrome: self.tabs.layer(),
         }
     }
 
     pub(crate) fn atlas(&self) -> AtlasUpload<'_> {
-        let atlas = self.font.atlas();
-        let [width, height] = atlas.dimensions();
-        AtlasUpload {
-            width,
-            height,
-            bytes: atlas.pixels(),
-            dirty: &self.atlas_dirty,
-        }
+        upload(&self.font, &self.atlas_dirty)
     }
 
     pub(crate) fn atlas_uploaded(&mut self) {
@@ -410,7 +410,7 @@ impl View {
     fn origin(&self, [column, row]: [u32; 2]) -> [i32; 2] {
         [
             (column * self.cell[0]).cast_signed(),
-            (row * self.cell[1]).cast_signed(),
+            (self.bar_height() + row * self.cell[1]).cast_signed(),
         ]
     }
 
@@ -421,16 +421,25 @@ impl View {
             let cursor = cursor?;
             self.origin([u32::from(cursor.column), u32::from(cursor.row)])
         };
-        let scale = self.scale.cast_signed();
-        let left = x * 120 / scale;
-        let top = y * 120 / scale;
-        let right = ((x + self.cell[0].cast_signed()) * 120 + scale - 1) / scale;
-        let bottom = ((y + self.cell[1].cast_signed()) * 120 + scale - 1) / scale;
+        // Match the actual viewporter stretch, including buffers rounded at fractional scale.
+        let bounds = |axis: usize, start: i32| -> Option<(i32, i32)> {
+            let device = i64::from(self.device[axis]);
+            if device == 0 {
+                return None;
+            }
+            let logical = i64::from(self.logical[axis]);
+            let start = i64::from(start);
+            let left = start * logical / device;
+            let right = ((start + i64::from(self.cell[axis])) * logical + device - 1) / device;
+            Some((left.try_into().ok()?, (right - left).try_into().ok()?))
+        };
+        let (x, width) = bounds(0, x)?;
+        let (y, height) = bounds(1, y)?;
         Some(CursorRect {
-            x: left,
-            y: top,
-            width: right - left,
-            height: bottom - top,
+            x,
+            y,
+            width,
+            height,
         })
     }
 }
@@ -484,8 +493,8 @@ impl Line {
             }
         }
         let metrics = font.metrics();
-        let x = (col * metrics.width).cast_signed();
-        let y = (row * metrics.height).cast_signed();
+        let x = glyphs.offset[0] + (col * metrics.width).cast_signed();
+        let y = glyphs.offset[1] + (row * metrics.height).cast_signed();
         for glyph in &self.shaped.glyphs {
             let image = match font.rasterize(glyph.key) {
                 Ok(image) => image,
@@ -506,71 +515,27 @@ impl Line {
     }
 }
 
-fn grid_size(device: [u32; 2], cell: [u32; 2]) -> Result<[u32; 2]> {
-    let [width, height] = device;
-    u16::try_from(width)?;
-    u16::try_from(height)?;
-    Ok([(width / cell[0]).max(1), (height / cell[1]).max(1)])
+fn collect_dirty(font: &FontSystem, out: &mut Vec<AtlasRect>) {
+    out.clear();
+    out.extend(font.atlas().dirty_regions().iter().map(|rect| AtlasRect {
+        origin: [rect.x, rect.y],
+        size: [rect.width, rect.height],
+    }));
 }
 
-pub(crate) struct FontSettings {
-    family: Cow<'static, str>,
-    px: f32,
-    options: FontOptions,
+fn upload<'a>(font: &'a FontSystem, dirty: &'a [AtlasRect]) -> AtlasUpload<'a> {
+    let atlas = font.atlas();
+    let [width, height] = atlas.dimensions();
+    AtlasUpload {
+        width,
+        height,
+        bytes: atlas.pixels(),
+        dirty,
+    }
 }
 
-impl FontSettings {
-    pub(crate) fn from_config(config: sumie_config::Font) -> Result<Self> {
-        let px = std::env::var("SUMIE_FONT_PX")
-            .map_or_else(|_| Ok(config.logical_px()), |px| px.parse::<f32>())?;
-        let hinting = match std::env::var("SUMIE_FONT_HINTING").as_deref() {
-            Err(std::env::VarError::NotPresent) => match config.hinting() {
-                sumie_config::Hinting::Off => Hinting::Off,
-                sumie_config::Hinting::Light => Hinting::Light,
-                sumie_config::Hinting::Normal => Hinting::Normal,
-            },
-            Ok("off") => Hinting::Off,
-            Ok("light") => Hinting::Light,
-            Ok("normal") => Hinting::Normal,
-            _ => return Err("SUMIE_FONT_HINTING must be off, light, or normal".into()),
-        };
-        let weight = match std::env::var("SUMIE_FONT_WEIGHT") {
-            Err(std::env::VarError::NotPresent) => config.weight(),
-            value => Some(value?.parse().map_err(|_| FontError::InvalidWeight)?),
-        };
-        let family = std::env::var("SUMIE_FONT").map_or_else(|_| config.into_family(), Cow::Owned);
-        Ok(Self {
-            family,
-            px,
-            options: FontOptions { hinting, weight },
-        })
-    }
-
-    fn same_as(&self, other: &Self) -> bool {
-        self.family == other.family
-            && self.px.to_bits() == other.px.to_bits()
-            && self.options.weight == other.options.weight
-            && discriminant(&self.options.hinting) == discriminant(&other.options.hinting)
-    }
-
-    fn at_scale(&self, scale: u32) -> Result<FontSystem> {
-        let scale_units = u16::try_from(scale)?;
-        let font = FontSystem::new(
-            &self.family,
-            self.px,
-            f32::from(scale_units) / 120.0,
-            self.options,
-        )?;
-        let metrics = font.metrics();
-        tracing::info!(
-            family = font.family(font.primary_face()),
-            scale_units,
-            cell_width = metrics.width,
-            cell_height = metrics.height,
-            "terminal font"
-        );
-        Ok(font)
-    }
+fn grid_size([width, height]: [u32; 2], cell: [u32; 2]) -> [u32; 2] {
+    [(width / cell[0]).max(1), (height / cell[1]).max(1)]
 }
 
 fn rgba([r, g, b]: Rgb) -> Rgba {

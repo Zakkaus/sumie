@@ -21,6 +21,7 @@ pub(super) struct PresentedSearch {
     cell: [u32; 2],
     logical: [u32; 2],
     device: [u32; 2],
+    grid_top: u32,
 }
 
 impl SearchBox {
@@ -119,38 +120,44 @@ impl SearchBox {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Mask {
+    Inside(PixelRect),
+    Outside(PixelRect),
+}
+
 /// Clip terminal ink, including decoration and neighboring glyph overhangs, before
 /// drawing the box. Splitting the mask preserves the visible part of a wide glyph.
 #[derive(Default)]
 pub(super) struct Glyphs {
     pub(super) quads: Vec<GlyphQuad>,
-    pub(super) cover: Option<PixelRect>,
+    pub(super) cover: Option<Mask>,
+    pub(super) offset: [i32; 2],
 }
 
 impl Glyphs {
     pub(super) fn push(&mut self, glyph: GlyphQuad) {
-        let Some(cover) = self.cover else {
+        let Some(mask) = self.cover else {
             self.quads.push(glyph);
             return;
         };
         let [x, y] = glyph.dest.origin;
         let right = x + glyph.dest.size[0].cast_signed();
         let bottom = y + glyph.dest.size[1].cast_signed();
+        let (Mask::Inside(cover) | Mask::Outside(cover)) = mask;
         let [cx, cy] = cover.origin;
         let left = x.max(cx);
         let top = y.max(cy);
         let r = right.min(cx + cover.size[0].cast_signed());
         let b = bottom.min(cy + cover.size[1].cast_signed());
+        let inside = matches!(mask, Mask::Inside(_));
         if left >= r || top >= b {
-            self.quads.push(glyph);
+            if !inside {
+                self.quads.push(glyph);
+            }
             return;
         }
-        for (x0, y0, x1, y1) in [
-            (x, y, right, top),
-            (x, b, right, bottom),
-            (x, top, left, b),
-            (r, top, right, b),
-        ] {
+        let mut piece = |(x0, y0, x1, y1): (i32, i32, i32, i32)| {
             if x0 < x1 && y0 < y1 {
                 let mut piece = glyph;
                 piece.dest = PixelRect {
@@ -162,25 +169,37 @@ impl Glyphs {
                 piece.atlas.size = piece.dest.size;
                 self.quads.push(piece);
             }
+        };
+        if inside {
+            piece((left, top, r, b));
+        } else {
+            piece((x, y, right, top));
+            piece((x, b, right, bottom));
+            piece((x, top, left, b));
+            piece((r, top, right, b));
         }
     }
 }
 
 impl View {
     pub(crate) fn frame_presented(&mut self) {
+        self.tabs.presented();
         self.presented_search = self.search_box.map(|panel| PresentedSearch {
             panel,
             cell: self.cell,
             logical: self.logical,
             device: self.device,
+            grid_top: self.bar_height(),
         });
     }
 
     pub(crate) fn search_hit(&self, (x, y): (f64, f64)) -> Option<SearchTarget> {
         let frame = self.presented_search.as_ref()?;
-        let pixel: [f64; 2] = std::array::from_fn(|i| {
-            [x, y][i] * f64::from(frame.device[i]) / f64::from(frame.logical[i])
-        });
+        let pixel = [
+            x * f64::from(frame.device[0]) / f64::from(frame.logical[0]),
+            y * f64::from(frame.device[1]) / f64::from(frame.logical[1])
+                - f64::from(frame.grid_top),
+        ];
         let contains = |rect: PixelRect| {
             (0..2).all(|i| {
                 (0.0..f64::from(rect.size[i])).contains(&(pixel[i] - f64::from(rect.origin[i])))
@@ -357,7 +376,7 @@ impl Line {
         }
     }
 
-    fn ellipsize(&mut self, text: &str, columns: u32) -> u32 {
+    pub(super) fn ellipsize(&mut self, text: &str, columns: u32) -> u32 {
         self.clear();
         if columns == 0 {
             return 0;

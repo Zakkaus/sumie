@@ -6,6 +6,10 @@ sumie is a GPU terminal emulator written in Rust with libghostty-vt and wgpu. On
 
 Press Ctrl+Shift+F to search the screen and scrollback. Search treats wrapped rows as one line and ignores case unless the query contains an uppercase letter. Matches are numbered from oldest to newest. Enter or F3 selects an older match; hold Shift to select a newer one. Escape returns to the position where you opened search, or to the bottom if you were following output.
 
+On Wayland, Ctrl+Shift+T opens a tab in the active shell's last reported local directory (OSC 7), or in `$HOME` if none is available. New windows start in `$HOME`. Ctrl+Shift+W closes the active tab. A tab also closes when its child exits; closing the last tab closes the window.
+
+Ctrl+Tab or Ctrl+PageDown selects the next tab; Ctrl+Shift+Tab or Ctrl+PageUp selects the previous one. Alt+1 through Alt+8 select tabs by position, and Alt+9 selects the last tab. Ctrl+Shift+PageUp and Ctrl+Shift+PageDown move the active tab left and right. The bar appears when a second tab opens. Click a tab to select it, middle-click to close it, or scroll over the bar to switch tabs.
+
 On macOS 13 or later, sumie opens a Metal test page, not a shell. Run `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` to save the third presented frame and close the window.
 
 On first launch on Linux, sumie uses ncurses `tic` to install `xterm-sumie` under `$XDG_DATA_HOME/sumie/terminfo` (default: `~/.local/share/sumie/terminfo`). It reuses the entry until the bundled source changes. If it cannot install the entry, it starts the shell with `TERM=xterm-256color` instead.

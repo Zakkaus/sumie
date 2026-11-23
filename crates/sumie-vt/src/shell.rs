@@ -24,29 +24,29 @@ impl Terminal {
         Ok(prompt)
     }
 
-    /// Copy the last OSC 7 URI without interpreting its host, encoding or scheme.
-    /// An empty result means no working directory was reported or it was cleared.
+    /// Inspect the last OSC 7 URI before the next terminal mutation. An empty
+    /// slice means the directory was never reported or was cleared.
     ///
     /// # Errors
     /// Returns an error if Ghostty cannot read the working directory.
-    pub fn pwd(&self) -> Result<Vec<u8>, Error> {
+    pub fn with_pwd<T>(&self, inspect: impl FnOnce(&[u8]) -> T) -> Result<T, Error> {
         let mut pwd = ffi::Str {
             ptr: null(),
             len: 0,
         };
         // SAFETY: PWD writes a GhosttyString valid until the next mutating call.
-        // Copy its bytes before releasing the borrow; an empty string may be null.
+        // The closure cannot retain the native slice; an empty string may be null.
         unsafe {
             check(ffi::ghostty_terminal_get(
                 self.raw,
                 DATA_PWD,
                 from_mut(&mut pwd).cast(),
             ))?;
-            Ok(if pwd.len == 0 {
-                Vec::new()
+            Ok(inspect(if pwd.len == 0 {
+                &[]
             } else {
-                std::slice::from_raw_parts(pwd.ptr, pwd.len).to_vec()
-            })
+                std::slice::from_raw_parts(pwd.ptr, pwd.len)
+            }))
         }
     }
 }

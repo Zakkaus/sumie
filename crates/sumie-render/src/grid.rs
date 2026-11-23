@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-use crate::AtlasRect;
+use crate::{AtlasRect, AtlasUpload};
 
 /// Straight (not premultiplied) sRGB RGBA8; alpha is linear.
 pub type Rgba = [u8; 4];
@@ -79,6 +79,28 @@ impl Cursor {
     }
 }
 
+/// A solid device-pixel rectangle outside the terminal grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fill {
+    pub rect: PixelRect,
+    pub color: Rgba,
+}
+
+/// Chrome is composited last, with its own font size and atlas in the same render pass.
+pub struct ChromeLayer<'a> {
+    pub fills: &'a [Fill],
+    /// Cell ownership does not apply to chrome; all masks use `text_background` for contrast.
+    pub glyphs: &'a [GlyphQuad],
+    pub text_background: Rgba,
+    pub atlas: AtlasUpload<'a>,
+}
+
+impl ChromeLayer<'_> {
+    pub(crate) fn instance_count(&self) -> u32 {
+        u32::try_from(self.fills.len() + self.glyphs.len()).expect("too many chrome instances")
+    }
+}
+
 /// One complete frame. All positions and sizes are in device pixels except `grid_size`.
 pub struct DrawList<'a> {
     /// Number of columns and rows.
@@ -89,6 +111,7 @@ pub struct DrawList<'a> {
     pub backgrounds: &'a [Rgba],
     pub glyphs: &'a [GlyphQuad],
     pub cursor: Option<Cursor>,
+    pub chrome: Option<ChromeLayer<'a>>,
 }
 
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -137,7 +160,7 @@ impl Instance {
 }
 
 impl DrawList<'_> {
-    pub(crate) fn instance_count(&self) -> u32 {
+    pub(crate) fn grid_instances(&self) -> u32 {
         let [columns, rows] = self.grid_size;
         assert_eq!(self.backgrounds.len(), columns as usize * rows as usize);
         u32::try_from(
@@ -149,12 +172,24 @@ impl DrawList<'_> {
     }
 
     pub(crate) fn write_instances(&self, bytes: wgpu::WriteOnly<'_, [u8]>) {
-        let columns = self.grid_size[0] as usize;
         let mut out = bytes
             .into_chunks::<{ size_of::<Instance>() }>()
             .0
             .into_iter();
         let mut write = |instance| out.next().unwrap().write(bytemuck::cast(instance));
+        self.write_grid(&mut write);
+        if let Some(layer) = &self.chrome {
+            for fill in layer.fills {
+                write(Instance::solid(fill.rect, fill.color));
+            }
+            for glyph in layer.glyphs {
+                write(Instance::glyph(glyph, layer.text_background));
+            }
+        }
+    }
+
+    fn write_grid(&self, mut write: impl FnMut(Instance)) {
+        let columns = self.grid_size[0] as usize;
         for (row, backgrounds) in self.backgrounds.chunks(columns.max(1)).enumerate() {
             for (col, &color) in backgrounds.iter().enumerate() {
                 let offset = [

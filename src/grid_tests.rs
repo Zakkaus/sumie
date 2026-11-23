@@ -9,6 +9,8 @@ use sumie_render::{
 
 #[cfg(target_os = "linux")]
 mod attributes;
+#[cfg(target_os = "linux")]
+mod tabs;
 
 #[cfg(target_os = "linux")]
 #[test]
@@ -111,6 +113,8 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
     }
     #[cfg(target_os = "linux")]
     attributes::assert_decorations(&mut renderer, &device, &queue);
+    #[cfg(target_os = "linux")]
+    tabs::assert_tab_bar(&mut renderer, &device, &queue);
     assert_cursor_shapes(&mut renderer, &device, &queue, &target);
 }
 
@@ -161,6 +165,7 @@ const fn glyph(col: u32, x: i32, atlas: AtlasRect, color: Rgba) -> GlyphQuad {
 
 const GRID: DrawList<'static> = DrawList {
     grid_size: [4, 2],
+    chrome: None,
     origin: [2, 1],
     cell_size: CELL,
     backgrounds: &[
@@ -250,6 +255,7 @@ fn assert_cursor_shapes(
         renderer.draw(
             &DrawList {
                 grid_size: [1, 1],
+                chrome: None,
                 cell_size: SIZE,
                 origin: [2, 1],
                 backgrounds: &[BACKGROUND],

@@ -62,6 +62,7 @@ sumie-core = { path = "crates/sumie-core" }
 sumie-font = { path = "crates/sumie-font" }
 sumie-pty = { path = "crates/sumie-pty" }
 sumie-render = { path = "crates/sumie-render" }
+sumie-ui = { path = "crates/sumie-ui" }
 sumie-vt = { path = "crates/sumie-vt" }
 tracing.workspace = true
 tracing-subscriber.workspace = true

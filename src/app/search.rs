@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use sumie_vt::{GridAnchor, Search, SearchMatch, Terminal};
 
-use super::{Session, highlights::visible_spans};
+use super::{Tab, View, highlights::visible_spans};
 use crate::{Result, input::SearchAction};
 
 /// The last immutable row before a write. Its new coordinate measures how many rows Ghostty
@@ -180,23 +180,23 @@ impl Bar {
     }
 }
 
-impl Session {
+impl Tab {
     pub(super) fn search_pending(&self) -> bool {
         self.search.as_ref().is_some_and(|bar| !bar.complete)
     }
 
-    pub(super) fn search_action(&mut self, action: SearchAction) -> Result<()> {
+    pub(super) fn search_action(&mut self, action: SearchAction, view: &mut View) -> Result<()> {
         match action {
             SearchAction::Open => {
                 self.search = Some(Bar::open(&self.pane.terminal)?);
-                self.view.preedit.clear();
-                self.view.search_bar = Some(String::new());
+                view.preedit.clear();
+                view.search_bar = Some(String::new());
             }
             SearchAction::Close => {
                 let bar = self.search.take().expect("search bar is open");
-                self.view.search_bar = None;
-                self.view.search_highlights.clear();
-                self.view.preedit.clear();
+                view.search_bar = None;
+                view.search_highlights.clear();
+                view.preedit.clear();
                 self.snapshot_dirty = true;
                 self.clear_selection();
                 let vt = &mut self.pane.terminal;
@@ -252,12 +252,12 @@ impl Session {
         Ok(())
     }
 
-    pub(super) fn prepare_search_view(&mut self) -> Result<()> {
+    pub(super) fn prepare_search_view(&self, view: &mut View) -> Result<()> {
         let Some(bar) = &self.search else {
             return Ok(());
         };
-        let size = self.view.size();
-        let label = self.view.search_bar.as_mut().expect("search bar is open");
+        let size = view.size();
+        let label = view.search_bar.as_mut().expect("search bar is open");
         let matches = bar.matches();
         let current = bar.position()?.and_then(|pos| {
             let i = bar.selected_index(pos);
@@ -275,7 +275,7 @@ impl Session {
             label.push('…');
         }
         visible_spans(
-            &mut self.view.search_highlights,
+            &mut view.search_highlights,
             matches,
             current.map(|i| matches[i]),
             self.pane.terminal.viewport_top()?,

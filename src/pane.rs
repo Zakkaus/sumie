@@ -25,7 +25,12 @@ pub(crate) struct LocalPane {
 }
 
 impl LocalPane {
-    pub(crate) fn login(size: Size, cell: [u32; 2], config: &sumie_config::Config) -> Result<Self> {
+    pub(crate) fn login(
+        size: Size,
+        cell: [u32; 2],
+        config: &sumie_config::Config,
+        cwd: &std::path::Path,
+    ) -> Result<Self> {
         let mut env = request_environment();
         let args = if config.shell.integration() {
             shell_integration::inject(&mut env)
@@ -38,18 +43,19 @@ impl LocalPane {
                 program: &env[std::ffi::OsStr::new("SHELL")],
                 args,
             });
-        Self::spawn(command, &env, size, cell, config)
+        let mut options = SpawnOptions::new(command, &env, size);
+        options.cwd = Some(cwd);
+        Self::spawn(options, cell, config)
     }
 
     pub(crate) fn spawn(
-        command: Command<'_>,
-        env: &BTreeMap<OsString, OsString>,
-        size: Size,
+        options: SpawnOptions<'_>,
         cell: [u32; 2],
         config: &sumie_config::Config,
     ) -> Result<Self> {
+        let size = options.size;
         let mut terminal = Terminal::new(size.cols, size.rows)?;
-        let term = env.get(std::ffi::OsStr::new("TERM"));
+        let term = options.env.get(std::ffi::OsStr::new("TERM"));
         terminal.set_identity(XTVERSION, term.map_or(&[], |term| term.as_encoded_bytes()))?;
         terminal.set_scrollback_bytes(config.scrollback_limit())?;
         set_colors(&mut terminal, &config.colors)?;
@@ -60,7 +66,7 @@ impl LocalPane {
             terminal,
             encoder: KeyEncoder::new()?,
             mouse,
-            pty: Pty::spawn(SpawnOptions::new(command, env, size))?,
+            pty: Pty::spawn(options)?,
         })
     }
 
@@ -68,7 +74,10 @@ impl LocalPane {
     pub(crate) fn drain_output(&mut self) -> Result<(bool, bool)> {
         self.pty.clear_output_wake()?;
         let mut dirty = false;
-        loop {
+        let mut eof = false;
+        // Any chunks beyond the queue's initial capacity were sent after clear_output_wake
+        // and come with a fresh wake. Yield to other panes even if this writer never stops.
+        for _ in 0..=sumie_pty::OUTPUT_SLOTS {
             match self.pty.try_recv_output() {
                 Ok(chunk) => {
                     if !chunk.is_empty() {
@@ -77,14 +86,16 @@ impl LocalPane {
                     }
                 }
                 Err(end) => {
-                    if dirty {
-                        self.mouse.sync(&self.terminal)?;
-                    }
-                    self.drain_replies();
-                    return Ok((dirty, end == TryRecvError::Disconnected));
+                    eof = end == TryRecvError::Disconnected;
+                    break;
                 }
             }
         }
+        if dirty {
+            self.mouse.sync(&self.terminal)?;
+        }
+        self.drain_replies();
+        Ok((dirty, eof))
     }
 
     fn drain_replies(&mut self) {
