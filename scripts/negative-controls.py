@@ -156,9 +156,12 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")
     if sys.platform.startswith("linux"):
         probe("preedit written to PTY", "test", "src/input.rs",
-              replace_once("Event::ImePreedit { text, .. } => return Ok(Some(text)),",
+              replace_once("Event::ImePreedit { text, .. } => return Ok(Effect::Preedit(text)),",
                            "Event::ImePreedit { ref text, .. } => PaneCommand::Text(text.as_bytes()),"),
               "test tests::local_pane_executes_committed_input_without_preedit ... FAILED")
+        probe("paste queued without framing", "test", "src/pane.rs",
+              replace_once("self.terminal.encode_paste(text)?", "text.into_bytes()"),
+              "test tests::bracketed_paste_fits_or_leaves_the_queue_unchanged ... FAILED")
 
 
 def interrupted(_signum, _frame):

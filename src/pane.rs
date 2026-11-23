@@ -117,6 +117,9 @@ impl Pane for LocalPane {
                 }
             }
             PaneCommand::Text(bytes) => self.pty.enqueue_input(bytes)?,
+            PaneCommand::Paste(text) => {
+                self.pty.enqueue_input(&self.terminal.encode_paste(text)?)?;
+            }
             PaneCommand::Resize {
                 cols,
                 rows,

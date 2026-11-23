@@ -1135,6 +1135,7 @@ name = "sumie-wayland"
 version = "0.0.0"
 dependencies = [
  "raw-window-handle",
+ "rustix",
  "smithay-client-toolkit",
  "thiserror",
  "tracing",

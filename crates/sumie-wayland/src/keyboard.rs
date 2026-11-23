@@ -1,4 +1,5 @@
 use smithay_client_toolkit::{
+    data_device_manager::data_device::DataDevice,
     reexports::client::{
         Connection, Proxy, QueueHandle,
         protocol::{wl_keyboard::WlKeyboard, wl_seat::WlSeat, wl_surface::WlSurface},
@@ -17,6 +18,7 @@ pub(crate) struct Keyboard {
     focused: bool,
     modifiers: Modifiers,
     pub(crate) ime: Option<TextInput>,
+    pub(crate) data_device: Option<DataDevice>,
 }
 
 impl Drop for Keyboard {
@@ -39,6 +41,10 @@ impl State {
         match result {
             Ok(proxy) => {
                 self.keyboard = Some(Keyboard {
+                    data_device: self
+                        .data_device_manager
+                        .as_ref()
+                        .map(|manager| manager.get_data_device(qh, &seat)),
                     ime: self
                         .text_input_manager
                         .as_ref()

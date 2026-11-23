@@ -2,6 +2,7 @@
 
 //! Linux Wayland adapter. The caller owns the event loop, input policy, and renderer.
 
+mod clipboard;
 mod ime;
 mod keyboard;
 mod platform;
@@ -28,6 +29,7 @@ pub enum Event {
     },
     FrameReady,
     CloseRequested,
+    ClipboardText(String),
     Key {
         /// Wayland/evdev code, without the XKB offset of 8.
         physical: u32,

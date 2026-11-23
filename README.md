@@ -2,7 +2,7 @@
 
 [繁體中文](README.zh-TW.md)
 
-sumie is a GPU terminal emulator for Linux Wayland and macOS, written in Rust and designed around libghostty-vt and wgpu. Status: pre-alpha, P0. The workspace builds, but does not yet open a window or run a terminal session.
+sumie is a GPU terminal emulator written in Rust with libghostty-vt and wgpu. The Linux Wayland build opens a terminal session. Press Ctrl+Shift+V to paste text from the clipboard. macOS support is planned.
 
 ## Build and checks
 

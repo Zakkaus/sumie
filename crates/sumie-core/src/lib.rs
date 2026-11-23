@@ -32,6 +32,49 @@ pub struct KeyModifiers {
     pub num_lock: bool,
 }
 
+#[derive(Default)]
+pub struct Shortcuts {
+    consumed: Vec<u32>,
+}
+
+pub enum Shortcut {
+    Paste,
+    Consume,
+}
+
+impl Shortcuts {
+    /// Match before encoding. A captured press owns its repeats and release even
+    /// if the user releases a modifier first or the layout changes.
+    pub fn match_key(
+        &mut self,
+        evdev: u32,
+        symbol: Option<char>,
+        modifiers: KeyModifiers,
+        action: KeyAction,
+    ) -> Option<Shortcut> {
+        const KEY_V: u32 = 47;
+        if let Some(index) = self.consumed.iter().position(|&held| held == evdev) {
+            if !matches!(action, KeyAction::Repeat) {
+                self.consumed.swap_remove(index);
+            }
+            if !matches!(action, KeyAction::Press) {
+                return Some(Shortcut::Consume);
+            }
+        }
+        if matches!(action, KeyAction::Press)
+            && modifiers.control
+            && modifiers.shift
+            && !modifiers.alt
+            && !modifiers.super_key
+            && (evdev == KEY_V || matches!(symbol, Some('v' | 'V')))
+        {
+            self.consumed.push(evdev);
+            return Some(Shortcut::Paste);
+        }
+        None
+    }
+}
+
 /// Commands accepted by the pane owner. The view never writes to a PTY directly.
 pub enum PaneCommand<'a> {
     Key {
@@ -44,6 +87,7 @@ pub enum PaneCommand<'a> {
         unshifted: Option<char>,
     },
     Text(&'a [u8]),
+    Paste(String),
     Resize {
         cols: u16,
         rows: u16,

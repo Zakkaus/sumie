@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-sumie 是以 Rust 編寫的 GPU 終端機模擬器，目標平台為 Linux Wayland 與 macOS，採用 libghostty-vt 與 wgpu 的架構。狀態：pre-alpha，P0。目前可建置工作區骨架，但尚不能開啟視窗或啟動終端機工作階段。
+sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wgpu。在 Linux Wayland 上可開啟終端機，按 Ctrl+Shift+V 即可貼上剪貼簿文字。macOS 支援尚在規劃中。
 
 ## 建置與檢查
 

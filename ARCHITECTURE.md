@@ -32,6 +32,8 @@ Two edges are deliberately closed:
 
 PTY readiness clears the wake before draining output into VT. Key commands carry unencoded input; the local pane encodes them with the terminal's current modes. IME preedit only changes the overlay; only commit bytes cross the pane boundary. Input writes remain ordered in the PTY FIFO. Wayland configures the first frame slot. After that, output, geometry or preedit can use a free slot, but a frame callback alone never dirties the view. Close drops GPU state before the Wayland window and drives child reaping from pidfd readiness and the PTY close deadline.
 
+On Linux, core matches Ctrl+Shift+V by evdev position or keysym before key encoding. The Wayland `clipboard` module reads the keyboard seat's selection on a nonblocking calloop pipe. It neither matches shortcuts nor writes to the PTY. At EOF, the app passes `PaneCommand::Paste` to the pane. The VT wrapper reads mode 2004, removes embedded end markers in bracketed mode, and calls `ghostty_paste_encode`. The pane enqueues the encoded bytes in one operation, including both markers. An oversized transfer is discarded; warnings report byte counts, never clipboard text.
+
 If surface acquisition times out, reports occlusion, or needs reconfiguration, the app retains the dirty frame and retries on a deadline. An idle or suspended surface has no retry deadline. Runtime font errors leave affected cells blank if no replacement glyph can be drawn; the view logs each error variant once without logging the input text.
 
 For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actual presentation. Use changing terminal output to reach N: the debug path does not generate frames on an idle terminal.

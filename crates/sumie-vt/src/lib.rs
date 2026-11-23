@@ -168,6 +168,50 @@ impl Terminal {
         }
     }
 
+    /// Encode a single paste for atomic admission to the PTY queue.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot query mode 2004 or encode the text.
+    pub fn encode_paste(&self, text: String) -> Result<Vec<u8>, Error> {
+        const END: &str = "\x1b[201~";
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut mode = ffi::TerminalModeConfig {
+            mode: ffi::MODE_BRACKETED_PASTE,
+            value: false,
+        };
+        // SAFETY: DATA_MODE reads and updates this initialized TerminalModeConfig.
+        check(unsafe {
+            ffi::ghostty_terminal_get(
+                self.raw,
+                ffi::TERMINAL_DATA_MODE,
+                from_mut(&mut mode).cast(),
+            )
+        })?;
+        let mut data = if mode.value && text.contains(END) {
+            text.replace(END, "").into_bytes()
+        } else {
+            text.into_bytes()
+        };
+        let mut out = Vec::with_capacity(data.len() + if mode.value { 2 * END.len() } else { 0 });
+        let mut written = 0;
+        // SAFETY: The input is writable, and out has room for the payload and both
+        // markers. On success the encoder initialized exactly `written` bytes.
+        unsafe {
+            check(ffi::ghostty_paste_encode(
+                data.as_mut_ptr(),
+                data.len(),
+                mode.value,
+                out.as_mut_ptr(),
+                out.capacity(),
+                &raw mut written,
+            ))?;
+            out.set_len(written);
+        }
+        Ok(out)
+    }
+
     /// Override the default colors and the first sixteen palette entries.
     ///
     /// # Errors
@@ -457,6 +501,22 @@ impl Drop for Terminal {
 #[cfg(test)]
 mod tests {
     use super::Terminal;
+
+    #[test]
+    fn paste_uses_current_terminal_mode() {
+        let mut terminal = Terminal::new(5, 2).unwrap();
+        for (mode, input, expected) in [
+            ("\x1b[?2004h", "a\x1b[201~\nb", "\x1b[200~a\nb\x1b[201~"),
+            ("\x1b[?2004h", "", ""),
+            ("\x1b[?2004l", "a\nb", "a\rb"),
+        ] {
+            terminal.write(mode.as_bytes());
+            assert_eq!(
+                terminal.encode_paste(input.into()).unwrap(),
+                expected.as_bytes()
+            );
+        }
+    }
 
     #[test]
     fn snapshot_keeps_wide_cells_whole() {

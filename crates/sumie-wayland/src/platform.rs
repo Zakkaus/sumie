@@ -7,6 +7,7 @@ use raw_window_handle::{
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
+    data_device_manager::DataDeviceManagerState,
     delegate_dispatch2, delegate_registry,
     output::{OutputHandler, OutputState},
     reexports::{
@@ -164,6 +165,15 @@ impl Platform {
         self.state.events.drain(..)
     }
 
+    /// Request text from the keyboard seat's clipboard. Completed non-empty reads
+    /// up to `max_bytes` arrive as `Event::ClipboardText` on the event-loop thread.
+    ///
+    /// # Errors
+    /// Returns an error if pipe creation or event source registration fails.
+    pub fn read_clipboard(&self, max_bytes: usize) -> std::io::Result<()> {
+        self.state.read_clipboard(max_bytes)
+    }
+
     #[must_use]
     pub fn loop_handle(&self) -> SourceHandle {
         SourceHandle(self.event_loop.handle())
@@ -243,6 +253,7 @@ pub(crate) struct State {
     output: OutputState,
     pub(crate) seats: SeatState,
     shm: Shm,
+    pub(crate) data_device_manager: Option<DataDeviceManagerState>,
     pub(crate) keyboard: Option<Keyboard>,
     pub(crate) text_input_manager: Option<ZwpTextInputManagerV3>,
     pub(crate) cursor_rect: Option<CursorRect>,
@@ -295,6 +306,7 @@ impl State {
             registry: RegistryState::new(&globals),
             output: OutputState::new(&globals, &qh),
             seats: SeatState::new(&globals, &qh),
+            data_device_manager: DataDeviceManagerState::bind(&globals, &qh).ok(),
             shm,
             qh,
             loop_handle,

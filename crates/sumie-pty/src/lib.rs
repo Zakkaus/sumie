@@ -24,7 +24,7 @@ use rustix::termios::{Winsize, tcsetwinsize};
 use child::{Child, Cleanup, ExitWatch};
 use reader::Reader;
 
-const INPUT_LIMIT: usize = 1024 * 1024;
+pub const INPUT_LIMIT: usize = 1024 * 1024;
 const MAX_CLOSE_GRACE: Duration = Duration::from_secs(5);
 
 /// Child command. Login shells use the caller's `SHELL` and a login `argv[0]`.

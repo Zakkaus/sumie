@@ -78,6 +78,7 @@ impl fmt::Debug for EventMetadata<'_> {
                 .finish(),
             Event::FrameReady => f.write_str("FrameReady"),
             Event::CloseRequested => f.write_str("CloseRequested"),
+            Event::ClipboardText(text) => write!(f, "ClipboardText {{ bytes: {} }}", text.len()),
             Event::Key {
                 pressed,
                 repeat,

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use sumie_core::{Pane, PaneCommand};
+use sumie_core::{Pane, PaneCommand, Shortcuts};
 use sumie_render::{SurfaceError, SurfaceFrame};
 use sumie_vt::Snapshot;
 use sumie_wayland::{Event, SourceHandle};
@@ -36,6 +36,7 @@ struct App {
 }
 
 struct Session {
+    shortcuts: Shortcuts,
     pane: LocalPane,
     sources: Option<Sources>,
     view: View,
@@ -109,12 +110,15 @@ impl App {
                 self.gpu.as_mut().unwrap().resize(device);
             }
             event => {
-                if let Some(session) = &mut self.session
-                    && let Some(preedit) = input::route(&mut session.pane, event)?
-                    && preedit != session.view.preedit
-                {
-                    session.view.preedit = preedit;
-                    session.frame_dirty = true;
+                if let Some(session) = &mut self.session {
+                    match input::route(&mut session.pane, &mut session.shortcuts, event)? {
+                        input::Effect::ReadClipboard => self.gpu.as_ref().unwrap().read_clipboard(),
+                        input::Effect::Preedit(text) if text != session.view.preedit => {
+                            session.view.preedit = text;
+                            session.frame_dirty = true;
+                        }
+                        _ => (),
+                    }
                 }
             }
         }
@@ -137,6 +141,7 @@ impl Session {
         let pane = LocalPane::login(view.size(), view.cell)?;
         let sources = Sources::new(handle, &pane.pty)?;
         Ok(Self {
+            shortcuts: Shortcuts::default(),
             pane,
             sources: Some(sources),
             view,

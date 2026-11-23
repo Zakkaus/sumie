@@ -47,6 +47,12 @@ pub struct Str {
 }
 
 #[repr(C)]
+pub struct TerminalModeConfig {
+    pub mode: u16,
+    pub value: bool,
+}
+
+#[repr(C)]
 #[derive(Default)]
 pub struct Style {
     colors: [[u8; 4]; 3],
@@ -68,6 +74,8 @@ pub const TERMINAL_OPT_COLOR_FOREGROUND: c_int = 12;
 pub const TERMINAL_OPT_COLOR_BACKGROUND: c_int = 13;
 pub const TERMINAL_OPT_COLOR_PALETTE: c_int = 15;
 pub const TERMINAL_DATA_COLOR_PALETTE: c_int = 21;
+pub const TERMINAL_DATA_MODE: c_int = 37;
+pub const MODE_BRACKETED_PASTE: u16 = 2004;
 pub const STYLE_INVERSE: u16 = 1 << 4;
 pub const STYLE_INVISIBLE: u16 = 1 << 5;
 pub const CELL_DATA_WIDE: c_int = 3;
@@ -112,6 +120,14 @@ unsafe extern "C" {
     pub fn ghostty_terminal_vt_write(terminal: Terminal, data: *const u8, len: usize);
     pub fn ghostty_terminal_set(terminal: Terminal, option: c_int, value: *const c_void) -> c_int;
     pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
+    pub fn ghostty_paste_encode(
+        data: *mut u8,
+        data_len: usize,
+        bracketed: bool,
+        out: *mut u8,
+        cap: usize,
+        written: *mut usize,
+    ) -> c_int;
     pub fn ghostty_unicode_codepoint_width(value: u32) -> u8;
     pub fn ghostty_key_encoder_new(allocator: *const Allocator, out: *mut KeyEncoder) -> c_int;
     pub fn ghostty_key_encoder_free(encoder: KeyEncoder);
