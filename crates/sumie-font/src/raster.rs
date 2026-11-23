@@ -8,7 +8,7 @@ use skrifa::outline::{
 use skrifa::{DrawMemory, Font, PathSink, ScalerFont};
 use zeno::{Command, Fill, Mask, Origin, Placement, Scratch};
 
-use crate::{Atlas, AtlasGlyph, Face, FaceId, FontError, GlyphKey, Hinting};
+use crate::{Atlas, AtlasGlyph, CellMetrics, Face, FaceId, FontError, GlyphKey, Hinting, sprite};
 
 pub(crate) struct Rasterizer {
     target: Option<Target>,
@@ -40,10 +40,15 @@ impl Rasterizer {
 
     pub fn draw(
         &mut self,
-        face: &Face,
+        faces: &[Face],
+        metrics: CellMetrics,
         key: GlyphKey,
         atlas: &mut Atlas,
     ) -> Result<AtlasGlyph, FontError> {
+        if key.face == sprite::FACE {
+            return sprite::draw(key, metrics, atlas, &mut self.scratch, &mut self.path.0);
+        }
+        let face = faces.get(key.face.0).ok_or(FontError::UnknownFace)?;
         let font = &face.font;
         let glyph = key.glyph;
         let ppem = key.ppem();

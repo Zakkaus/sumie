@@ -158,6 +158,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           replace_once("end.column += 1;", "end.column += 0;"),
           "test selection::tests::drag_selects_whole_cell_groups ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("sprite shifted off cell origin", "test", "crates/sumie-font/src/sprite.rs",
+              replace_once("top: 0,", "top: 1,"),
+              "test tests::linux::sprites_fill_their_grid_cells ... FAILED")
         probe("preedit written to PTY", "test", "src/input.rs",
               replace_once("Event::ImePreedit { text, .. } => return Ok(Effect::Preedit(text)),",
                            "Event::ImePreedit { ref text, .. } => PaneCommand::Text(text.as_bytes()),"),

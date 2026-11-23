@@ -8,6 +8,7 @@ mod discovery;
 mod layout;
 mod metrics;
 mod raster;
+mod sprite;
 
 #[cfg(test)]
 mod tests;
@@ -196,6 +197,9 @@ impl FontSystem {
     }
 
     fn face_for(&mut self, ch: char) -> Result<FaceId, FontError> {
+        if sprite::covers(ch) {
+            return Ok(sprite::FACE);
+        }
         if self.faces[0].font.charmap().map_unicode(ch).is_some() {
             return Ok(self.primary_face());
         }
@@ -238,8 +242,8 @@ impl FontSystem {
         if let Some(entry) = self.atlas.get(key) {
             return Ok(entry);
         }
-        let face = self.faces.get(key.face.0).ok_or(FontError::UnknownFace)?;
-        self.rasterizer.draw(face, key, &mut self.atlas)
+        self.rasterizer
+            .draw(&self.faces, self.metrics, key, &mut self.atlas)
     }
 
     #[must_use]

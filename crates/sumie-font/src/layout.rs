@@ -2,7 +2,7 @@ use harfrust::{Buffer, BufferFlags, Direction, Feature, GlyphInfo, GlyphPosition
 use skrifa::{Font, GlyphId, Tag};
 use zeno::{Bounds, Point};
 
-use crate::{CellMetrics, Face, FaceId, FontError, FontSystem, GlyphKey};
+use crate::{CellMetrics, Face, FaceId, FontError, FontSystem, GlyphKey, sprite};
 
 /// Glyph placement in an input run, in integer device pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +105,7 @@ impl FontSystem {
             | '\u{200c}'
             | '\u{200d}'
             | '\u{fe00}'..='\u{fe0f}'
-            | '\u{e0100}'..='\u{e01ef}' => Ok(Some(previous)),
+            | '\u{e0100}'..='\u{e01ef}' => Ok((previous != sprite::FACE).then_some(previous)),
             // Remaining Default_Ignorable_Code_Point ranges, Unicode 17.0.
             '\u{00ad}'
             | '\u{061c}'
@@ -140,6 +140,22 @@ impl Layout {
         let mut start = 0;
         while start < self.input.len() {
             let first = &self.input[start];
+            if first.face == sprite::FACE {
+                glyphs.push(ShapedGlyph {
+                    key: GlyphKey::new(
+                        sprite::FACE,
+                        GlyphId::new(u32::from(first.ch)),
+                        faces[0].ppem,
+                    ),
+                    cluster: first.byte,
+                    column: first.column,
+                    cells: u32::from(first.width),
+                    x: (first.column * metrics.width).cast_signed(),
+                    y: 0,
+                });
+                start += 1;
+                continue;
+            }
             let end = start
                 + 1
                 + self.input[start + 1..]

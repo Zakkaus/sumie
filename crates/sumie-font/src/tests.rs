@@ -26,6 +26,46 @@ mod linux {
     }
 
     #[test]
+    fn sprites_fill_their_grid_cells() {
+        let mut fonts = FontSystem::new("monospace", 20.0, 1.25, FontOptions::default()).unwrap();
+        let m = fonts.metrics();
+        let light = ((m.height + 8) / 16).max(1);
+        let text = "─│┼█▀\u{e0b0}";
+        let run = fonts.shape(text, &[1; 6]).unwrap();
+        assert_eq!(run.glyphs.len(), 6);
+        for ((column, ch), glyph) in (0..).zip(text.chars()).zip(run.glyphs) {
+            let mask = fonts.rasterize(glyph.key).unwrap();
+            assert_eq!((mask.rect.width, mask.rect.height), (m.width, m.height));
+            assert_eq!(
+                (glyph.x + mask.left, glyph.y + mask.top),
+                ((column * m.width).cast_signed(), 0)
+            );
+            let atlas = fonts.atlas();
+            for y in 0..m.height {
+                for x in 0..m.width {
+                    let h = (y.wrapping_sub((m.height - light) / 2)) < light;
+                    let v = (x.wrapping_sub((m.width - light) / 2)) < light;
+                    let covered = match ch {
+                        '─' => h,
+                        '│' => v,
+                        '┼' => h || v,
+                        '█' => true,
+                        '▀' => y < m.height.div_ceil(2),
+                        _ if x == 0 => true,
+                        _ => continue,
+                    };
+                    let i = (mask.rect.y + y) * atlas.dimensions()[0] + mask.rect.x + x;
+                    assert_eq!(
+                        atlas.pixels()[i as usize],
+                        u8::from(covered) * 255,
+                        "{ch} at {x},{y}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn outlines_produce_coverage() {
         let Some(mut fonts) = jetbrains() else { return };
         let run = fonts.shape("A", &[1]).unwrap();
