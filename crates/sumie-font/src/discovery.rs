@@ -92,35 +92,63 @@ impl Discovery {
     }
 
     pub fn find(&self, codepoint: Option<char>) -> Result<Match, FontError> {
-        if let Some(ch) = codepoint.filter(|&ch| is_private_use(ch)) {
-            // Private-use code points mean different things in different fonts: SIL fonts put
-            // Latin letters where Nerd Fonts put icons, and Fontconfig ranks by family
-            // closeness, not meaning. Prefer a Nerd Font, as Ghostty and WezTerm do.
-            let fonts = self
-                .pattern(Some(ch))?
-                .sort_fonts(fontconfig::UnicodeCoverage::NoTrim)?;
-            if let Some(nerd) = fonts
-                .iter()
-                .find(|font| font.get_string(c"family").is_ok_and(is_nerd_family))
-            {
-                return to_match(&nerd, self.weight);
-            }
+        if let Some(ch) = codepoint.filter(|&ch| is_private_use(ch))
+            && let Some(matched) = self.find_nerd(ch)?
+        {
+            return Ok(matched);
         }
         to_match(&self.pattern(codepoint)?.font_match()?, self.weight)
     }
 
+    fn find_nerd(&self, ch: char) -> Result<Option<Match>, FontError> {
+        use fontconfig::{ObjectSet, UnicodeCoverage, list_fonts};
+
+        // FontSort ranks non-covering faces too. FontList matches the requested charset.
+        let mut objects = ObjectSet::new(&self.fc)?;
+        for object in [c"family", c"file", c"index"] {
+            objects.add(object)?;
+        }
+        let covering = list_fonts(&self.charset_pattern(Some(ch))?, Some(&objects))?;
+        let is_nerd =
+            |font: &fontconfig::Pattern<'_>| font.get_string(c"family").is_ok_and(is_nerd_family);
+        if !covering.iter().any(|font| is_nerd(&font)) {
+            return Ok(None);
+        }
+        let ranked = self
+            .pattern(Some(ch))?
+            .sort_fonts(UnicodeCoverage::NoTrim)?;
+        for font in ranked.iter().filter(is_nerd) {
+            let (file, index) = (font.filename()?, font.face_index()?);
+            if covering.iter().any(|other| {
+                other.face_index().is_ok_and(|value| value == index)
+                    && other.filename().is_ok_and(|value| value == file)
+            }) {
+                return to_match(&font, self.weight).map(Some);
+            }
+        }
+        Ok(None)
+    }
+
     fn pattern(&self, codepoint: Option<char>) -> Result<fontconfig::Pattern<'_>, FontError> {
+        let mut pattern = self.charset_pattern(codepoint)?;
+        pattern.add_string(c"family", &self.family)?;
+        if let Some(weight) = self.weight {
+            pattern.add_integer(fontconfig::FC_WEIGHT, fontconfig_weight(weight))?;
+        }
+        Ok(pattern)
+    }
+
+    fn charset_pattern(
+        &self,
+        codepoint: Option<char>,
+    ) -> Result<fontconfig::Pattern<'_>, FontError> {
         use fontconfig::{CharSet, Pattern};
 
         let mut pattern = Pattern::new(&self.fc)?;
-        pattern.add_string(c"family", &self.family)?;
         if let Some(codepoint) = codepoint {
             let mut charset = CharSet::new(&self.fc)?;
             charset.add_char(codepoint)?;
             pattern.add_charset(charset)?;
-        }
-        if let Some(weight) = self.weight {
-            pattern.add_integer(fontconfig::FC_WEIGHT, fontconfig_weight(weight))?;
         }
         Ok(pattern)
     }

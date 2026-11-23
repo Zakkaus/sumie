@@ -2,7 +2,8 @@ use harfrust::{Buffer, BufferFlags, Direction, Feature, GlyphInfo, GlyphPosition
 use skrifa::{Font, GlyphId, Tag};
 use zeno::{Bounds, Point};
 
-use crate::{CellMetrics, Face, FaceId, FontError, FontSystem, GlyphKey, sprite};
+use crate::raster::Rasterizer;
+use crate::{Atlas, CellMetrics, Face, FaceId, FontError, FontSystem, GlyphKey, sprite};
 
 /// Glyph placement in an input run, in integer device pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +50,7 @@ impl FontSystem {
     ///
     /// # Errors
     /// Returns an error for mismatched widths, an unrepresentable grid, missing font
-    /// coverage, or a failed discovery or shaping operation.
+    /// coverage, or a failed discovery, shaping or wide-glyph outline operation.
     pub fn shape(&mut self, text: &str, widths: &[u8]) -> Result<ShapedRun, FontError> {
         u32::try_from(text.len()).map_err(|_| FontError::RunTooLong)?;
         if widths.first() == Some(&0) || widths.len() != text.chars().count() {
@@ -89,7 +90,13 @@ impl FontSystem {
         if i64::from(columns) * i64::from(self.metrics.width) > i64::from(i32::MAX / 2) {
             return Err(FontError::RunTooLong);
         }
-        self.layout.shape(&self.faces, self.metrics, columns)
+        self.layout.shape(
+            &self.faces,
+            self.metrics,
+            columns,
+            &mut self.rasterizer,
+            &self.atlas,
+        )
     }
 
     fn face_for_continuation(
@@ -135,6 +142,8 @@ impl Layout {
         faces: &[Face],
         metrics: CellMetrics,
         columns: u32,
+        rasterizer: &mut Rasterizer,
+        atlas: &Atlas,
     ) -> Result<ShapedRun, FontError> {
         let mut glyphs = Vec::with_capacity(self.input.len());
         let mut start = 0;
@@ -172,13 +181,18 @@ impl Layout {
                 // A run of detached marks starts in the preceding run's last cell.
                 next.column + u32::from(next.continuation) * u32::from(next.width)
             });
-            let placement = Segment { face, metrics };
+            let mut placement = Segment {
+                face,
+                metrics,
+                rasterizer,
+                atlas,
+            };
             placement.place(
                 &self.buffer,
                 &self.input[start..end],
                 end_column,
                 &mut glyphs,
-            );
+            )?;
             start = end;
         }
         Ok(ShapedRun {
@@ -216,17 +230,19 @@ fn shape_segment(buffer: &mut Buffer, font: &Font, input: &[Input]) -> Result<()
 struct Segment<'a> {
     face: &'a Face,
     metrics: CellMetrics,
+    rasterizer: &'a mut Rasterizer,
+    atlas: &'a Atlas,
 }
 
 impl Segment<'_> {
     #[allow(clippy::cast_possible_truncation)]
     fn place(
-        &self,
+        &mut self,
         buffer: &Buffer,
         input: &[Input],
         end_column: u32,
         glyphs: &mut Vec<ShapedGlyph>,
-    ) {
+    ) -> Result<(), FontError> {
         let infos = buffer.glyph_infos();
         let positions = buffer.glyph_positions();
         let mut pen = 0;
@@ -246,7 +262,7 @@ impl Segment<'_> {
             let anchor = (cell.column * self.metrics.width).cast_signed();
             let centered = cell.width == 2 || cell.continuation;
             let (ppem, dx) = if centered {
-                self.fit_cluster(cell, &infos[start..end], &positions[start..end])
+                self.fit_cluster(cell, &infos[start..end], &positions[start..end])?
             } else {
                 (self.face.ppem, 0)
             };
@@ -273,35 +289,85 @@ impl Segment<'_> {
             pen = relative - (grid_advance / scale).round() as i32;
             start = end;
         }
+        Ok(())
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn fit_cluster(
-        &self,
+        &mut self,
         cell: &Input,
         infos: &[GlyphInfo],
         positions: &[GlyphPosition],
-    ) -> (f32, i32) {
+    ) -> Result<(f32, i32), FontError> {
         let width = (u32::from(cell.width) * self.metrics.width) as f32;
         let height = self.metrics.height as f32;
         let mut ppem = self.face.ppem;
-        let mut bounds = ink_bounds(&self.face.font, ppem, infos, positions);
         let baseline = self.face.baseline as f32;
-        // At a fixed baseline, spare pixels above the ink cannot absorb a descender.
-        let fit = fit_axis(bounds.width(), width)
-            .min(fit_axis(-bounds.min.y, baseline))
-            .min(fit_axis(bounds.max.y, height - baseline));
-        if fit < 1.0 {
-            ppem *= fit;
-            bounds = ink_bounds(&self.face.font, ppem, infos, positions);
-        } else if !cell.continuation {
+        let bounds = loop {
+            let bounds = self.ink_bounds(cell.face, ppem, infos, positions)?;
+            // Hinting and whole-pixel mask rounding can keep the ink oversized after a reduction.
+            let fit = fit_axis(bounds.width(), width)
+                .min(fit_axis(-bounds.min.y, baseline))
+                .min(fit_axis(bounds.max.y, height - baseline));
+            if fit >= 1.0 {
+                break bounds;
+            }
+            let smaller = ppem * fit;
+            if smaller <= 0.0 || smaller >= ppem {
+                break bounds;
+            }
+            ppem = smaller;
+        };
+        // Keep the original advance and bearings when the mask fits at that placement.
+        if !cell.continuation && ppem.to_bits() == self.face.ppem.to_bits() {
             let units = positions.iter().map(|pos| pos.x_advance).sum();
             let advance = px(units, ppem / f32::from(self.face.font.units_per_em()));
-            return (ppem, ((width - advance) * 0.5).round() as i32);
+            let x = ((width - advance) * 0.5).round();
+            if bounds.min.x + x >= 0.0 && bounds.max.x + x <= width {
+                return Ok((ppem, x as i32));
+            }
         }
-        // Detached marks have no base advance in this face's shaping run.
         let x = ((width - bounds.width()) * 0.5 - bounds.min.x).round() as i32;
-        (ppem, x)
+        Ok((ppem, x))
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn ink_bounds(
+        &mut self,
+        face: FaceId,
+        ppem: f32,
+        infos: &[GlyphInfo],
+        positions: &[GlyphPosition],
+    ) -> Result<Bounds, FontError> {
+        let scale = ppem / f32::from(self.face.font.units_per_em());
+        let mut pen = 0;
+        let mut min = Point::new(f32::INFINITY, f32::INFINITY);
+        let mut max = Point::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+        for (info, pos) in infos.iter().zip(positions) {
+            let x = px(pen + pos.x_offset, scale).round();
+            let y = -px(pos.y_offset, scale).round();
+            pen += pos.x_advance;
+            let key = GlyphKey::new(face, GlyphId::new(info.glyph_id), ppem);
+            let (left, top, width, height) = if let Some(mask) = self.atlas.get(key) {
+                (mask.left, mask.top, mask.rect.width, mask.rect.height)
+            } else {
+                let (_, mask) = self.rasterizer.prepare(self.face, key)?;
+                (mask.left, mask.top, mask.width, mask.height)
+            };
+            if width == 0 || height == 0 {
+                continue;
+            }
+            let x = x + left as f32;
+            let y = y + top as f32;
+            min = Point::new(min.x.min(x), min.y.min(y));
+            max = Point::new(max.x.max(x + width as f32), max.y.max(y + height as f32));
+        }
+        let bounds = Bounds::new(min, max);
+        Ok(if bounds.is_empty() {
+            Bounds::default()
+        } else {
+            bounds
+        })
     }
 }
 
@@ -311,28 +377,6 @@ fn fit_axis(extent: f32, available: f32) -> f32 {
     } else {
         1.0
     }
-}
-
-fn ink_bounds(font: &Font, ppem: f32, infos: &[GlyphInfo], positions: &[GlyphPosition]) -> Bounds {
-    let scale = ppem / f32::from(font.units_per_em());
-    let metrics = font.glyph_metrics().scaled_f32(ppem);
-    let mut pen = 0;
-    let corners = infos.iter().zip(positions).filter_map(|(info, pos)| {
-        let x = px(pen + pos.x_offset, scale).round();
-        let y = -px(pos.y_offset, scale).round();
-        pen += pos.x_advance;
-        let ink = metrics.extents(GlyphId::new(info.glyph_id))?;
-        if ink.width <= 0.0 || ink.height <= 0.0 {
-            return None;
-        }
-        let x = x + ink.x_bearing;
-        let y = y - ink.y_bearing;
-        Some([
-            Point::new(x.floor(), y.floor()),
-            Point::new((x + ink.width).ceil(), (y + ink.height).ceil()),
-        ])
-    });
-    Bounds::from_points(corners.flatten())
 }
 
 #[allow(clippy::cast_precision_loss)]

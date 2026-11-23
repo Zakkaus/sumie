@@ -163,6 +163,63 @@ mod linux {
     }
 
     #[test]
+    fn fallback_masks_cover_cell_text() {
+        let options = FontOptions {
+            hinting: Hinting::Light,
+            ..FontOptions::default()
+        };
+        let Some(mut fonts) = jetbrains_at(20.0, 1.25, options) else {
+            return;
+        };
+        let cases = [
+            ('\u{f800}', 1, "AR PL UKai HK"),
+            ('龍', 2, "Noto Sans CJK TC"),
+        ];
+        let results = cases.map(|(ch, cells, fixture)| -> Result<(), String> {
+            let discovery = crate::Discovery::new(fixture, None).unwrap();
+            let matched = discovery.find(None).unwrap();
+            if matched.family != fixture
+                || matched
+                    .load(&[])
+                    .unwrap()
+                    .charmap()
+                    .map_unicode(ch)
+                    .is_none()
+                || fonts.faces[0].font.charmap().map_unicode(ch).is_some()
+            {
+                eprintln!("skipped: {fixture} is not available as a fallback for {ch:?}");
+                return Ok(());
+            }
+            if cells == 2 {
+                fonts.discovery = discovery;
+            }
+            let run = fonts
+                .shape(ch.encode_utf8(&mut [0; 4]), &[cells])
+                .map_err(|error| format!("{ch:?}: {error}"))?;
+            let [glyph] = run.glyphs[..] else {
+                return Err(format!("{ch:?}: unexpected glyphs: {:?}", run.glyphs));
+            };
+            let mask = fonts
+                .rasterize(glyph.key)
+                .map_err(|error| format!("{ch:?}: {error}"))?;
+            let top = glyph.y + mask.top;
+            let height = mask.rect.height.cast_signed();
+            let row = fonts.metrics().height.cast_signed();
+            println!(
+                "{ch:?}: {:?}, top={top}, height={height}, row={row}",
+                fonts.family(glyph.key.face())
+            );
+            if height == 0 || (cells == 2 && (top < 0 || top + height > row)) {
+                return Err(format!(
+                    "{ch:?}: mask at y={top}, height={height}, row={row}"
+                ));
+            }
+            Ok(())
+        });
+        assert_eq!(results, [Ok(()), Ok(())]);
+    }
+
+    #[test]
     fn continuations_keep_the_base_cell() {
         let Some(mut fonts) = jetbrains() else { return };
         let cases = [

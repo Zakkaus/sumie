@@ -6,7 +6,7 @@ use skrifa::outline::{
     OutlineGlyphCollection, SmoothMode, Target,
 };
 use skrifa::{DrawMemory, Font, PathSink, ScalerFont};
-use zeno::{Command, Fill, Mask, Origin, Placement, Scratch};
+use zeno::{Command, Fill, Mask, Origin, Placement, Scratch, Vector};
 
 use crate::{Atlas, AtlasGlyph, CellMetrics, Face, FaceId, FontError, GlyphKey, Hinting, sprite};
 
@@ -61,19 +61,7 @@ impl Rasterizer {
         {
             return Err(FontError::UnsupportedGlyph);
         }
-        self.path.0.clear();
-        let has_outline = if let Some(target) = self.target
-            && let Some(sfnt) = face.sfnt()
-        {
-            self.draw_hinted(font, key, target, &OutlineGlyphCollection::new(&sfnt))?
-        } else {
-            self.draw_unhinted(font, key)?
-        };
-        if !has_outline {
-            return Ok(atlas.insert_blank(key));
-        }
-        let bounds = self.scratch.bounds(&self.path.0, Fill::NonZero, None);
-        let (offset, placement) = Placement::compute(Origin::TopLeft, [0.0, 0.0], &bounds);
+        let (offset, placement) = self.prepare(face, key)?;
         if placement.width == 0 || placement.height == 0 {
             return Ok(atlas.insert_blank(key));
         }
@@ -83,6 +71,26 @@ impl Rasterizer {
                 .offset(offset)
                 .render_into(pixels, Some(pitch));
         })
+    }
+
+    pub fn prepare(
+        &mut self,
+        face: &Face,
+        key: GlyphKey,
+    ) -> Result<(Vector, Placement), FontError> {
+        self.path.0.clear();
+        let has_outline = if let Some(target) = self.target
+            && let Some(sfnt) = face.sfnt()
+        {
+            self.draw_hinted(&face.font, key, target, &OutlineGlyphCollection::new(&sfnt))?
+        } else {
+            self.draw_unhinted(&face.font, key)?
+        };
+        if !has_outline {
+            return Ok((Vector::ZERO, Placement::default()));
+        }
+        let bounds = self.scratch.bounds(&self.path.0, Fill::NonZero, None);
+        Ok(Placement::compute(Origin::TopLeft, [0.0, 0.0], &bounds))
     }
 
     fn draw_unhinted(&mut self, font: &Font, key: GlyphKey) -> Result<bool, FontError> {
