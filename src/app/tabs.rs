@@ -358,6 +358,7 @@ impl Session {
         tab_changed: bool,
     ) -> Result<()> {
         if let Some((i, id)) = old {
+            self.link_pointer.leave_thumbnail(&self.view, id);
             let tab = self.tabs.as_mut_slice()[i].get_mut(id);
             tab.frame_dirty = true;
             tab.sources.watch_blink(false)?;

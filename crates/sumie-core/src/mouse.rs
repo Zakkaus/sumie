@@ -406,6 +406,32 @@ mod tests {
     }
 
     #[test]
+    fn viewer_consuming_release_cancels_the_selection_drag() {
+        let mut state = MouseState::default();
+        let modes = MouseModes {
+            tracking: false,
+            alternate: false,
+            alternate_scroll: false,
+        };
+        let event = |phase, column| MouseEvent {
+            phase,
+            cell: CellPosition { row: 0, column },
+            pixel: [0.0; 2],
+            modifiers: KeyModifiers::default(),
+            link: false,
+        };
+        assert!(matches!(
+            state.dispatch(event(MousePhase::Press(Button::Left, 0), 0), modes),
+            Dispatch::Select(SelectStep::Begin(SelectionUnit::Cell))
+        ));
+        state.reset_gestures();
+        assert_eq!(
+            state.dispatch(event(MousePhase::Motion, 1), modes),
+            Dispatch::Ignore
+        );
+    }
+
+    #[test]
     fn accumulates_value120() {
         use WheelRoute::{History, Report};
         let mut wheel = Wheel::default();

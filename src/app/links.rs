@@ -14,6 +14,15 @@ pub(super) struct Pointer {
 }
 
 impl Pointer {
+    pub(super) fn leave_thumbnail(&mut self, view: &super::View, pane: u64) {
+        if self
+            .position
+            .is_some_and(|pos| view.thumbnail_hit(pos, pane).is_some())
+        {
+            self.position = None;
+        }
+    }
+
     pub(super) fn record(&mut self, event: &Event) {
         match *event {
             Event::Pointer {
