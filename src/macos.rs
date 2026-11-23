@@ -1,12 +1,17 @@
+//! Runs the Metal test page and applies watched settings on the window thread.
+
 use std::ops::ControlFlow;
 
+use sumie_config::Config;
 use sumie_macos::{Event, Platform};
 use sumie_render::{SurfaceError, SurfaceFrame, SurfaceRenderer, instance_descriptor, wgpu};
 
 use crate::{Result, capture, frame_window::FrameWindow};
 
 mod page;
+mod reload;
 use page::Page;
+use reload::{Reload, Update};
 
 impl FrameWindow for Platform {
     type Context = sumie_macos::WindowContext;
@@ -34,7 +39,7 @@ pub(crate) fn run(options: &capture::Options) -> Result<()> {
                 state = Some(Smoke::new(window, options.screenshot.is_some())?);
             }
             (Some(app), Event::NeedsRedraw) => app.window.request_redraw(),
-            (Some(app), Event::RedrawRequested) if app.window.frame_slot_available() => {
+            (Some(app), Event::RedrawRequested) => {
                 return app.draw(options);
             }
             (_, Event::CloseRequested) => return Ok(ControlFlow::Break(())),
@@ -56,6 +61,9 @@ struct Smoke {
     device: wgpu::Device,
     queue: wgpu::Queue,
     size: [u32; 2],
+    reload: Reload,
+    config: Config,
+    cursor_hidden: bool,
     scale: f64,
     page: Page,
     window: Platform,
@@ -85,41 +93,114 @@ impl Smoke {
         let size = window.device_size();
         surface.resize(size);
         let scale = window.scale();
-        let page = Page::new(scale, &mut surface)?;
+        let (mut reload, mut config) = Reload::new(&window)?;
+        let mut page = match Page::new(&config.font, scale) {
+            Ok(page) => page,
+            Err(error) => {
+                reload.show_error(format!("sumie.toml:1:1: {error}"));
+                config = Config::default();
+                reload.set_blink(config.cursor.blink())?;
+                Page::new(&config.font, scale)?
+            }
+        };
+        page.compose(&config, reload.banner.as_deref(), size[0], &mut surface)?;
+        surface.set_minimum_contrast(config.minimum_contrast());
         Ok(Self {
             surface,
             device,
             queue,
             size,
             scale,
+            reload,
+            config,
+            cursor_hidden: false,
             page,
             window,
         })
     }
 
+    fn apply_reload(&mut self, scale: f64) -> Result<bool> {
+        let mut dirty = false;
+        while let Some(update) = self.reload.next() {
+            match update {
+                Update::Settings(Ok(next)) => dirty |= self.apply_settings(next, scale)?,
+                Update::Settings(Err(error)) => dirty |= self.reload.load_error(&error),
+                Update::Blink => {
+                    self.cursor_hidden = !self.cursor_hidden
+                        && self.config.cursor.blink()
+                        && self.window.window_owner().has_focus();
+                }
+                Update::Failed(error) => return Err(error.into()),
+            }
+        }
+        Ok(dirty)
+    }
+
+    fn apply_settings(&mut self, next: Config, scale: f64) -> Result<bool> {
+        let changes = self.config.changes(&next);
+        if changes.font {
+            match Page::new(&next.font, scale) {
+                Ok(page) => {
+                    self.page = page;
+                    self.scale = scale;
+                }
+                Err(error) => {
+                    return Ok(self.reload.show_error(format!("sumie.toml:1:1: {error}")));
+                }
+            }
+        }
+        if changes.cursor {
+            self.cursor_hidden = false;
+            self.reload.set_blink(next.cursor.blink())?;
+        }
+        if changes.minimum_contrast {
+            self.surface.set_minimum_contrast(next.minimum_contrast());
+        }
+        self.config = next;
+        let repaired = self.reload.banner.take().is_some();
+        Ok(changes.font || changes.terminal_colors || changes.cursor || repaired)
+    }
+
     fn draw(&mut self, options: &capture::Options) -> Result<ControlFlow<()>> {
-        let window = &mut self.window;
-        let size = window.device_size();
+        let size = self.window.device_size();
+        let scale = self.window.scale();
+        let mut dirty = self.apply_reload(scale)?;
         if self.size != size {
             self.surface.resize(size);
+            dirty |= self.size[0] != size[0] && self.reload.banner.is_some();
             self.size = size;
         }
-        let scale = window.scale();
         if self.scale.to_bits() != scale.to_bits() {
-            self.page = Page::new(scale, &mut self.surface)?;
+            self.page = Page::new(&self.config.font, scale)?;
             self.scale = scale;
+            dirty = true;
         }
+        if dirty {
+            self.page.compose(
+                &self.config,
+                self.reload.banner.as_deref(),
+                size[0],
+                &mut self.surface,
+            )?;
+        }
+        if !self.window.frame_slot_available() {
+            return Ok(ControlFlow::Continue(()));
+        }
+        let show_cursor = !self.cursor_hidden || !self.window.window_owner().has_focus();
+        let window = &mut self.window;
         let last = options.frames == Some(self.surface.present_count() + 1);
         let path = options.screenshot.as_deref().filter(|_| last);
         let mut capture = None;
-        let frame = self
-            .surface
-            .draw_with(&self.page.draw_list(), wgpu::Color::BLACK, |frame| {
+        let frame = self.surface.draw_with(
+            &self.page.draw_list(show_cursor),
+            self.page.clear,
+            |frame| {
                 if path.is_some() {
                     capture = Some(capture::Readback::copy(&self.device, &self.queue, frame));
                 }
                 window.arm_frame_callback();
-            });
+            },
+        );
         match frame {
             Ok(SurfaceFrame::Presented { suboptimal }) => {
                 if let Some(path) = path {

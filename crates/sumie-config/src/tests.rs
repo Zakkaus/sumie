@@ -117,3 +117,51 @@ fn assert_colors(config: Config) {
     assert_eq!(colors.selection_background(), Some([0x65, 0x43, 0x21]));
     assert_eq!(colors.palette(), [[1, 2, 3]; 16]);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn rename_replacement_reloads_and_rearms() {
+    use std::{
+        os::unix::net::UnixStream,
+        time::{Duration, Instant},
+    };
+
+    let dir = env::temp_dir().join(format!("sumie-watch-{}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let scratch = Scratch(dir);
+    let main = scratch.0.join("sumie.toml");
+    let replacement = scratch.0.join("replacement.toml");
+    fs::write(&main, "[cursor]\nstyle = 'block'").unwrap();
+    let (_stop, control) = UnixStream::pair().unwrap();
+    let mut watch = Watch::new(Some(main.clone()), &control).unwrap();
+    assert_eq!(
+        watch.load().unwrap().unwrap().cursor.style(),
+        CursorStyle::Block
+    );
+
+    fs::write(&replacement, "[cursor]\nstyle = 'bar'").unwrap();
+    fs::rename(&replacement, &main).unwrap();
+    assert_eq!(
+        watch
+            .wait(Some(Instant::now() + Duration::from_secs(2)))
+            .unwrap(),
+        WatchEvent::Changed,
+    );
+    assert_eq!(
+        watch.load().unwrap().unwrap().cursor.style(),
+        CursorStyle::Bar
+    );
+
+    // The new inode must also report in-place writes after the reload.
+    fs::write(&main, "[cursor]\nstyle = 'underline'").unwrap();
+    assert_eq!(
+        watch
+            .wait(Some(Instant::now() + Duration::from_secs(2)))
+            .unwrap(),
+        WatchEvent::Changed,
+    );
+    assert_eq!(
+        watch.load().unwrap().unwrap().cursor.style(),
+        CursorStyle::Underline
+    );
+}

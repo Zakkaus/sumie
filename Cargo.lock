@@ -1808,6 +1808,8 @@ dependencies = [
 name = "sumie-config"
 version = "0.0.0"
 dependencies = [
+ "dispatch2",
+ "nix",
  "rustix 1.1.6",
  "schemars",
  "serde",

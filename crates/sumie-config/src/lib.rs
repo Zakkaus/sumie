@@ -4,12 +4,15 @@
 //! and JSON Schema generation. Does not manage windows or render.
 
 mod changes;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(target_os = "macos", path = "watch_macos.rs")]
 mod watch;
 
 pub use changes::Changes;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use watch::Watch;
+#[cfg(target_os = "macos")]
+pub use watch::WatchEvent;
 
 use std::{
     borrow::Cow,
@@ -314,6 +317,11 @@ impl Font {
     pub fn into_family(self) -> Cow<'static, str> {
         self.family
             .map_or_else(|| default_family().into(), Cow::Owned)
+    }
+
+    #[must_use]
+    pub fn family(&self) -> &str {
+        self.family.as_deref().unwrap_or_else(|| default_family())
     }
 
     #[must_use]
