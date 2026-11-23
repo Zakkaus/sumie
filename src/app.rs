@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
-use sumie_core::{Pane, PaneCommand, Shortcuts};
+use sumie_core::{Pane, PaneCommand, Selection, Shortcuts};
 use sumie_render::{SurfaceError, SurfaceFrame};
 use sumie_vt::Snapshot;
-use sumie_wayland::{Event, SourceHandle};
+use sumie_wayland::{Event, PointerPhase, SourceHandle};
 
 use crate::{
     Result, capture,
@@ -37,6 +37,7 @@ struct App {
 
 struct Session {
     shortcuts: Shortcuts,
+    selection: Selection,
     pane: LocalPane,
     sources: Option<Sources>,
     view: View,
@@ -99,26 +100,20 @@ impl App {
             Event::Resized {
                 device: (width, height),
                 scale,
-                ..
+                logical,
             } => {
+                let logical = logical.into();
                 let device = [width, height];
                 if let Some(session) = &mut self.session {
-                    session.resize(scale, device)?;
+                    session.resize(scale, logical, device)?;
                 } else {
-                    self.session = Some(Session::new(scale, device, handle.clone())?);
+                    self.session = Some(Session::new(scale, logical, device, handle.clone())?);
                 }
                 self.gpu.as_mut().unwrap().resize(device);
             }
             event => {
                 if let Some(session) = &mut self.session {
-                    match input::route(&mut session.pane, &mut session.shortcuts, event)? {
-                        input::Effect::ReadClipboard => self.gpu.as_ref().unwrap().read_clipboard(),
-                        input::Effect::Preedit(text) if text != session.view.preedit => {
-                            session.view.preedit = text;
-                            session.frame_dirty = true;
-                        }
-                        _ => (),
-                    }
+                    session.input(event, self.gpu.as_mut().unwrap())?;
                 }
             }
         }
@@ -128,7 +123,7 @@ impl App {
     fn close(&mut self) -> Result<()> {
         let close = self.session.as_mut().map_or(Ok(()), |session| {
             drop(session.sources.take());
-            session.pane.command(PaneCommand::Close)
+            session.pane.command(PaneCommand::Close).map(|_| ())
         });
         drop(self.gpu.take());
         close
@@ -136,12 +131,13 @@ impl App {
 }
 
 impl Session {
-    fn new(scale: u32, device: [u32; 2], handle: SourceHandle) -> Result<Self> {
-        let view = View::new(scale, device)?;
+    fn new(scale: u32, logical: [u32; 2], device: [u32; 2], handle: SourceHandle) -> Result<Self> {
+        let view = View::new(scale, logical, device)?;
         let pane = LocalPane::login(view.size(), view.cell)?;
         let sources = Sources::new(handle, &pane.pty)?;
         Ok(Self {
             shortcuts: Shortcuts::default(),
+            selection: Selection::default(),
             pane,
             sources: Some(sources),
             view,
@@ -152,8 +148,9 @@ impl Session {
         })
     }
 
-    fn resize(&mut self, scale: u32, device: [u32; 2]) -> Result<()> {
-        self.view.resize(scale, device)?;
+    fn resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<()> {
+        self.view.resize(scale, logical, device)?;
+        self.selection = Selection::default();
         let size = self.view.size();
         self.pane.command(PaneCommand::Resize {
             cols: size.cols,
@@ -164,6 +161,55 @@ impl Session {
         self.snapshot_dirty = true;
         self.frame_dirty = true;
         Ok(())
+    }
+
+    fn input(&mut self, event: Event, gpu: &mut Gpu) -> Result<()> {
+        let effect = if let Event::Pointer {
+            phase,
+            position,
+            serial,
+        } = event
+        {
+            self.update_snapshot()?;
+            if !self.pointer(phase, position) {
+                return Ok(());
+            }
+            input::Effect::Copy(serial)
+        } else {
+            input::route(&mut self.pane, &mut self.shortcuts, event)?
+        };
+        match effect {
+            input::Effect::Copy(serial) => {
+                self.update_snapshot()?;
+                if let Some(range) = self.selection.range()
+                    && let Some(text) = self.pane.command(PaneCommand::Copy(range))?
+                {
+                    gpu.write_clipboard(serial, text);
+                }
+            }
+            input::Effect::ReadClipboard => gpu.read_clipboard(),
+            input::Effect::Preedit(text) if text != self.view.preedit => {
+                self.view.preedit = text;
+                self.frame_dirty = true;
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+
+    /// Returns true only for the release that completes a drag.
+    fn pointer(&mut self, phase: PointerPhase, position: (f64, f64)) -> bool {
+        let hit = self.view.hit_test(position);
+        let snapshot = self.snapshot.as_ref().expect("current pointer snapshot");
+        let width = snapshot.rows[usize::from(hit.row)][usize::from(hit.column)].width;
+        let old = self.selection.range();
+        match phase {
+            PointerPhase::Press => self.selection.press(hit, width),
+            PointerPhase::Motion | PointerPhase::Release => self.selection.drag(hit, width),
+            PointerPhase::Cancel => self.selection = Selection::default(),
+        }
+        self.frame_dirty |= old != self.selection.range();
+        matches!(phase, PointerPhase::Release) && self.selection.release().is_some()
     }
 
     fn service_pty(&mut self) -> Result<bool> {
@@ -197,6 +243,14 @@ impl Session {
             self.snapshot_dirty = false;
             let next = self.pane.snapshot()?;
             if self.snapshot.as_ref() != Some(&next) {
+                if let Some(rows) = self.selection.affected_rows()
+                    && self
+                        .snapshot
+                        .as_ref()
+                        .is_some_and(|prev| prev.rows[rows.clone()] != next.rows[rows])
+                {
+                    self.selection = Selection::default();
+                }
                 self.snapshot = Some(next);
                 self.frame_dirty = true;
             }
@@ -211,7 +265,7 @@ impl Session {
             return Ok(false);
         }
         let snapshot = self.snapshot.as_ref().expect("initial snapshot");
-        self.view.build(snapshot);
+        self.view.build(snapshot, self.selection.range());
         gpu.upload_atlas(&self.view.atlas());
         self.view.atlas_uploaded();
         let final_frame = options

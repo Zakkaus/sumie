@@ -2,7 +2,7 @@
 
 [繁體中文](README.zh-TW.md)
 
-sumie is a GPU terminal emulator written in Rust with libghostty-vt and wgpu. The Linux Wayland build opens a terminal session. Press Ctrl+Shift+V to paste text from the clipboard. macOS support is planned.
+sumie is a GPU terminal emulator written in Rust with libghostty-vt and wgpu. On Linux Wayland, drag with the left mouse button to select text. Releasing the button copies the selection to the clipboard. Press Ctrl+Shift+C to copy it again, or Ctrl+Shift+V to paste. macOS support is planned.
 
 ## Build and checks
 

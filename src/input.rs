@@ -7,6 +7,7 @@ pub(crate) enum Effect {
     None,
     Preedit(String),
     ReadClipboard,
+    Copy(u32),
 }
 
 pub(crate) fn route(
@@ -19,6 +20,7 @@ pub(crate) fn route(
         Event::ImeCommit { ref text } => PaneCommand::Text(text.as_bytes()),
         Event::ClipboardText(text) => PaneCommand::Paste(text),
         Event::Key {
+            serial,
             physical,
             keysym,
             ref utf8,
@@ -43,6 +45,7 @@ pub(crate) fn route(
             };
             let symbol = xkeysym::Keysym::new(keysym).key_char();
             match shortcuts.match_key(physical, symbol, modifiers, action) {
+                Some(Shortcut::Copy) => return Ok(Effect::Copy(serial)),
                 Some(Shortcut::Paste) => return Ok(Effect::ReadClipboard),
                 Some(Shortcut::Consume) => return Ok(Effect::None),
                 None => (),

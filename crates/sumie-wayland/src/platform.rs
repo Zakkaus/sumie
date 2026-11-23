@@ -37,7 +37,9 @@ use smithay_client_toolkit::{
 use wayland_backend::client::Backend;
 use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3;
 
-use crate::{CursorRect, Event, keyboard::Keyboard, scale::Scale};
+use crate::{
+    CursorRect, Event, clipboard::Clipboard, keyboard::Keyboard, pointer::Pointer, scale::Scale,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
@@ -174,6 +176,12 @@ impl Platform {
         self.state.read_clipboard(max_bytes)
     }
 
+    /// Publish text from a recent key press or pointer release on the active seat.
+    /// Does nothing without a clipboard data device. Transfers run through calloop.
+    pub fn write_clipboard(&mut self, serial: u32, text: String) {
+        self.state.write_clipboard(serial, text);
+    }
+
     #[must_use]
     pub fn loop_handle(&self) -> SourceHandle {
         SourceHandle(self.event_loop.handle())
@@ -246,7 +254,7 @@ impl Platform {
 pub(crate) struct State {
     scale: Scale,
     pub(crate) window: Arc<WindowOwner>,
-    qh: QueueHandle<Self>,
+    pub(crate) qh: QueueHandle<Self>,
     pub(crate) loop_handle: LoopHandle<'static, Self>,
     source: RegistrationToken,
     registry: RegistryState,
@@ -254,7 +262,9 @@ pub(crate) struct State {
     pub(crate) seats: SeatState,
     shm: Shm,
     pub(crate) data_device_manager: Option<DataDeviceManagerState>,
+    pub(crate) clipboard: Clipboard,
     pub(crate) keyboard: Option<Keyboard>,
+    pub(crate) pointer: Option<Pointer>,
     pub(crate) text_input_manager: Option<ZwpTextInputManagerV3>,
     pub(crate) cursor_rect: Option<CursorRect>,
     pub(crate) events: VecDeque<Event>,
@@ -311,7 +321,9 @@ impl State {
             qh,
             loop_handle,
             source,
+            clipboard: Clipboard::default(),
             keyboard: None,
+            pointer: None,
             text_input_manager,
             cursor_rect: None,
             events: VecDeque::new(),
@@ -369,6 +381,8 @@ impl State {
 impl Drop for State {
     fn drop(&mut self) {
         self.loop_handle.remove(self.source);
+        self.close_clipboard();
+        drop(self.pointer.take());
         drop(self.keyboard.take());
         if let Some(manager) = &self.text_input_manager {
             manager.destroy();

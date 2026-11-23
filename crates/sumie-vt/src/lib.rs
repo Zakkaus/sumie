@@ -3,6 +3,7 @@
 
 mod ffi;
 mod key;
+mod selection;
 
 pub use key::{KeyAction, KeyEncoder, KeyEvent};
 

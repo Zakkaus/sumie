@@ -90,6 +90,13 @@ impl fmt::Debug for EventMetadata<'_> {
                 .field("repeat", repeat)
                 .field("bytes", &utf8.as_ref().map_or(0, String::len))
                 .finish(),
+            Event::Pointer {
+                phase, position, ..
+            } => f
+                .debug_struct("Pointer")
+                .field("phase", phase)
+                .field("position", position)
+                .finish(),
             Event::ImePreedit { text, .. } => write!(f, "ImePreedit {{ bytes: {} }}", text.len()),
             Event::ImeCommit { text } => write!(f, "ImeCommit {{ bytes: {} }}", text.len()),
         }

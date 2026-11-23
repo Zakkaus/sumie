@@ -30,16 +30,25 @@ impl Drop for Keyboard {
 }
 
 impl State {
+    fn owns_seat(&self, seat: &WlSeat) -> bool {
+        self.keyboard
+            .as_ref()
+            .is_some_and(|keyboard| &keyboard.seat == seat)
+    }
+
     fn start_keyboard(&mut self, qh: &QueueHandle<Self>, seat: WlSeat) {
         let result = self.seats.get_keyboard_with_repeat(
             qh,
             &seat,
             None,
             self.loop_handle.clone(),
-            Box::new(|state, keyboard, event| state.emit_key(keyboard, event, true, true)),
+            Box::new(|state, keyboard, event| state.emit_key(keyboard, event, 0, true, true)),
         );
         match result {
             Ok(proxy) => {
+                if self.seats.info(&seat).is_some_and(|info| info.has_pointer) {
+                    self.start_pointer(qh, &seat);
+                }
                 self.keyboard = Some(Keyboard {
                     data_device: self
                         .data_device_manager
@@ -60,13 +69,10 @@ impl State {
     }
 
     fn remove_keyboard(&mut self, qh: &QueueHandle<Self>, seat: &WlSeat) {
-        if self
-            .keyboard
-            .as_ref()
-            .is_none_or(|keyboard| &keyboard.seat != seat)
-        {
+        if !self.owns_seat(seat) {
             return;
         }
+        self.stop_pointer();
         self.leave_text_input();
         drop(self.keyboard.take());
         if let Some(replacement) = self.seats.seats().find(|candidate| {
@@ -86,7 +92,14 @@ impl State {
             .filter(|keyboard| &keyboard.proxy == proxy)
     }
 
-    fn emit_key(&mut self, proxy: &WlKeyboard, event: KeyEvent, pressed: bool, repeat: bool) {
+    fn emit_key(
+        &mut self,
+        proxy: &WlKeyboard,
+        event: KeyEvent,
+        serial: u32,
+        pressed: bool,
+        repeat: bool,
+    ) {
         if let Some(keyboard) = &self.keyboard
             && &keyboard.proxy == proxy
             && keyboard.focused
@@ -98,6 +111,7 @@ impl State {
                 modifiers: keyboard.modifiers,
                 pressed,
                 repeat,
+                serial,
             });
         }
     }
@@ -117,8 +131,10 @@ impl SeatHandler for State {
         seat: WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard && self.keyboard.is_none() {
-            self.start_keyboard(qh, seat);
+        match capability {
+            Capability::Keyboard if self.keyboard.is_none() => self.start_keyboard(qh, seat),
+            Capability::Pointer if self.owns_seat(&seat) => self.start_pointer(qh, &seat),
+            _ => {}
         }
     }
 
@@ -129,8 +145,10 @@ impl SeatHandler for State {
         seat: WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard {
-            self.remove_keyboard(qh, &seat);
+        match capability {
+            Capability::Keyboard => self.remove_keyboard(qh, &seat),
+            Capability::Pointer if self.owns_seat(&seat) => self.stop_pointer(),
+            _ => {}
         }
     }
 
@@ -176,10 +194,10 @@ impl KeyboardHandler for State {
         _: &Connection,
         _: &QueueHandle<Self>,
         proxy: &WlKeyboard,
-        _: u32,
+        serial: u32,
         event: KeyEvent,
     ) {
-        self.emit_key(proxy, event, true, false);
+        self.emit_key(proxy, event, serial, true, false);
     }
 
     fn repeat_key(
@@ -187,10 +205,10 @@ impl KeyboardHandler for State {
         _: &Connection,
         _: &QueueHandle<Self>,
         proxy: &WlKeyboard,
-        _: u32,
+        serial: u32,
         event: KeyEvent,
     ) {
-        self.emit_key(proxy, event, true, true);
+        self.emit_key(proxy, event, serial, true, true);
     }
 
     fn release_key(
@@ -198,10 +216,10 @@ impl KeyboardHandler for State {
         _: &Connection,
         _: &QueueHandle<Self>,
         proxy: &WlKeyboard,
-        _: u32,
+        serial: u32,
         event: KeyEvent,
     ) {
-        self.emit_key(proxy, event, false, false);
+        self.emit_key(proxy, event, serial, false, false);
     }
 
     fn update_modifiers(

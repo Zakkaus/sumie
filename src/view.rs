@@ -3,6 +3,7 @@ use std::{
     mem::{Discriminant, discriminant},
 };
 
+use sumie_core::{CellPosition, CellRange};
 use sumie_font::{FontError, FontOptions, FontSystem, Hinting};
 use sumie_pty::Size;
 use sumie_render::{AtlasRect, AtlasUpload, Cursor, DrawList, GlyphQuad, PixelRect, Rgba, wgpu};
@@ -14,6 +15,7 @@ use crate::Result;
 pub(crate) struct View {
     font: FontSystem,
     font_errors: FontErrors,
+    logical: [u32; 2],
     scale: u32,
     pub(crate) device: [u32; 2],
     pub(crate) cell: [u32; 2],
@@ -52,7 +54,7 @@ impl FontErrors {
 }
 
 impl View {
-    pub(crate) fn new(scale: u32, device: [u32; 2]) -> Result<Self> {
+    pub(crate) fn new(scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<Self> {
         let font = font_at_scale(scale)?;
         let cell = [font.metrics().width, font.metrics().height];
         let grid = grid_size(device, cell)?;
@@ -60,6 +62,7 @@ impl View {
             font,
             font_errors: FontErrors::default(),
             scale,
+            logical,
             device,
             cell,
             grid,
@@ -73,12 +76,13 @@ impl View {
         })
     }
 
-    pub(crate) fn resize(&mut self, scale: u32, device: [u32; 2]) -> Result<()> {
+    pub(crate) fn resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<()> {
         if scale != self.scale {
             self.font = font_at_scale(scale)?;
             self.scale = scale;
             self.cell = [self.font.metrics().width, self.font.metrics().height];
         }
+        self.logical = logical;
         self.device = device;
         self.grid = grid_size(device, self.cell)?;
         Ok(())
@@ -99,11 +103,29 @@ impl View {
         }
     }
 
-    pub(crate) fn build(&mut self, snapshot: &Snapshot) {
+    pub(crate) fn hit_test(&self, (x, y): (f64, f64)) -> CellPosition {
+        let cell = |pos: f64, axis: usize| {
+            // Viewporter stretches the rounded device buffer to the exact logical size.
+            let index = pos * f64::from(self.device[axis])
+                / (f64::from(self.logical[axis]) * f64::from(self.cell[axis]));
+            // Clamped grid dimensions fit u16. Truncation selects the containing cell.
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let index = index.clamp(0.0, f64::from(self.grid[axis] - 1)) as u16;
+            index
+        };
+        CellPosition {
+            row: cell(y, 1),
+            column: cell(x, 0),
+        }
+    }
+
+    pub(crate) fn build(&mut self, snapshot: &Snapshot, selection: Option<CellRange>) {
         self.backgrounds.clear();
         self.glyphs.clear();
         let overlay = self.composition(snapshot);
         for (row, cells) in (0..).zip(&snapshot.rows) {
+            let selected = selection.and_then(|range| range.columns(row));
+            let highlighted = |column| selected.as_ref().is_some_and(|cols| cols.contains(&column));
             let columns = overlay
                 .filter(|&(y, _, _)| y == row)
                 .map(|(_, x, width)| x..x + width);
@@ -114,6 +136,8 @@ impl View {
                     .is_some_and(|columns| columns.contains(&column));
                 self.backgrounds.push(rgba(if covered {
                     snapshot.background
+                } else if highlighted(column) {
+                    cell.foreground
                 } else {
                     cell.background
                 }));
@@ -132,7 +156,14 @@ impl View {
                 &mut self.font_errors,
                 &mut self.glyphs,
                 [0, row],
-                |column| rgba(cells[column as usize].foreground),
+                |column| {
+                    let cell = &cells[column as usize];
+                    rgba(if highlighted(column) {
+                        cell.background
+                    } else {
+                        cell.foreground
+                    })
+                },
             );
         }
         if let Some((row, column, _)) = overlay {
@@ -144,6 +175,21 @@ impl View {
                 |_| rgba(snapshot.foreground),
             );
         }
+        self.set_cursor(snapshot, overlay);
+        self.atlas_dirty.clear();
+        self.atlas_dirty.extend(
+            self.font
+                .atlas()
+                .dirty_regions()
+                .iter()
+                .map(|rect| AtlasRect {
+                    origin: [rect.x, rect.y],
+                    size: [rect.width, rect.height],
+                }),
+        );
+    }
+
+    fn set_cursor(&mut self, snapshot: &Snapshot, overlay: Option<(u32, u32, u32)>) {
         self.cursor = snapshot.cursor.and_then(|cursor| {
             let [column, row] = [u32::from(cursor.column), u32::from(cursor.row)];
             let [x, y] = self.origin([column, row]);
@@ -165,17 +211,6 @@ impl View {
                 color: rgba(cursor.color),
             })
         });
-        self.atlas_dirty.clear();
-        self.atlas_dirty.extend(
-            self.font
-                .atlas()
-                .dirty_regions()
-                .iter()
-                .map(|rect| AtlasRect {
-                    origin: [rect.x, rect.y],
-                    size: [rect.width, rect.height],
-                }),
-        );
     }
 
     fn composition(&mut self, snapshot: &Snapshot) -> Option<(u32, u32, u32)> {

@@ -34,6 +34,10 @@ PTY readiness clears the wake before draining output into VT. Key commands carry
 
 On Linux, core matches Ctrl+Shift+V by evdev position or keysym before key encoding. The Wayland `clipboard` module reads the keyboard seat's selection on a nonblocking calloop pipe. It neither matches shortcuts nor writes to the PTY. At EOF, the app passes `PaneCommand::Paste` to the pane. The VT wrapper reads mode 2004, removes embedded end markers in bracketed mode, and calls `ghostty_paste_encode`. The pane enqueues the encoded bytes in one operation, including both markers. An oversized transfer is discarded; warnings report byte counts, never clipboard text.
 
+The core `selection` module tracks an inclusive viewport range, using the grid's stored widths to include both cells of a wide character. It does not read terminal text. The GUI maps surface coordinates to grid cells and inverts the selected cells in its draw list. On release or a copy shortcut, the pane resolves the range with the VT plain-text formatter; neither command writes to the PTY. The Wayland pointer adapter handles the active seat's left button, and `clipboard` serves the resulting immutable text through nonblocking calloop writes. It does not publish a primary selection.
+
+The GUI clears the range and its drag anchor on resize or when output changes any row they cover. Before handling pointer input or resolving a copy, it refreshes a dirty snapshot so the highlight and formatter use the same viewport.
+
 If surface acquisition times out, reports occlusion, or needs reconfiguration, the app retains the dirty frame and retries on a deadline. An idle or suspended surface has no retry deadline. Runtime font errors leave affected cells blank if no replacement glyph can be drawn; the view logs each error variant once without logging the input text.
 
 For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actual presentation. Use changing terminal output to reach N: the debug path does not generate frames on an idle terminal.
@@ -43,6 +47,8 @@ For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actu
 ## Terminal core (`sumie-vt`)
 
 `Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. The PTY reply callback only appends bytes to a bounded buffer on that thread. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. It includes resolved foreground and background colors and the viewport cursor. No handles or borrowed native data escape the crate.
+
+The VT `selection` module converts viewport coordinates to native grid references for the plain-text formatter. Both references and the formatter are scoped to a single copy command; the module owns no selection or clipboard state.
 
 `build.rs` fetches the Ghostty archive by commit and checks its SHA-256 before extracting it under Cargo's `OUT_DIR`. Zig uses its package cache on repeat builds. For a clean offline build, set `SUMIE_GHOSTTY_ARCHIVE` to the prefetched archive and `GHOSTTY_ZIG_SYSTEM_DIR` to the directory of unpacked, hash-named Zig packages. The private FFI module vendors the declarations it uses from the libghostty-rs revision for vt-1.0.1, without taking on its separate native build.
 

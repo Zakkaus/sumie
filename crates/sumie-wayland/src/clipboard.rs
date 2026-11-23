@@ -1,22 +1,24 @@
-use std::{io, mem};
+use std::{io, mem, rc::Rc};
 
 use rustix::{
     fs::{OFlags, fcntl_getfl, fcntl_setfl},
-    io::{Errno, read},
+    io::{Errno, read, write},
     pipe::{PipeFlags, pipe_with},
 };
 use smithay_client_toolkit::{
     data_device_manager::{
+        WritePipe,
         data_device::DataDeviceHandler,
         data_offer::{DataOfferHandler, DragOffer, receive_to_fd},
+        data_source::{CopyPasteSource, DataSourceHandler},
     },
     reexports::{
-        calloop::{Interest, Mode, PostAction, generic::Generic},
+        calloop::{Interest, Mode, PostAction, RegistrationToken, generic::Generic},
         client::{
             Connection, QueueHandle,
             protocol::{
                 wl_data_device::WlDataDevice, wl_data_device_manager::DndAction,
-                wl_surface::WlSurface,
+                wl_data_source::WlDataSource, wl_surface::WlSurface,
             },
         },
     },
@@ -25,8 +27,89 @@ use smithay_client_toolkit::{
 use crate::{Event, platform::State};
 
 const TEXT_TYPES: [&str; 3] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
+const CHUNK_BYTES: usize = 8192;
+
+#[derive(Default)]
+pub(crate) struct Clipboard {
+    source: Option<ClipboardSource>,
+    writes: Vec<Option<RegistrationToken>>,
+}
+
+struct ClipboardSource {
+    source: CopyPasteSource,
+    text: Rc<String>,
+}
 
 impl State {
+    pub(crate) fn write_clipboard(&mut self, serial: u32, text: String) {
+        let Some(manager) = &self.data_device_manager else {
+            return;
+        };
+        let Some(device) = self
+            .keyboard
+            .as_ref()
+            .and_then(|keyboard| keyboard.data_device.as_ref())
+        else {
+            return;
+        };
+        let source = manager.create_copy_paste_source(&self.qh, TEXT_TYPES);
+        source.set_selection(device, serial);
+        self.clipboard.source = Some(ClipboardSource {
+            source,
+            text: Rc::new(text),
+        });
+    }
+
+    pub(crate) fn close_clipboard(&mut self) {
+        self.clipboard.source = None;
+        for token in self.clipboard.writes.drain(..).flatten() {
+            self.loop_handle.remove(token);
+        }
+    }
+
+    fn queue_clipboard_write(&mut self, fd: WritePipe, text: Rc<String>) -> io::Result<()> {
+        fcntl_setfl(&fd, fcntl_getfl(&fd)? | OFlags::NONBLOCK)?;
+        // Each requested fd keeps its own offset and the source text, even after replacement.
+        let mut offset = 0;
+        let writes = &mut self.clipboard.writes;
+        let slot = writes
+            .iter()
+            .position(Option::is_none)
+            .unwrap_or(writes.len());
+        let token = self
+            .loop_handle
+            .insert_source(fd, move |(), fd, state| {
+                let remaining = &text.as_bytes()[offset..];
+                let action = match write(fd, &remaining[..remaining.len().min(CHUNK_BYTES)]) {
+                    Ok(0) | Err(Errno::PIPE) => PostAction::Remove,
+                    Ok(n) => {
+                        offset += n;
+                        if offset == text.len() {
+                            PostAction::Remove
+                        } else {
+                            PostAction::Continue
+                        }
+                    }
+                    Err(Errno::AGAIN | Errno::INTR) => PostAction::Continue,
+                    Err(error) => {
+                        tracing::warn!(%error, "clipboard write failed");
+                        PostAction::Remove
+                    }
+                };
+                if action == PostAction::Remove {
+                    state.clipboard.writes[slot] = None;
+                }
+                action
+            })
+            .map_err(|e| e.error)?;
+        if let Some(entry) = writes.get_mut(slot) {
+            *entry = Some(token);
+        } else {
+            writes.push(Some(token));
+        }
+        Ok(())
+    }
+
     pub(crate) fn read_clipboard(&self, max_bytes: usize) -> io::Result<()> {
         let Some(offer) = self
             .keyboard
@@ -51,7 +134,7 @@ impl State {
         let mut bytes = 0usize;
         self.loop_handle
             .insert_source(source, move |_, fd, state| {
-                let mut chunk = [0; 8192];
+                let mut chunk = [0; CHUNK_BYTES];
                 match read(fd, &mut chunk) {
                     Ok(0) => {
                         state.finish_clipboard(mem::take(&mut data), bytes);
@@ -126,4 +209,52 @@ impl DataOfferHandler for State {
         _: DndAction,
     ) {
     }
+}
+
+impl DataSourceHandler for State {
+    fn send_request(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        source: &WlDataSource,
+        mime: String,
+        fd: WritePipe,
+    ) {
+        let Some(clipboard) = &self.clipboard.source else {
+            return;
+        };
+        if clipboard.source.inner() != source
+            || clipboard.text.is_empty()
+            || !TEXT_TYPES.contains(&mime.as_str())
+        {
+            return;
+        }
+        let text = Rc::clone(&clipboard.text);
+        if let Err(error) = self.queue_clipboard_write(fd, text) {
+            tracing::warn!(%error, "could not start clipboard write");
+        }
+    }
+
+    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &WlDataSource) {
+        if self
+            .clipboard
+            .source
+            .as_ref()
+            .is_some_and(|clipboard| clipboard.source.inner() == source)
+        {
+            self.clipboard.source = None;
+        }
+    }
+
+    fn accept_mime(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlDataSource,
+        _: Option<String>,
+    ) {
+    }
+    fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: DndAction) {}
 }

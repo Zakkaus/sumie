@@ -60,6 +60,51 @@ pub struct Style {
     reserved: u16,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PointCoordinate {
+    pub x: u16,
+    pub y: u32,
+}
+
+#[repr(C)]
+pub union PointValue {
+    pub coordinate: PointCoordinate,
+    _padding: [u64; 2],
+}
+
+#[repr(C)]
+pub struct Point {
+    pub tag: c_int,
+    pub value: PointValue,
+}
+
+#[repr(C)]
+#[derive(Default)]
+pub struct GridRef {
+    node: *mut c_void,
+    x: u16,
+    y: u16,
+}
+
+#[repr(C)]
+pub struct Selection {
+    pub start: GridRef,
+    pub end: GridRef,
+    pub rectangle: bool,
+}
+
+#[repr(C)]
+pub struct Writer {
+    pub write: unsafe extern "C" fn(*mut c_void, *const u8, usize) -> bool,
+    pub userdata: *mut c_void,
+}
+
+pub type Formatter = *mut c_void;
+pub const POINT_TAG_VIEWPORT: c_int = 1;
+pub const FORMATTER_OPT_UNWRAP: c_int = 2;
+pub const FORMATTER_OPT_SELECTION: c_int = 4;
+
 pub type KeyEncoder = *mut c_void;
 pub type KeyEvent = *mut c_void;
 
@@ -120,6 +165,19 @@ unsafe extern "C" {
     pub fn ghostty_terminal_vt_write(terminal: Terminal, data: *const u8, len: usize);
     pub fn ghostty_terminal_set(terminal: Terminal, option: c_int, value: *const c_void) -> c_int;
     pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
+    pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
+    pub fn ghostty_formatter_terminal_new(
+        allocator: *const Allocator,
+        formatter: *mut Formatter,
+        terminal: Terminal,
+    ) -> c_int;
+    pub fn ghostty_formatter_set(
+        formatter: Formatter,
+        option: c_int,
+        value: *const c_void,
+    ) -> c_int;
+    pub fn ghostty_formatter_format(formatter: Formatter, writer: Writer) -> c_int;
+    pub fn ghostty_formatter_free(formatter: Formatter);
     pub fn ghostty_paste_encode(
         data: *mut u8,
         data_len: usize,

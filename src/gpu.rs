@@ -74,6 +74,10 @@ impl Gpu {
         }
     }
 
+    pub(crate) fn write_clipboard(&mut self, serial: u32, text: String) {
+        self.window.write_clipboard(serial, text);
+    }
+
     pub(crate) fn dispatch(
         &mut self,
         received: &mut Vec<Event>,

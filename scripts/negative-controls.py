@@ -154,6 +154,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")
+    probe("selection splits a wide glyph", "test", "crates/sumie-core/src/selection.rs",
+          replace_once("end.column += 1;", "end.column += 0;"),
+          "test selection::tests::drag_selects_whole_cell_groups ... FAILED")
     if sys.platform.startswith("linux"):
         probe("preedit written to PTY", "test", "src/input.rs",
               replace_once("Event::ImePreedit { text, .. } => return Ok(Effect::Preedit(text)),",

@@ -6,6 +6,7 @@ mod clipboard;
 mod ime;
 mod keyboard;
 mod platform;
+mod pointer;
 mod scale;
 
 pub use ime::CursorRect;
@@ -38,6 +39,16 @@ pub enum Event {
         modifiers: Modifiers,
         pressed: bool,
         repeat: bool,
+        /// Wayland key serial, or zero for a client-generated repeat.
+        serial: u32,
+    },
+    /// Activity of the active seat's left button; hover is not reported.
+    Pointer {
+        phase: PointerPhase,
+        /// Position in surface-local logical coordinates.
+        position: (f64, f64),
+        /// Wayland button serial on press and release; zero on motion or cancellation.
+        serial: u32,
     },
     /// Replace the composition overlay. An empty string clears it.
     ImePreedit {
@@ -48,4 +59,12 @@ pub enum Event {
     ImeCommit {
         text: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerPhase {
+    Press,
+    Motion,
+    Release,
+    Cancel,
 }

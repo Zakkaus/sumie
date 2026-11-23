@@ -10,6 +10,10 @@
 //! use sumie_core::wgpu;
 //! ```
 
+mod selection;
+
+pub use selection::{CellPosition, CellRange, Selection};
+
 /// Key action before encoding against the active terminal modes.
 #[derive(Clone, Copy)]
 pub enum KeyAction {
@@ -38,6 +42,7 @@ pub struct Shortcuts {
 }
 
 pub enum Shortcut {
+    Copy,
     Paste,
     Consume,
 }
@@ -52,6 +57,7 @@ impl Shortcuts {
         modifiers: KeyModifiers,
         action: KeyAction,
     ) -> Option<Shortcut> {
+        const KEY_C: u32 = 46;
         const KEY_V: u32 = 47;
         if let Some(index) = self.consumed.iter().position(|&held| held == evdev) {
             if !matches!(action, KeyAction::Repeat) {
@@ -66,10 +72,19 @@ impl Shortcuts {
             && modifiers.shift
             && !modifiers.alt
             && !modifiers.super_key
-            && (evdev == KEY_V || matches!(symbol, Some('v' | 'V')))
         {
+            let key = match evdev {
+                KEY_C => Some('c'),
+                KEY_V => Some('v'),
+                _ => symbol,
+            };
+            let shortcut = match key {
+                Some('c' | 'C') => Shortcut::Copy,
+                Some('v' | 'V') => Shortcut::Paste,
+                _ => return None,
+            };
             self.consumed.push(evdev);
-            return Some(Shortcut::Paste);
+            return Some(shortcut);
         }
         None
     }
@@ -88,6 +103,7 @@ pub enum PaneCommand<'a> {
     },
     Text(&'a [u8]),
     Paste(String),
+    Copy(CellRange),
     Resize {
         cols: u16,
         rows: u16,
@@ -103,11 +119,11 @@ pub trait Pane {
     type Snapshot;
     type Error;
 
-    /// Submit one command. The implementation encodes key events before queuing input.
+    /// Submit one command. Only `Copy` returns text; it never queues PTY input.
     ///
     /// # Errors
     /// Returns an error if encoding, queuing, resizing or initiating close fails.
-    fn command(&mut self, command: PaneCommand<'_>) -> Result<(), Self::Error>;
+    fn command(&mut self, command: PaneCommand<'_>) -> Result<Option<String>, Self::Error>;
 
     /// Return an owned snapshot for the consumer to draw without borrowing the pane.
     ///

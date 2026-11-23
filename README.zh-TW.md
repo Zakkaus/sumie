@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wgpu。在 Linux Wayland 上可開啟終端機，按 Ctrl+Shift+V 即可貼上剪貼簿文字。macOS 支援尚在規劃中。
+sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wgpu。在 Linux Wayland 上，按住滑鼠左鍵拖曳即可選取文字，放開時會將文字複製到剪貼簿。按 Ctrl+Shift+C 可再次複製選取的文字，按 Ctrl+Shift+V 可貼上。macOS 支援尚在規劃中。
 
 ## 建置與檢查
 

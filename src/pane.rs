@@ -90,7 +90,7 @@ impl Pane for LocalPane {
     type Snapshot = Snapshot;
     type Error = crate::Error;
 
-    fn command(&mut self, command: PaneCommand<'_>) -> Result<()> {
+    fn command(&mut self, command: PaneCommand<'_>) -> Result<Option<String>> {
         match command {
             PaneCommand::Key {
                 physical,
@@ -120,6 +120,13 @@ impl Pane for LocalPane {
             PaneCommand::Paste(text) => {
                 self.pty.enqueue_input(&self.terminal.encode_paste(text)?)?;
             }
+            PaneCommand::Copy(range) => {
+                let point = |p: sumie_core::CellPosition| [p.column, p.row];
+                return Ok(Some(
+                    self.terminal
+                        .selection_text(point(range.start), point(range.end))?,
+                ));
+            }
             PaneCommand::Resize {
                 cols,
                 rows,
@@ -137,7 +144,7 @@ impl Pane for LocalPane {
             }
             PaneCommand::Close => self.pty.close()?,
         }
-        Ok(())
+        Ok(None)
     }
 
     fn snapshot(&mut self) -> Result<Snapshot> {
