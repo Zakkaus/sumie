@@ -39,3 +39,10 @@ this unsandboxed client without bypassing its protocol filter.
 
 The private session bus has no desktop service activation. The runner removes
 its `/scratch/ram/sumie-rt.*` directory on exit. It does not sandbox the client.
+
+## Terminal performance baseline
+
+Use [`scripts/perf/baseline.sh`](../perf/baseline.sh) for the Ghostty and sumie
+startup, idle, and memory comparison at scale 1.25. See
+[`REQUIREMENTS.md`](../../REQUIREMENTS.md#ghostty-performance-baseline) for the
+build command, measurement method, and recorded results.
