@@ -68,6 +68,7 @@ struct Session {
     routing: input::Routing,
     search: Option<search::Bar>,
     selection: Selection,
+    selected_text: String,
     pane: LocalPane,
     sources: Option<Sources>,
     view: View,
@@ -271,6 +272,7 @@ impl Session {
             routing: input::Routing::default(),
             search: None,
             selection: Selection::default(),
+            selected_text: String::new(),
             pane,
             sources: Some(sources),
             view,
@@ -288,7 +290,7 @@ impl Session {
     }
 
     fn resize_grid(&mut self) -> Result<()> {
-        self.selection = Selection::default();
+        self.clear_selection();
         let size = self.view.size();
         self.pane.command(PaneCommand::Resize {
             cols: size.cols,
@@ -305,6 +307,11 @@ impl Session {
     }
 
     fn input(&mut self, event: Event, gpu: &mut Gpu) -> Result<()> {
+        if let Event::ModifiersChanged(modifiers) = event {
+            self.pane
+                .pointer_modifiers_changed(input::key_modifiers(modifiers));
+            return Ok(());
+        }
         if matches!(
             event,
             Event::Key { pressed: true, .. } | Event::ImeCommit { .. }
@@ -363,7 +370,7 @@ impl Session {
             }
             input::Effect::ViewportChanged => {
                 self.frame_dirty |= searching || self.selection.range().is_some();
-                self.selection = Selection::default();
+                self.clear_selection();
                 self.snapshot_dirty = true;
             }
             input::Effect::ReadClipboard => gpu.read_clipboard(),
@@ -399,7 +406,11 @@ impl Session {
         };
         match step {
             SelectStep::Begin(unit) => {
-                let group = resolve(hit, hit, unit)?;
+                let group = if unit == SelectionUnit::Cell {
+                    None
+                } else {
+                    resolve(hit, hit, unit)?
+                };
                 self.selection
                     .press(hit, group, unit != SelectionUnit::Cell);
             }
@@ -407,10 +418,25 @@ impl Session {
                 self.selection
                     .drag(hit, |from, toward| resolve(from, toward, unit))?;
             }
-            SelectStep::Clear => self.selection = Selection::default(),
+            SelectStep::Clear => self.clear_selection(),
         }
-        self.frame_dirty |= old != self.selection.range();
+        let range = self.selection.range();
+        if old != range {
+            self.frame_dirty = true;
+            if let Some(range) = range {
+                self.pane
+                    .terminal
+                    .write_selection_text(range, &mut self.selected_text)?;
+            } else {
+                self.selected_text.clear();
+            }
+        }
         Ok(matches!(step, SelectStep::Finish(_)) && self.selection.release().is_some())
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection = Selection::default();
+        self.selected_text.clear();
     }
 
     fn service_pty(&mut self, gpu: &mut Gpu) -> Result<bool> {
@@ -459,20 +485,14 @@ impl Session {
         if self.snapshot_dirty {
             self.snapshot_dirty = false;
             let next = self.pane.snapshot()?;
-            if let Some(prev) = &self.snapshot
-                && let Some(rows) = self.selection.affected_rows()
+            if let Some(range) = self.selection.range()
+                && !self
+                    .pane
+                    .terminal
+                    .selection_text_matches(range, &self.selected_text)?
             {
-                let bounds = usize::try_from(*rows.start())
-                    .ok()
-                    .zip(usize::try_from(*rows.end()).ok());
-                // A viewport snapshot cannot validate selected rows outside the viewport.
-                if bounds.is_none_or(|(start, end)| {
-                    end >= next.rows.len() || prev.rows[start..=end] != next.rows[start..=end]
-                }) {
-                    self.frame_dirty |= self.selection.range().is_some();
-                    self.selection = Selection::default();
-                    self.pane.cancel_pointer_selection();
-                }
+                self.clear_selection();
+                self.frame_dirty = true;
             }
             if self.snapshot.as_ref() != Some(&next) {
                 self.snapshot = Some(next);

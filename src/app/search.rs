@@ -198,7 +198,7 @@ impl Session {
                 self.view.search_highlights.clear();
                 self.view.preedit.clear();
                 self.snapshot_dirty = true;
-                self.selection = sumie_core::Selection::default();
+                self.clear_selection();
                 let vt = &mut self.pane.terminal;
                 if bar.opening_screen == vt.screen_id()? {
                     if let Some(pin) = bar.opening_top {
@@ -237,7 +237,7 @@ impl Session {
             .select(&mut self.pane.terminal)?
         {
             self.snapshot_dirty = true;
-            self.selection = sumie_core::Selection::default();
+            self.clear_selection();
         }
         Ok(())
     }

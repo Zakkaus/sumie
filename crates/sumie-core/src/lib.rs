@@ -23,7 +23,7 @@ pub enum KeyAction {
     Release,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "modifiers are independent flags"

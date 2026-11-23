@@ -243,6 +243,7 @@ impl KeyboardHandler for State {
     ) {
         if let Some(keyboard) = self.keyboard_mut(proxy) {
             keyboard.modifiers = modifiers;
+            self.events.push_back(Event::ModifiersChanged(modifiers));
         }
     }
 }

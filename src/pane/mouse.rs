@@ -48,7 +48,7 @@ impl Mouse {
     pub(super) fn resize(&mut self, grid: [u16; 2], cell: [u32; 2]) {
         self.grid = grid.map(u32::from);
         self.cell = cell;
-        self.state.cancel_selection();
+        self.state.reset_clicks();
     }
 
     fn report(
@@ -74,8 +74,8 @@ impl LocalPane {
         self.mouse.state.set_click_interval(millis);
     }
 
-    pub(crate) fn cancel_pointer_selection(&mut self) {
-        self.mouse.state.cancel_selection();
+    pub(crate) fn pointer_modifiers_changed(&mut self, modifiers: sumie_core::KeyModifiers) {
+        self.mouse.state.modifiers_changed(modifiers);
     }
 
     pub(crate) fn reset_pointer_gestures(&mut self) {
@@ -171,7 +171,7 @@ impl LocalPane {
 
     fn scroll_history(&mut self, steps: i32) -> Result<PaneEffect> {
         self.terminal.scroll_rows(steps)?;
-        self.mouse.state.cancel_selection();
+        self.mouse.state.reset_clicks();
         Ok(PaneEffect::ViewportChanged)
     }
 }

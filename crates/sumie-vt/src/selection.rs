@@ -1,9 +1,15 @@
 use std::ffi::{c_int, c_void};
 use std::ptr::{from_mut, from_ref, null, null_mut};
+use std::sync::LazyLock;
 
 use sumie_core::{CellPosition, CellRange, SelectionPoint, mouse::SelectionUnit};
 
 use crate::{Error, Terminal, check, ffi};
+
+static LINKS_READY: LazyLock<bool> = LazyLock::new(|| {
+    // SAFETY: LazyLock initializes the process-wide native matcher once.
+    unsafe { ffi::sumie_selection_init_links() }
+});
 
 struct Formatter(ffi::Formatter);
 
@@ -18,6 +24,16 @@ unsafe extern "C" fn append(data: *mut c_void, bytes: *const u8, len: usize) -> 
     // SAFETY: The synchronous formatter supplies a non-null initialized chunk. Its
     // userdata is the exclusively borrowed Vec for this call, not the Vec's buffer.
     unsafe { (*data.cast::<Vec<u8>>()).extend_from_slice(std::slice::from_raw_parts(bytes, len)) };
+    true
+}
+
+unsafe extern "C" fn compare(data: *mut c_void, bytes: *const u8, len: usize) -> bool {
+    // SAFETY: The synchronous formatter owns the live chunk and exclusively borrows
+    // the remaining slice reference for this call.
+    unsafe {
+        let remaining = &mut *data.cast::<Option<&[u8]>>();
+        *remaining = remaining.and_then(|s| s.strip_prefix(std::slice::from_raw_parts(bytes, len)));
+    }
     true
 }
 
@@ -78,6 +94,7 @@ impl Terminal {
     }
 
     /// Resolve a word or logical line with Ghostty's default boundaries.
+    /// A word press prefers a full Ghostty URL or path match under `hit`.
     /// Word resolution starts at `hit` and searches towards `toward` through unwritten cells.
     /// `Cell` returns no native range.
     ///
@@ -98,7 +115,11 @@ impl Terminal {
             end: ffi::GridRef::default(),
             rectangle: false,
         };
-        let result = if unit == SelectionUnit::Word {
+        let result = if unit == SelectionUnit::Line {
+            self.select_line(start, &mut selection)
+        } else if toward == hit && self.select_link(&start, &mut selection) {
+            ffi::SUCCESS
+        } else {
             let end = if toward == hit {
                 start
             } else {
@@ -119,8 +140,6 @@ impl Terminal {
                     &raw mut selection,
                 )
             }
-        } else {
-            self.select_line(start, &mut selection)
         };
         if result == ffi::NO_VALUE {
             return Ok(None);
@@ -135,6 +154,13 @@ impl Terminal {
             end.column += 1;
         }
         Ok(Some(CellRange { start, end }))
+    }
+
+    fn select_link(&self, reference: &ffi::GridRef, selection: &mut ffi::Selection) -> bool {
+        // SAFETY: The matcher is initialized, and the grid reference and output stay live.
+        *LINKS_READY
+            && unsafe { ffi::sumie_selection_link_at(self.raw, reference, selection) }
+                == ffi::SUCCESS
     }
 
     fn select_line(&self, reference: ffi::GridRef, selection: &mut ffi::Selection) -> c_int {
@@ -177,36 +203,83 @@ impl Terminal {
     /// # Errors
     /// Returns an error for invalid endpoints or a native formatter failure.
     pub fn selection_text(&self, range: CellRange) -> Result<String, Error> {
-        let selection = ffi::Selection {
+        let mut text = String::new();
+        self.write_selection_text(range, &mut text)?;
+        Ok(text)
+    }
+
+    /// Replace `text` with the selected UTF-8, reusing its buffer.
+    ///
+    /// # Errors
+    /// Returns an error for invalid endpoints or a native formatter failure.
+    pub fn write_selection_text(&self, range: CellRange, text: &mut String) -> Result<(), Error> {
+        let selection = self.selection_refs(range)?;
+        let mut bytes = std::mem::take(text).into_bytes();
+        bytes.clear();
+        self.format_selection(
+            &selection,
+            ffi::Writer {
+                write: append,
+                userdata: from_mut(&mut bytes).cast(),
+            },
+        )?;
+        *text = String::from_utf8(bytes).map_err(|_| Error(ffi::INVALID_VALUE))?;
+        Ok(())
+    }
+
+    /// Compare selected UTF-8 without allocating another copy. Missing endpoints never match.
+    ///
+    /// # Errors
+    /// Returns a native formatter error.
+    pub fn selection_text_matches(&self, range: CellRange, text: &str) -> Result<bool, Error> {
+        let selection = match self.selection_refs(range) {
+            Ok(selection) => selection,
+            Err(Error(ffi::INVALID_VALUE)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let mut remaining = Some(text.as_bytes());
+        self.format_selection(
+            &selection,
+            ffi::Writer {
+                write: compare,
+                userdata: from_mut(&mut remaining).cast(),
+            },
+        )?;
+        Ok(remaining == Some(&[]))
+    }
+
+    fn selection_refs(&self, range: CellRange) -> Result<ffi::Selection, Error> {
+        Ok(ffi::Selection {
             start: self.selection_ref(range.start)?,
             end: self.selection_ref(range.end)?,
             rectangle: false,
-        };
+        })
+    }
+
+    fn format_selection(
+        &self,
+        selection: &ffi::Selection,
+        writer: ffi::Writer,
+    ) -> Result<(), Error> {
         let mut raw = null_mut();
         // SAFETY: The formatter borrows this terminal until the guard drops.
         check(unsafe { ffi::ghostty_formatter_terminal_new(null(), &raw mut raw, self.raw) })?;
         let formatter = Formatter(raw);
-        let mut bytes = Vec::<u8>::new();
-        let writer = ffi::Writer {
-            write: append,
-            userdata: from_mut(&mut bytes).cast(),
-        };
         // SAFETY: Option values have their documented types. Neither the grid refs nor
         // the writer escape this immutable borrow. Plain output and trimming are defaults.
         unsafe {
             check(ffi::ghostty_formatter_set(
                 formatter.0,
                 ffi::FORMATTER_OPT_SELECTION,
-                from_ref(&selection).cast(),
+                from_ref(selection).cast(),
             ))?;
             check(ffi::ghostty_formatter_set(
                 formatter.0,
                 ffi::FORMATTER_OPT_UNWRAP,
                 from_ref(&true).cast(),
             ))?;
-            check(ffi::ghostty_formatter_format(formatter.0, writer))?;
+            check(ffi::ghostty_formatter_format(formatter.0, writer))
         }
-        String::from_utf8(bytes).map_err(|_| Error(ffi::INVALID_VALUE))
     }
 }
 
@@ -217,16 +290,21 @@ mod tests {
     #[test]
     fn formats_selected_viewport_text() {
         let mut terminal = Terminal::new(5, 3).unwrap();
-        terminal.write("0界abcd\r\nxy".as_bytes());
-        assert_eq!(
-            terminal
-                .selection_text(CellRange {
-                    start: SelectionPoint { row: 0, column: 1 },
-                    end: SelectionPoint { row: 2, column: 4 },
-                })
-                .unwrap(),
-            "界abcd\nxy"
-        );
+        terminal.write("0界abcd\r\nxy\r\nnext".as_bytes());
+        terminal.restore_viewport(1).unwrap();
+        let range = CellRange {
+            start: SelectionPoint { row: -1, column: 1 },
+            end: SelectionPoint { row: 1, column: 4 },
+        };
+        let text = terminal.selection_text(range).unwrap();
+        assert_eq!(text, "界abcd\nxy");
+        for (output, expected) in [(b"\x1b[?25l".as_slice(), true), (b"\x1b[2;1HZ", false)] {
+            terminal.write(output);
+            assert_eq!(
+                terminal.selection_text_matches(range, &text).unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -240,8 +318,8 @@ mod tests {
         let cell = |(row, column)| CellPosition { row, column };
         for (top, hit, toward, unit, end_column, expected) in [
             (0, (0, 6), None, Word, 8, "中文"),
-            (0, (0, 12), None, Word, 14, "https"),
-            (0, (0, 20), None, Word, 4, "//ex.io/a?q=1"),
+            (0, (0, 12), None, Word, 4, "https://ex.io/a?q=1"),
+            (0, (1, 2), None, Word, 4, "https://ex.io/a?q=1"),
             (0, (1, 22), Some((1, 2)), Word, 7, "終"),
             (1, (0, 1), None, Line, 7, line),
         ] {

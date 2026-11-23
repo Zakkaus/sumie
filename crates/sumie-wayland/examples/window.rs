@@ -97,6 +97,9 @@ impl fmt::Debug for EventMetadata<'_> {
                 .field("repeat", repeat)
                 .field("bytes", &utf8.as_ref().map_or(0, String::len))
                 .finish(),
+            Event::ModifiersChanged(modifiers) => {
+                f.debug_tuple("ModifiersChanged").field(modifiers).finish()
+            }
             Event::Pointer {
                 phase, position, ..
             } => f

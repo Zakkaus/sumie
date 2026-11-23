@@ -100,7 +100,7 @@ impl LocalPane {
             return Ok(PaneEffect::None);
         }
         self.terminal.scroll_bottom()?;
-        self.mouse.state.cancel_selection();
+        self.mouse.state.reset_clicks();
         Ok(PaneEffect::ViewportChanged)
     }
 }

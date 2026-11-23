@@ -295,6 +295,12 @@ unsafe extern "C" {
         options: *const SelectLineOptions,
         out: *mut Selection,
     ) -> c_int;
+    pub fn sumie_selection_init_links() -> bool;
+    pub fn sumie_selection_link_at(
+        terminal: Terminal,
+        reference: *const GridRef,
+        out: *mut Selection,
+    ) -> c_int;
     pub fn ghostty_formatter_terminal_new(
         allocator: *const Allocator,
         formatter: *mut Formatter,

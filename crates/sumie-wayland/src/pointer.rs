@@ -29,6 +29,8 @@ pub fn double_click_interval() -> Option<u32> {
                 "KDE",
                 "--key",
                 "DoubleClickInterval",
+                "--default",
+                "400",
             ])
             .output()
             .ok(),

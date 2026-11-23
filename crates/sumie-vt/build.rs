@@ -10,6 +10,7 @@ const GHOSTTY_ARCHIVE_SHA256: &str =
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=src/search/grid.zig");
+    println!("cargo::rerun-if-changed=src/selection.zig");
     for var in [
         "ZIG",
         "PATH",
@@ -30,6 +31,7 @@ fn main() {
     let source = source(&out);
     resolve_cursor_default_at_snapshot(&source);
     install_search_bridge(&source);
+    install_selection_bridge(&source);
     let prefix = out.join("ghostty-install");
     let mut build = Command::new(zig);
     build
@@ -93,6 +95,37 @@ fn install_search_bridge(source: &Path) {
         &source.join("src/build/uucode_config.zig"),
         "            \"case_folding_full\",\n",
         "            \"case_folding_simple\",\n",
+    );
+}
+
+fn install_selection_bridge(source: &Path) {
+    fs::write(
+        source.join("src/sumie_selection.zig"),
+        include_str!("src/selection.zig"),
+    )
+    .expect("write Zig selection bridge");
+    insert_once(
+        &source.join("src/lib_vt.zig"),
+        "comptime { @import(\"sumie_search.zig\").install(); }\n",
+        "comptime { @import(\"sumie_selection.zig\").install(); }\n",
+    );
+    let build = source.join("src/build/GhosttyZig.zig");
+    insert_once(
+        &build,
+        "    vt_options.c_abi = true;\n",
+        "    vt_options.oniguruma = true;\n",
+    );
+    insert_once(
+        &build,
+        "    vt.addImport(\"uucode\", deps.uucode_mod);\n",
+        r#"
+    if (vt_options.oniguruma) {
+        if (b.lazyDependency("oniguruma", .{ .target = cfg.target, .optimize = cfg.optimize })) |dep| {
+            vt.addImport("oniguruma", dep.module("oniguruma"));
+            if (simd_libs) |libs| try libs.append(b.allocator, dep.artifact("oniguruma").getEmittedBin());
+        }
+    }
+"#,
     );
 }
 

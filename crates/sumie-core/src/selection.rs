@@ -124,17 +124,6 @@ impl Selection {
     pub fn range(&self) -> Option<CellRange> {
         self.range
     }
-
-    /// Include the pressed cell before the pointer has crossed a cell boundary.
-    #[must_use]
-    pub fn affected_rows(&self) -> Option<RangeInclusive<i64>> {
-        if let Some(range) = self.range.or_else(|| self.drag.as_ref()?.group) {
-            Some(range.start.row..=range.end.row)
-        } else {
-            let row = i64::from(self.drag.as_ref()?.origin.row);
-            Some(row..=row)
-        }
-    }
 }
 
 #[cfg(test)]

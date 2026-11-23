@@ -198,8 +198,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           replace_once("modes.tracking && !event.modifiers.shift", "modes.tracking"),
           "test mouse::tests::routes_mouse_by_mode_and_gesture ... FAILED")
     probe("double click remains cell-wise", "test", "crates/sumie-core/src/mouse.rs",
-          replace_once("SelectionUnit::Cell)) => SelectionUnit::Word,",
-                       "SelectionUnit::Cell)) => SelectionUnit::Cell,"),
+          replace_once("Some((_, _, _, SelectionUnit::Cell)) => SelectionUnit::Word,",
+                       "Some((_, _, _, SelectionUnit::Cell)) => SelectionUnit::Cell,"),
           "test mouse::tests::routes_mouse_by_mode_and_gesture ... FAILED")
     probe("logical line selection clips the final wide cell", "test", "crates/sumie-vt/src/selection.rs",
           replace_once("end.column += 1;", "end.column += 0;"),

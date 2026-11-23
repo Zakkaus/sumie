@@ -51,6 +51,7 @@ pub enum Event {
         /// Wayland key serial, or zero for a client-generated repeat.
         serial: u32,
     },
+    ModifiersChanged(Modifiers),
     /// Pointer input from the active seat on the window surface.
     Pointer {
         phase: PointerPhase,
