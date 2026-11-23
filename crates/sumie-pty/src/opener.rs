@@ -76,7 +76,7 @@ fn opener_status(program: &str, args: &[&str]) -> io::Result<ExitStatus> {
             | PosixSpawnFlags::from_bits_retain(nix::libc::POSIX_SPAWN_CLOEXEC_DEFAULT),
     )?;
 
-    let argv = std::iter::once(program)
+    let command_line = std::iter::once(program)
         .chain(args.iter().copied())
         .map(CString::new)
         .collect::<Result<Vec<_>, _>>()?;
@@ -89,7 +89,7 @@ fn opener_status(program: &str, args: &[&str]) -> io::Result<ExitStatus> {
             CString::new(pair)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let pid = posix_spawn(program, &actions, &attrs, &argv, &env)?;
+    let pid = posix_spawn(program, &actions, &attrs, &command_line, &env)?;
     let pid = Pid::from_raw(pid.as_raw()).expect("posix_spawn returns a positive PID");
     let (_, status) = retry_on_intr(|| waitpid(Some(pid), WaitOptions::empty()))?
         .expect("blocking waitpid returns a status");
