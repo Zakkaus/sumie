@@ -376,7 +376,6 @@ impl Session {
             let hit = || self.view.search_hit(position);
             match routing.pointer(&mut tab.pane, searching, mouse, hit)? {
                 input::Effect::OpenLink => {
-                    tab.selection.release();
                     links::Hover::open(uri.expect("validated link release"));
                     input::Effect::None
                 }
@@ -462,6 +461,12 @@ impl Tab {
                 };
                 self.selection
                     .press(hit, group, unit != SelectionUnit::Cell);
+            }
+            SelectStep::DragFromLink(origin) => {
+                self.selection.press(origin, None, false);
+                self.selection.drag(hit, |from, toward| {
+                    resolve(from, toward, SelectionUnit::Cell)
+                })?;
             }
             SelectStep::Drag(unit) | SelectStep::Finish(unit) => {
                 self.selection

@@ -390,7 +390,7 @@ fn ctrl_click_a_link_bypasses_mouse_tracking() {
     use MousePhase::{Cancel, Motion, Press, Release};
     use input::Effect::{None as Ignore, OpenLink, Select};
     use sumie_core::mouse::{
-        SelectStep::{Begin, Clear, Drag, Finish},
+        SelectStep::{Drag, DragFromLink, Finish},
         SelectionUnit::Cell,
     };
 
@@ -417,24 +417,31 @@ fn ctrl_click_a_link_bypasses_mouse_tracking() {
     let press = Press(Button::Left, 0);
     let release = Release(Button::Left);
     for (phase, column, x, link, expected) in [
-        (press, 0, 0.0, true, Select(Begin(Cell))),
+        (press, 0, 0.0, true, Ignore),
+        (Motion, 0, 0.0, true, Ignore),
         (release, 0, 0.0, true, OpenLink),
-        (press, 0, 0.0, true, Select(Begin(Cell))),
-        (Motion, 1, 12.0, false, Select(Drag(Cell))),
+        (press, 0, 0.0, true, Ignore),
+        (
+            Motion,
+            1,
+            12.0,
+            false,
+            Select(DragFromLink(CellPosition { row: 0, column: 0 })),
+        ),
         (Motion, 0, 0.0, false, Select(Drag(Cell))),
         (release, 0, 0.0, true, Select(Finish(Cell))),
-        (press, 0, 0.0, true, Select(Begin(Cell))),
+        (press, 0, 0.0, true, Ignore),
         (Motion, 0, 1.0, false, Ignore),
-        (release, 0, 0.0, true, Select(Finish(Cell))),
-        (press, 0, 0.0, true, Select(Begin(Cell))),
-        (release, 0, 0.0, false, Select(Finish(Cell))),
-        (press, 0, 0.0, true, Select(Begin(Cell))),
-        (Cancel, 0, 0.0, false, Select(Clear)),
+        (release, 0, 0.0, true, Ignore),
+        (press, 0, 0.0, true, Ignore),
+        (release, 0, 0.0, false, Ignore),
+        (press, 0, 0.0, true, Ignore),
+        (Cancel, 0, 0.0, false, Ignore),
         (release, 0, 0.0, true, Ignore),
     ] {
         send(&mut pane, phase, column, x, link, expected);
     }
-    send(&mut pane, press, 0, 0.0, true, Select(Begin(Cell)));
+    send(&mut pane, press, 0, 0.0, true, Ignore);
     pane.leave_tab().unwrap();
     send(&mut pane, release, 0, 0.0, true, Ignore);
     pane.command(PaneCommand::Close).unwrap();

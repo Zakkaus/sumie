@@ -52,7 +52,11 @@ impl Mouse {
     pub(super) fn resize(&mut self, grid: [u16; 2], cell: [u32; 2]) {
         self.grid = grid.map(u32::from);
         self.cell = cell;
-        self.state.reset_clicks();
+        if self.link_press.take().is_some() {
+            self.state.reset_gestures();
+        } else {
+            self.state.reset_clicks();
+        }
     }
 
     fn report(

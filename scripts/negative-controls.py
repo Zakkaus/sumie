@@ -213,8 +213,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
         probe("Ctrl+click link opens on press", "test", "crates/sumie-core/src/mouse.rs",
-              replace_once("Dispatch::Select(SelectStep::Begin(SelectionUnit::Cell))",
-                           "Dispatch::OpenLink"),
+              replace_once("Some(event.pixel.map(f32::to_bits))));\n                Dispatch::Ignore",
+                           "Some(event.pixel.map(f32::to_bits))));\n                Dispatch::OpenLink"),
               "test tests::ctrl_click_a_link_bypasses_mouse_tracking ... FAILED")
         probe("two tabs lose their bar", "test", "crates/sumie-ui/src/tabs.rs",
               replace_once("if count < 2 {", "if count < 3 {"),

@@ -45,6 +45,7 @@ pub enum SelectionUnit {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectStep {
     Begin(SelectionUnit),
+    DragFromLink(CellPosition),
     Drag(SelectionUnit),
     Finish(SelectionUnit),
     Clear,
@@ -96,7 +97,7 @@ impl Wheel {
 
 pub struct MouseState {
     selecting: Option<(SelectionUnit, CellPosition)>,
-    link_press: Option<[u32; 2]>,
+    link_press: Option<(CellPosition, Option<[u32; 2]>)>,
     last_click: Option<(u32, CellPosition, KeyModifiers, SelectionUnit)>,
     click_interval: u32,
     // Only buttons whose press was routed to the application belong in motion reports.
@@ -171,7 +172,9 @@ impl MouseState {
         match event.phase {
             MousePhase::Wheel(delta) => {
                 self.last_click = None;
-                self.link_press = None;
+                if let Some((_, pixel)) = &mut self.link_press {
+                    *pixel = None;
+                }
                 let route = if modes.tracking {
                     WheelRoute::Report
                 } else if modes.alternate && modes.alternate_scroll {
@@ -188,9 +191,8 @@ impl MouseState {
             }
             MousePhase::Press(Button::Left, _) if event.modifiers.control && event.link => {
                 self.reset_clicks();
-                self.link_press = Some(event.pixel.map(f32::to_bits));
-                self.selecting = Some((SelectionUnit::Cell, event.cell));
-                Dispatch::Select(SelectStep::Begin(SelectionUnit::Cell))
+                self.link_press = Some((event.cell, Some(event.pixel.map(f32::to_bits))));
+                Dispatch::Ignore
             }
             MousePhase::Press(button, time) => self.press(
                 button,
@@ -200,7 +202,9 @@ impl MouseState {
                 event.modifiers,
             ),
             MousePhase::Release(button) => self.release(button, event),
-            MousePhase::Motion if self.selecting.is_some() => self.drag(event),
+            MousePhase::Motion if self.link_press.is_some() || self.selecting.is_some() => {
+                self.drag(event)
+            }
             // Shift only chooses the route before a drag starts.
             MousePhase::Motion
                 if modes.tracking && (self.any_button() || !event.modifiers.shift) =>
@@ -223,16 +227,18 @@ impl MouseState {
 
     fn release(&mut self, button: Button, event: MouseEvent) -> Dispatch {
         if button == Button::Left {
-            let link_press = self.link_press.take();
-            if let Some((unit, cell)) = self.selecting.take() {
+            if let Some((origin, pixel)) = self.link_press.take() {
                 return if event.link
-                    && event.cell == cell
-                    && link_press == Some(event.pixel.map(f32::to_bits))
+                    && event.cell == origin
+                    && pixel == Some(event.pixel.map(f32::to_bits))
                 {
                     Dispatch::OpenLink
                 } else {
-                    Dispatch::Select(SelectStep::Finish(unit))
+                    Dispatch::Ignore
                 };
+            }
+            if let Some((unit, _)) = self.selecting.take() {
+                return Dispatch::Select(SelectStep::Finish(unit));
             }
         }
         if let Some(i) = self.held.iter().position(|&b| b == Some(button)) {
@@ -275,13 +281,20 @@ impl MouseState {
     }
 
     fn drag(&mut self, event: MouseEvent) -> Dispatch {
-        let (unit, previous) = self.selecting.unwrap();
         let cell = event.cell;
-        if let Some(pixel) = self.link_press
-            && (cell != previous || event.pixel.map(f32::to_bits) != pixel)
-        {
+        if let Some((origin, pixel)) = &mut self.link_press {
+            if cell == *origin {
+                if *pixel != Some(event.pixel.map(f32::to_bits)) {
+                    *pixel = None;
+                }
+                return Dispatch::Ignore;
+            }
+            let origin = *origin;
             self.link_press = None;
+            self.selecting = Some((SelectionUnit::Cell, cell));
+            return Dispatch::Select(SelectStep::DragFromLink(origin));
         }
+        let (unit, previous) = self.selecting.unwrap();
         if cell == previous {
             return Dispatch::Ignore;
         }
