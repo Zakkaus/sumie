@@ -310,6 +310,24 @@ def check_cargo(gate, args):
     raise CannotCheck(f"cargo {args[0]} exited {result.returncode} without a check diagnostic")
 
 
+def check_terminfo():
+    source = (ROOT / "terminfo/xterm-sumie.terminfo").read_text(encoding="utf-8")
+    source = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+    fields = re.findall(r"(?:\\.|[^\\,])+", source, flags=re.DOTALL)
+    capabilities = dict((re.split(r"([=#@])", field.strip(), maxsplit=1) + [""])[:2]
+                        for field in fields[1:])
+    errors = []
+    for name, kind in (("Tc", ""), ("Smulx", "="), ("Setulc", "="),
+                       ("Ms", "="), ("Sync", "="), ("Hls", "=")):
+        if capabilities.get(name) != kind:
+            errors.append(f"xterm-sumie: missing or invalid capability {name}")
+    if "RGB" in capabilities:
+        errors.append("xterm-sumie: RGB must be query-only")
+    for error in errors:
+        print(error, file=sys.stderr)
+    return int(bool(errors))
+
+
 def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
@@ -317,7 +335,7 @@ def main():
         "test": ("test", "--locked", "--workspace", "--message-format=json"),
     }
     parser = argparse.ArgumentParser()
-    parser.add_argument("gate", choices=("structure", *commands))
+    parser.add_argument("gate", choices=("structure", "terminfo", *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -325,7 +343,11 @@ def main():
     os.environ.setdefault("CARGO_TARGET_DIR", str(cache / "sumie" / "target"))
     print(f"== {gate}: {ROOT}", flush=True)
     try:
-        return check_structure() if gate == "structure" else check_cargo(gate, commands[gate])
+        if gate == "structure":
+            return check_structure()
+        if gate == "terminfo":
+            return check_terminfo()
+        return check_cargo(gate, commands[gate])
     except (CannotCheck, OSError, KeyError, ValueError) as error:
         print(f"{gate}: could not run: {error}", file=sys.stderr)
         return 2

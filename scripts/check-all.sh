@@ -9,7 +9,7 @@ esac
 
 scripts=$(CDPATH='' cd "$(dirname "$0")" && pwd -P) || exit 2
 command -v python3 >/dev/null || { echo 'check-all: python3 not found' >&2; exit 2; }
-for gate in structure fmt clippy test; do
+for gate in structure terminfo fmt clippy test; do
     python3 "$scripts/check-gate.py" "$gate" || exit "$?"
 done
 

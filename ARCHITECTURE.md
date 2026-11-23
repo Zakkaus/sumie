@@ -32,6 +32,8 @@ Two edges are deliberately closed:
 
 `app` drives Wayland and the PTY on one calloop thread. `pane` owns the local terminal, key encoder and PTY. The consumer calls `Pane::command` and draws from its own `Pane::snapshot` result; neither method waits for PTY I/O. `view` composes the owned snapshot and IME preedit into device-pixel draw lists and hands font atlas data to the renderer. `capture` handles opt-in frame readback and PNG output; normal presentation does not read back pixels.
 
+`pane::terminfo` owns the bundled entry and its on-disk cache, not the PTY or VT replies. `request_environment` resolves it before spawning a child. Its first call can block on the cache lock, filesystem access, and `tic`; live-pane methods never call it. A missing or stale entry that cannot be compiled falls back to `xterm-256color` without exporting a `TERMINFO` override.
+
 PTY readiness clears the wake before draining output into VT. Key commands carry unencoded input; the local pane encodes them with the terminal's current modes. IME preedit only changes the overlay; only commit bytes cross the pane boundary. Input writes remain ordered in the PTY FIFO. Wayland configures the first frame slot. After that, output, geometry or preedit can use a free slot, but a frame callback alone never dirties the view. Close drops GPU state before the Wayland window and drives child reaping from pidfd readiness and the PTY close deadline.
 
 On Linux, core matches Ctrl+Shift+V by evdev position or keysym before key encoding. The Wayland `clipboard` module reads the keyboard seat's selection on a nonblocking calloop pipe. It neither matches shortcuts nor writes to the PTY. At EOF, the app passes `PaneCommand::Paste` to the pane. The VT wrapper reads mode 2004, removes embedded end markers in bracketed mode, and calls `ghostty_paste_encode`. The pane enqueues the encoded bytes in one operation, including both markers. An oversized transfer is discarded; warnings report byte counts, never clipboard text.
@@ -49,6 +51,8 @@ For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actu
 ## Terminal core (`sumie-vt`)
 
 `Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. The PTY reply callback only appends bytes to a bounded buffer on that thread. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. It includes resolved foreground and background colors and the viewport cursor. No handles or borrowed native data escape the crate.
+
+Before PTY spawn, `pane` sets the VT identity from the child environment. The VT `identity` module configures Ghostty's query replies on the terminal owner thread; it does not read the environment or install terminfo. It passes the name to Ghostty for XTGETTCAP `TN` and serves the static application version through the XTVERSION callback. XTGETTCAP `RGB` comes from Ghostty's fixed query table, not the bundled terminfo source.
 
 The VT `selection` module converts viewport coordinates to native grid references for the plain-text formatter. Both references and the formatter are scoped to a single copy command; the module owns no selection or clipboard state.
 
@@ -107,6 +111,7 @@ Run `scripts/check-all.sh` from the repository root. It runs the read-only check
 - Unsafe code: every Rust target root declares unconditional `#![forbid(unsafe_code)]`, except in `sumie-vt`, `sumie-font`, `sumie-render`, and `sumie-wayland`. In `sumie-wayland`, unsafe is limited to raw-window-handle trait implementations. Clippy denies undocumented unsafe blocks. `sumie-macos` is not exempt.
 - File length and names: cap Rust sources and gate scripts at 600 physical lines. Reject reserved module and crate names (`util`, `common`, `helper`, `misc`). The module check is lexical: it checks source paths and `mod` declarations, ignores comments and literals, and does not expand macros.
 - Lint policy: each manifest inherits workspace lints. Only the root `clippy.toml` is allowed. `allow` and `expect` cannot suppress `warnings`, `clippy::all`, `clippy::pedantic`, `clippy::too_many_lines`, `clippy::cognitive_complexity`, or `clippy::undocumented_unsafe_blocks`, including inside `cfg_attr`.
+- Terminal identity: require `Tc`, `Smulx`, `Setulc`, `Ms`, `Sync`, and `Hls` in the bundled terminfo source. Reject `RGB`, which is query-only.
 - Rust checks: check formatting, run Clippy with warnings denied (including an 80-line function limit and a cognitive complexity limit of 15), and require at least one passing workspace test. Gate scripts require Python 3.11 or newer.
 
 A gate exits `1` for a violation and `2` if it cannot check its inputs. `scripts/install-hooks.sh` sets `core.hooksPath` to `scripts/hooks`. Undo that setting with `git config --local --unset core.hooksPath`; `git commit --no-verify` skips the hook for one commit.

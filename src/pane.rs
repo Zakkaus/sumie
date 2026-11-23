@@ -1,3 +1,6 @@
+#[path = "terminfo.rs"]
+mod terminfo;
+
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io;
@@ -9,6 +12,8 @@ use sumie_vt::{KeyEncoder, KeyEvent, Rgb, Snapshot, Terminal};
 
 use crate::{Result, keycodes};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const XTVERSION: &str = concat!("sumie ", env!("CARGO_PKG_VERSION"));
 const FOREGROUND: Rgb = [0xcc, 0xcc, 0xcc];
 const BACKGROUND: Rgb = [0x1e, 0x1e, 0x1e];
 const PALETTE: [Rgb; 16] = [
@@ -48,6 +53,8 @@ impl LocalPane {
         cell: [u32; 2],
     ) -> Result<Self> {
         let mut terminal = Terminal::new(size.cols, size.rows)?;
+        let term = env.get(std::ffi::OsStr::new("TERM"));
+        terminal.set_identity(XTVERSION, term.map_or(&[], |term| term.as_encoded_bytes()))?;
         terminal.set_colors(FOREGROUND, BACKGROUND, &PALETTE)?;
         terminal.resize_pixels(size.cols, size.rows, cell)?;
         Ok(Self {
@@ -154,8 +161,17 @@ impl Pane for LocalPane {
 
 pub(crate) fn request_environment() -> BTreeMap<OsString, OsString> {
     let mut env: BTreeMap<_, _> = std::env::vars_os().collect();
-    env.insert("TERM".into(), "xterm-256color".into());
+    let term = if let Some(dir) = terminfo::directory() {
+        env.insert("TERMINFO".into(), dir.as_os_str().into());
+        terminfo::NAME
+    } else {
+        env.remove(std::ffi::OsStr::new("TERMINFO"));
+        "xterm-256color"
+    };
+    env.insert("TERM".into(), term.into());
     env.insert("COLORTERM".into(), "truecolor".into());
+    env.insert("TERM_PROGRAM".into(), "sumie".into());
+    env.insert("TERM_PROGRAM_VERSION".into(), VERSION.into());
     env
 }
 

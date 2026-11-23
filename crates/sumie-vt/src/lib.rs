@@ -2,6 +2,7 @@
 //! decide which shortcuts to handle.
 
 mod ffi;
+mod identity;
 mod key;
 mod selection;
 
@@ -54,6 +55,12 @@ pub fn codepoint_width(ch: char) -> u8 {
     unsafe { ffi::ghostty_unicode_codepoint_width(u32::from(ch)) }
 }
 
+#[derive(Default)]
+struct Effects {
+    replies: Vec<u8>,
+    version: &'static str,
+}
+
 unsafe extern "C" fn queue_reply(
     _: ffi::Terminal,
     data: *mut std::ffi::c_void,
@@ -63,11 +70,11 @@ unsafe extern "C" fn queue_reply(
     if len == 0 {
         return;
     }
-    // SAFETY: The callback is synchronous with the exclusive terminal call. `data` is the
-    // boxed reply queue, and Ghostty supplies `len` initialized bytes for this call.
+    // SAFETY: This callback runs synchronously during the exclusive terminal call. `data`
+    // points to its Effects box, and Ghostty provides `len` initialized bytes for the call.
     let (queue, bytes) = unsafe {
         (
-            &mut *data.cast::<Vec<u8>>(),
+            &mut (*data.cast::<Effects>()).replies,
             std::slice::from_raw_parts(bytes, len),
         )
     };
@@ -102,7 +109,7 @@ pub struct Terminal {
     render: ffi::RenderState,
     row_iter: ffi::RenderStateRowIterator,
     cell_iter: ffi::RenderStateRowCells,
-    replies: *mut Vec<u8>,
+    effects: *mut Effects,
 }
 
 impl Terminal {
@@ -116,7 +123,7 @@ impl Terminal {
             render: null_mut(),
             row_iter: null_mut(),
             cell_iter: null_mut(),
-            replies: Box::into_raw(Box::<Vec<u8>>::default()),
+            effects: Box::into_raw(Box::<Effects>::default()),
         };
         // SAFETY: The constructors accept a null allocator and write to the corresponding
         // handle slots. Drop accepts null handles if any constructor fails.
@@ -142,7 +149,7 @@ impl Terminal {
             check(ffi::ghostty_terminal_set(
                 terminal.raw,
                 ffi::TERMINAL_OPT_USERDATA,
-                terminal.replies.cast(),
+                terminal.effects.cast(),
             ))?;
             check(ffi::ghostty_terminal_set(
                 terminal.raw,
@@ -162,7 +169,7 @@ impl Terminal {
     /// Consume protocol replies after writes or resizes, on the terminal owner thread.
     pub fn drain_replies(&mut self, consume: impl FnOnce(&[u8])) {
         // SAFETY: This terminal owns the reply queue, and no callback can run here.
-        let replies = unsafe { &mut *self.replies };
+        let replies = unsafe { &mut (*self.effects).replies };
         if !replies.is_empty() {
             consume(replies);
             replies.clear();
@@ -494,7 +501,7 @@ impl Drop for Terminal {
             ffi::ghostty_render_state_row_iterator_free(self.row_iter);
             ffi::ghostty_render_state_free(self.render);
             ffi::ghostty_terminal_free(self.raw);
-            drop(Box::from_raw(self.replies));
+            drop(Box::from_raw(self.effects));
         }
     }
 }

@@ -77,6 +77,9 @@ def probe(name, gate, file, change, marker, expected=1, *, new=False):
 
 
 def controls():
+    probe("terminfo replaces Tc with RGB", "terminfo", "terminfo/xterm-sumie.terminfo",
+          replace_once("\tTc,", "\tRGB,"),
+          "xterm-sumie: missing or invalid capability Tc\nxterm-sumie: RGB must be query-only")
     for name, manifest, dep, expected in (
         ("sumie-render", RENDER_MANIFEST, "sumie-font", 1),
         ("sumie-core", CORE_MANIFEST, "sumie-config", 1),
