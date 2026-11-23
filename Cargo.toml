@@ -56,6 +56,7 @@ sumie-config = { path = "crates/sumie-config" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 calloop = "0.14.5"
+nix = { workspace = true, features = ["dir", "process"] }
 png.workspace = true
 pollster.workspace = true
 sumie-core = { path = "crates/sumie-core" }

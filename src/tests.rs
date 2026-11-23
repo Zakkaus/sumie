@@ -387,37 +387,56 @@ fn search_pointer_only_scrolls_history() {
 
 #[test]
 fn ctrl_click_a_link_bypasses_mouse_tracking() {
+    use MousePhase::{Cancel, Motion, Press, Release};
+    use input::Effect::{None as Ignore, OpenLink, Select};
+    use sumie_core::mouse::{
+        SelectStep::{Begin, Clear, Drag, Finish},
+        SelectionUnit::Cell,
+    };
+
     let mut pane = ready_pane(
         "printf '\\033[?1003;1006hREADY\\n'; exec cat",
         &request_environment(),
     );
     let mut routing = input::Routing::default();
-    for (phase, link, expected) in [
-        (
-            MousePhase::Press(Button::Left, 0),
-            true,
-            input::Effect::OpenLink,
-        ),
-        (
-            MousePhase::Release(Button::Left),
-            false,
-            input::Effect::None,
-        ),
-    ] {
+    let mut send = |pane: &mut LocalPane, phase, column, x, link, expected| {
         let event = MouseEvent {
             phase,
-            cell: CellPosition { column: 0, row: 0 },
-            pixel: [0.0; 2],
+            cell: CellPosition { column, row: 0 },
+            pixel: [x, 0.0],
             modifiers: KeyModifiers {
-                control: link,
+                control: matches!(phase, Press(..)),
                 ..KeyModifiers::default()
             },
             link,
         };
-        let effect = routing.pointer(&mut pane, false, event, || None).unwrap();
+        let effect = routing.pointer(pane, false, event, || None).unwrap();
         assert_eq!(effect, expected);
         assert!(pane.pty.input_fd().is_none());
+    };
+    let press = Press(Button::Left, 0);
+    let release = Release(Button::Left);
+    for (phase, column, x, link, expected) in [
+        (press, 0, 0.0, true, Select(Begin(Cell))),
+        (release, 0, 0.0, true, OpenLink),
+        (press, 0, 0.0, true, Select(Begin(Cell))),
+        (Motion, 1, 12.0, false, Select(Drag(Cell))),
+        (Motion, 0, 0.0, false, Select(Drag(Cell))),
+        (release, 0, 0.0, true, Select(Finish(Cell))),
+        (press, 0, 0.0, true, Select(Begin(Cell))),
+        (Motion, 0, 1.0, false, Ignore),
+        (release, 0, 0.0, true, Select(Finish(Cell))),
+        (press, 0, 0.0, true, Select(Begin(Cell))),
+        (release, 0, 0.0, false, Select(Finish(Cell))),
+        (press, 0, 0.0, true, Select(Begin(Cell))),
+        (Cancel, 0, 0.0, false, Select(Clear)),
+        (release, 0, 0.0, true, Ignore),
+    ] {
+        send(&mut pane, phase, column, x, link, expected);
     }
+    send(&mut pane, press, 0, 0.0, true, Select(Begin(Cell)));
+    pane.leave_tab().unwrap();
+    send(&mut pane, release, 0, 0.0, true, Ignore);
     pane.command(PaneCommand::Close).unwrap();
     crate::sources::reap(&mut pane.pty).unwrap();
 }

@@ -232,7 +232,7 @@ impl View {
         &mut self,
         snapshot: &Snapshot,
         selection: Option<CellRange>,
-        hovered_link: Option<CellRange>,
+        hovered_link: &[CellRange],
         banner: Option<&str>,
         focused: bool,
     ) {
@@ -287,7 +287,7 @@ impl View {
         &mut self,
         snapshot: &Snapshot,
         selection: Option<CellRange>,
-        hovered_link: Option<CellRange>,
+        mut hovered_link: &[CellRange],
         overlay: Option<(u32, u32, u32)>,
         visible: std::ops::Range<usize>,
     ) {
@@ -295,7 +295,6 @@ impl View {
         let rows = (0..).zip(snapshot.rows.iter().take(visible.end));
         for (row, cells) in rows.skip(visible.start) {
             let selected = selection.and_then(|range| range.columns(row));
-            let underline = hovered_link.and_then(|range| range.columns(row));
             let highlighted = |column| selected.as_ref().is_some_and(|cols| cols.contains(&column));
             let columns = overlay
                 .filter(|&(y, _, _)| y == row)
@@ -336,9 +335,7 @@ impl View {
                     columns.start < column + u32::from(cell.width) && column < columns.end
                 });
                 if !intersects {
-                    let hovered = underline
-                        .as_ref()
-                        .is_some_and(|cols| cols.contains(&column));
+                    let hovered = attributes::link_at(&mut hovered_link, row, column);
                     decorations.draw(self, [column, row], cell, ink.color, hovered);
                 }
                 self.line

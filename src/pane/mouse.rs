@@ -1,5 +1,5 @@
 use sumie_core::{
-    PaneEffect,
+    LinkUri, PaneEffect,
     mouse::{Button, Dispatch, MouseEvent, MouseModes, MousePhase, MouseState, WheelRoute},
 };
 use sumie_vt::{
@@ -14,6 +14,7 @@ pub(super) struct Mouse {
     encoder: MouseEncoder,
     modes: MouseModes,
     last_report: Option<MouseEvent>,
+    link_press: Option<LinkUri>,
     grid: [u32; 2],
     cell: [u32; 2],
 }
@@ -36,6 +37,7 @@ impl Mouse {
             encoder,
             modes: modes(terminal)?,
             last_report: None,
+            link_press: None,
             grid: grid.map(u32::from),
             cell,
         })
@@ -80,8 +82,17 @@ impl LocalPane {
         self.mouse.state.modifiers_changed(modifiers);
     }
 
+    pub(crate) fn capture_link(&mut self, uri: Option<&LinkUri>) {
+        self.mouse.link_press = uri.cloned();
+    }
+
+    pub(crate) fn take_pressed_link(&mut self) -> Option<LinkUri> {
+        self.mouse.link_press.take()
+    }
+
     pub(crate) fn reset_pointer_gestures(&mut self) {
         self.mouse.state.reset_gestures();
+        self.mouse.link_press = None;
     }
 
     pub(crate) fn leave_tab(&mut self) -> Result<()> {
@@ -126,7 +137,11 @@ impl LocalPane {
     }
 
     fn pointer_with_modes(&mut self, event: MouseEvent, modes: MouseModes) -> Result<PaneEffect> {
-        let (action, button) = match self.mouse.state.dispatch(event, modes) {
+        let dispatch = self.mouse.state.dispatch(event, modes);
+        if self.mouse.link_press.is_some() && !self.mouse.state.awaiting_link_release() {
+            self.mouse.link_press = None;
+        }
+        let (action, button) = match dispatch {
             Dispatch::Ignore => return Ok(PaneEffect::None),
             Dispatch::Select(step) => return Ok(PaneEffect::Select(step)),
             Dispatch::OpenLink => return Ok(PaneEffect::OpenLink),

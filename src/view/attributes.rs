@@ -1,3 +1,4 @@
+use sumie_core::{CellRange, SelectionPoint};
 use sumie_font::{AtlasGlyph, Decoration, FontStyle};
 use sumie_render::{AtlasRect, GlyphQuad, PixelRect, Rgba};
 use sumie_vt::{Cell, CellStyle, Rgb, Underline};
@@ -20,6 +21,18 @@ impl Ink {
             color: [r, g, b, if style.faint { 128 } else { 255 }],
         }
     }
+}
+
+// Spans and drawn cells both arrive in reading order, including disjoint OSC 8 labels.
+pub(super) fn link_at(spans: &mut &[CellRange], row: u32, column: u32) -> bool {
+    let point = (i64::from(row), column);
+    let coords = |p: SelectionPoint| (p.row, u32::from(p.column));
+    while spans.first().is_some_and(|span| coords(span.end) < point) {
+        *spans = &spans[1..];
+    }
+    spans
+        .first()
+        .is_some_and(|span| coords(span.start) <= point)
 }
 
 #[derive(Default)]

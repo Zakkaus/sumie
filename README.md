@@ -4,7 +4,7 @@
 
 sumie is a GPU terminal emulator written in Rust with libghostty-vt and wgpu. On Linux Wayland, drag with the left mouse button to select text. Double-click to select a word or a full URL. Triple-click to select a logical line, including any soft wraps. Drag after a double- or triple-click to extend the selection by words or lines. Releasing the button copies the selection to the clipboard. Press Ctrl+Shift+C to copy it again, or Ctrl+Shift+V to paste.
 
-On Wayland, hold Ctrl over an OSC 8 link or a detected URL to underline it, including across soft wraps. Ctrl+click opens it with `xdg-open` even when the terminal program tracks the mouse. Bare paths and unrecognized URI schemes are not opened.
+On Wayland, hold Ctrl over an OSC 8 link or a detected URL to underline it, including across soft wraps. Ctrl+click opens the link on release; Ctrl+drag selects text instead. Both gestures work even when the terminal program tracks the mouse. Sumie passes the URI directly to `xdg-open` and rejects bare paths, remote `file:` URLs, unrecognized schemes, and URIs containing control characters or bidirectional formatting marks.
 
 Press Ctrl+Shift+F to search the screen and scrollback. Search treats wrapped rows as one line and ignores case unless the query contains an uppercase letter. Matches are numbered from oldest to newest. Enter or F3 selects an older match; hold Shift to select a newer one. Escape returns to the position where you opened search, or to the bottom if you were following output.
 

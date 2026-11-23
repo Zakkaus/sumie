@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use sumie_core::{
     CellPosition, CellRange, Pane, PaneCommand, PaneEffect, Selection, WindowTabs,
-    mouse::{MouseEvent, SelectStep, SelectionUnit},
+    mouse::{SelectStep, SelectionUnit},
 };
 use sumie_render::{SurfaceError, SurfaceFrame};
 use sumie_vt::Snapshot;
@@ -369,20 +369,18 @@ impl Session {
             modifiers,
         } = event
         {
-            let phase = input::mouse_phase(phase);
-            let hit = || self.link_pointer.hit(&self.view, searching, banner);
-            let link = tab.prepare_pointer_press(phase, hit)?;
-            let (cell, pixel) = self.view.pointer_position(position);
-            let mouse = MouseEvent {
-                phase,
-                cell,
-                pixel,
-                modifiers: input::key_modifiers(modifiers),
-                link,
-            };
+            let mut mouse =
+                input::mouse_event(phase, modifiers, self.view.pointer_position(position));
+            let hit = || self.view.link_cell(position, banner);
+            let uri = tab.prepare_pointer_link(&mut mouse, hit, &self.host)?;
             let hit = || self.view.search_hit(position);
             match routing.pointer(&mut tab.pane, searching, mouse, hit)? {
-                input::Effect::Select(step) if tab.select(step, cell)? => {
+                input::Effect::OpenLink => {
+                    tab.selection.release();
+                    links::Hover::open(uri.expect("validated link release"));
+                    input::Effect::None
+                }
+                input::Effect::Select(step) if tab.select(step, mouse.cell)? => {
                     input::Effect::Copy(serial)
                 }
                 effect => effect,
@@ -404,7 +402,6 @@ impl Session {
                 }
                 tab.search_action(action, &mut self.view)?;
             }
-            input::Effect::OpenLink => tab.hover.open(),
             input::Effect::Copy(serial) => tab.copy_selection(gpu, serial)?,
             input::Effect::ViewportChanged => {
                 tab.frame_dirty |= searching || tab.selection.range().is_some();
@@ -490,28 +487,6 @@ impl Tab {
         self.selection = Selection::default();
         self.selected_text.clear();
     }
-
-    fn update_snapshot(&mut self) -> Result<()> {
-        if self.snapshot_dirty {
-            self.snapshot_dirty = false;
-            self.hover.invalidate();
-            let next = self.pane.snapshot()?;
-            if let Some(range) = self.selection.range()
-                && !self
-                    .pane
-                    .terminal
-                    .selection_text_matches(range, &self.selected_text)?
-            {
-                self.clear_selection();
-                self.frame_dirty = true;
-            }
-            if self.snapshot.as_ref() != Some(&next) {
-                self.snapshot = Some(next);
-                self.frame_dirty = true;
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Session {
@@ -546,7 +521,7 @@ impl Session {
             self.view.build(
                 snapshot,
                 tab.selection.range(),
-                tab.hover.range(),
+                tab.hover.ranges(),
                 banner,
                 focused,
             );

@@ -1788,6 +1788,7 @@ name = "sumie"
 version = "0.0.0"
 dependencies = [
  "calloop 0.14.5",
+ "nix",
  "png",
  "pollster",
  "rustix 1.1.6",

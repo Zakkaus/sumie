@@ -11,14 +11,34 @@ static LINKS_READY: LazyLock<bool> = LazyLock::new(|| {
     unsafe { ffi::sumie_selection_init_links() }
 });
 
+struct LinkOutput<'a> {
+    uri: Option<LinkUri>,
+    host: &'a str,
+    ranges: &'a mut Vec<CellRange>,
+}
+
 unsafe extern "C" fn read_uri(data: *mut c_void, bytes: *const u8, len: usize) -> bool {
     // SAFETY: The bridge borrows initialized URI bytes and the caller's output for this call.
     let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
-    let uri = std::str::from_utf8(bytes).ok().and_then(LinkUri::parse);
-    let accepted = uri.is_some();
-    // SAFETY: The caller supplied an exclusive reference to an Option<LinkUri>.
-    unsafe { *data.cast::<Option<LinkUri>>() = uri };
-    accepted
+    // SAFETY: Both callbacks borrow the caller's LinkOutput only during link_at.
+    let output = unsafe { &mut *data.cast::<LinkOutput<'_>>() };
+    output.uri = std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|s| LinkUri::parse(s, output.host));
+    output.uri.is_some()
+}
+
+unsafe extern "C" fn append_span(data: *mut c_void, row: u16, left: u16, right: u16) {
+    // SAFETY: link_at supplies an exclusive LinkOutput to this synchronous callback.
+    let output = unsafe { &mut *data.cast::<LinkOutput<'_>>() };
+    let point = |column| SelectionPoint {
+        row: row.into(),
+        column,
+    };
+    output.ranges.push(CellRange {
+        start: point(left),
+        end: point(right),
+    });
 }
 
 struct Formatter(ffi::Formatter);
@@ -170,11 +190,29 @@ impl Terminal {
         Ok(CellRange { start, end })
     }
 
+    /// Row identity stamp and pending content damage for the hovered link's dependencies.
+    /// Check before rendering a snapshot, which consumes the VT's dirty flags.
+    #[must_use]
+    pub fn link_stamp(&self, hit: CellPosition) -> (u64, bool) {
+        let mut stamp = 0;
+        // SAFETY: The bridge borrows the live terminal and writes only the supplied stamp.
+        let dirty = unsafe {
+            ffi::sumie_selection_link_stamp(self.raw, hit.column, hit.row, &raw mut stamp)
+        };
+        (stamp, dirty)
+    }
+
     /// Find an OSC 8 or detected URI covering a viewport cell, including soft wraps.
     ///
     /// # Errors
     /// Returns an error for an invalid hit or a native lookup failure.
-    pub fn link_at(&self, hit: CellPosition) -> Result<Option<(CellRange, LinkUri)>, Error> {
+    pub fn link_at(
+        &self,
+        hit: CellPosition,
+        host: &str,
+        ranges: &mut Vec<CellRange>,
+    ) -> Result<Option<LinkUri>, Error> {
+        ranges.clear();
         if !*LINKS_READY {
             return Ok(None);
         }
@@ -184,10 +222,17 @@ impl Terminal {
             end: ffi::GridRef::default(),
             rectangle: false,
         };
-        let mut uri: Option<LinkUri> = None;
-        let writer = ffi::Writer {
-            write: read_uri,
-            userdata: from_mut(&mut uri).cast(),
+        let mut output = LinkOutput {
+            uri: None,
+            host,
+            ranges,
+        };
+        let writer = ffi::LinkSink {
+            uri: ffi::Writer {
+                write: read_uri,
+                userdata: from_mut(&mut output).cast(),
+            },
+            span: append_span,
         };
         // SAFETY: The reference belongs to this terminal; the selection and writer are live
         // for the synchronous lookup. The matcher was initialized before use.
@@ -203,10 +248,10 @@ impl Terminal {
             return Ok(None);
         }
         check(result)?;
-        Ok(Some((
-            self.cell_range(&selection)?,
-            uri.ok_or(Error(ffi::INVALID_VALUE))?,
-        )))
+        if output.ranges.is_empty() {
+            output.ranges.push(self.cell_range(&selection)?);
+        }
+        Ok(output.uri)
     }
 
     fn select_link(&self, reference: &ffi::GridRef, selection: &mut ffi::Selection) -> bool {
@@ -407,20 +452,54 @@ mod tests {
         ] {
             let mut terminal = Terminal::new(columns, 3).unwrap();
             terminal.write(text.as_bytes());
-            let found = terminal.link_at(CellPosition { row, column }).unwrap();
+            let mut ranges = Vec::new();
+            let found = terminal
+                .link_at(CellPosition { row, column }, "host", &mut ranges)
+                .unwrap();
             assert_eq!(
-                found.as_ref().map(|(_, uri)| uri.as_str()),
+                found.as_ref().map(LinkUri::as_str),
                 expected,
                 "hit={row}:{column}, text={text:?}"
             );
-            if let Some((range, uri)) = found {
+            if let Some(uri) = found {
                 let label = if text == osc {
                     "標abcde"
                 } else {
                     uri.as_str()
                 };
-                assert_eq!(terminal.selection_text(range).unwrap(), label);
+                assert_eq!(terminal.selection_text(ranges[0]).unwrap(), label);
             }
         }
+    }
+
+    #[test]
+    fn explicit_id_groups_only_visible_runs_with_the_same_uri() {
+        let mut vt = Terminal::new(24, 2).unwrap();
+        vt.write(b"\x1b]8;id=a;https://x\x1b\\old\r\nA\x1b]8;;\x1b\\..\x1b]8;id=a;https://x\x1b\\B\r\n\x1b]8;id=b;https://x\x1b\\C\x1b]8;id=a;https://y\x1b\\D");
+        let mut ranges = Vec::new();
+        let uri = vt
+            .link_at(CellPosition { row: 0, column: 3 }, "", &mut ranges)
+            .unwrap()
+            .unwrap();
+        assert_eq!(uri.as_str(), "https://x");
+        let spans: Vec<_> = ranges
+            .iter()
+            .map(|range| (range.start.row, range.start.column, range.end.column))
+            .collect();
+        assert_eq!(spans, [(0, 0, 0), (0, 3, 3)]);
+    }
+
+    #[test]
+    fn wrapped_link_stamp_ignores_output_on_an_unrelated_row() {
+        let mut vt = Terminal::new(12, 4).unwrap();
+        vt.write(b"https://ex.io/abc\r\nlog");
+        vt.render_snapshot().unwrap();
+        let hit = CellPosition { row: 0, column: 1 };
+        let stamp = vt.link_stamp(hit);
+        vt.write(b"ging");
+        assert_eq!(vt.link_stamp(hit), stamp);
+        assert!(!stamp.1);
+        vt.write(b"\x1b[2;1H!");
+        assert_ne!(vt.link_stamp(hit), stamp);
     }
 }

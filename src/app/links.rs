@@ -47,8 +47,9 @@ impl Pointer {
 
 #[derive(Default)]
 pub(super) struct Hover {
-    checked: Option<CellPosition>,
-    link: Option<(CellRange, LinkUri)>,
+    checked: Option<(CellPosition, u64)>,
+    ranges: Vec<CellRange>,
+    uri: Option<LinkUri>,
 }
 
 impl Hover {
@@ -56,49 +57,88 @@ impl Hover {
         self.checked = None;
     }
 
-    fn refresh(&mut self, terminal: &Terminal, hit: Option<CellPosition>) -> Result<bool> {
-        let previous = self.range();
-        if let Some(hit) = hit {
-            if self.checked != Some(hit) {
-                self.link = terminal.link_at(hit)?;
-                self.checked = Some(hit);
-            }
-        } else {
-            self.link = None;
+    pub(super) fn before_snapshot(&mut self, terminal: &Terminal) {
+        if let Some((hit, stamp)) = self.checked
+            && terminal.link_stamp(hit) != (stamp, false)
+        {
             self.checked = None;
         }
-        Ok(previous != self.range())
     }
 
-    pub(super) fn range(&self) -> Option<CellRange> {
-        self.link.as_ref().map(|(range, _)| *range)
+    fn refresh(
+        &mut self,
+        terminal: &Terminal,
+        hit: Option<CellPosition>,
+        host: &str,
+    ) -> Result<bool> {
+        let was_link = self.uri.is_some();
+        if let Some(hit) = hit {
+            if self.checked.is_some_and(|(pos, _)| pos == hit) {
+                return Ok(false);
+            }
+            self.uri = terminal.link_at(hit, host, &mut self.ranges)?;
+            self.checked = Some((hit, terminal.link_stamp(hit).0));
+        } else {
+            self.uri = None;
+            self.checked = None;
+            self.ranges.clear();
+        }
+        Ok(was_link || self.uri.is_some())
     }
 
-    pub(super) fn open(&self) {
-        if let Some((_, uri)) = &self.link
-            && let Err(error) = sumie_pty::open_url(uri.clone())
-        {
+    pub(super) fn ranges(&self) -> &[CellRange] {
+        &self.ranges
+    }
+
+    pub(super) fn uri(&self) -> Option<&LinkUri> {
+        self.uri.as_ref()
+    }
+
+    pub(super) fn open(uri: LinkUri) {
+        if let Err(error) = sumie_pty::open_url(uri) {
             tracing::warn!(%error, "could not start desktop opener worker");
         }
     }
 }
 
 impl Tab {
-    pub(super) fn prepare_pointer_press(
+    pub(super) fn prepare_pointer_link(
         &mut self,
-        phase: MousePhase,
+        mouse: &mut sumie_core::mouse::MouseEvent,
         hit: impl FnOnce() -> Option<CellPosition>,
-    ) -> Result<bool> {
-        let MousePhase::Press(button, _) = phase else {
-            return Ok(false);
-        };
-        self.update_snapshot()?;
-        Ok(button == Button::Left && self.probe_link(hit())?)
+        host: &str,
+    ) -> Result<Option<LinkUri>> {
+        if self.search.is_some() {
+            return Ok(None);
+        }
+        match mouse.phase {
+            MousePhase::Press(Button::Left, _) if mouse.modifiers.control => {
+                self.update_snapshot()?;
+                self.probe_link(hit(), host)?;
+                let uri = self.hover.uri();
+                mouse.link = uri.is_some();
+                self.pane.capture_link(uri);
+            }
+            MousePhase::Release(Button::Left) => {
+                if let Some(uri) = self.pane.take_pressed_link()
+                    && let Some(hit) = hit()
+                {
+                    self.update_snapshot()?;
+                    // Revalidate even if the hover cache still covers the release cell.
+                    self.hover.invalidate();
+                    self.probe_link(Some(hit), host)?;
+                    mouse.link = self.hover.uri() == Some(&uri);
+                    return Ok(mouse.link.then_some(uri));
+                }
+            }
+            _ => (),
+        }
+        Ok(None)
     }
 
-    pub(super) fn probe_link(&mut self, hit: Option<CellPosition>) -> Result<bool> {
-        self.frame_dirty |= self.hover.refresh(&self.pane.terminal, hit)?;
-        Ok(self.hover.range().is_some())
+    pub(super) fn probe_link(&mut self, hit: Option<CellPosition>, host: &str) -> Result<()> {
+        self.frame_dirty |= self.hover.refresh(&self.pane.terminal, hit, host)?;
+        Ok(())
     }
 }
 
@@ -107,11 +147,11 @@ impl Session {
         let hit = self
             .link_pointer
             .hit(&self.view, self.active().search.is_some(), banner);
-        let tab = self.active_mut();
+        let tab = self.tabs.active_mut().unwrap();
         if hit.is_none() || !tab.snapshot_dirty {
-            tab.probe_link(hit)?;
+            tab.probe_link(hit, &self.host)?;
         }
-        gpu.set_link_cursor(tab.hover.range().is_some());
+        gpu.set_link_cursor(tab.hover.uri().is_some());
         Ok(())
     }
 }

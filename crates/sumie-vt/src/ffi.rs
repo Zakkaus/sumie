@@ -168,6 +168,12 @@ pub struct Writer {
     pub userdata: *mut c_void,
 }
 
+#[repr(C)]
+pub struct LinkSink {
+    pub uri: Writer,
+    pub span: unsafe extern "C" fn(*mut c_void, u16, u16, u16),
+}
+
 pub type Formatter = *mut c_void;
 pub const POINT_TAG_VIEWPORT: c_int = 1;
 pub const POINT_TAG_SCREEN: c_int = 2;
@@ -296,11 +302,12 @@ unsafe extern "C" {
         out: *mut Selection,
     ) -> c_int;
     pub fn sumie_selection_init_links() -> bool;
+    pub fn sumie_selection_link_stamp(terminal: Terminal, x: u16, y: u16, stamp: *mut u64) -> bool;
     pub fn sumie_selection_link_at(
         terminal: Terminal,
         reference: *const GridRef,
         out: *mut Selection,
-        writer: *const Writer,
+        writer: *const LinkSink,
     ) -> c_int;
     pub fn ghostty_formatter_terminal_new(
         allocator: *const Allocator,

@@ -27,7 +27,7 @@ pub(super) fn assert_decorations(
     for (_, sgr) in CASES {
         vt.write(format!("\x1b[24;29;55;22;{sgr}m\x1b[58;2;255;0;0m ").as_bytes());
     }
-    view.build(&vt.render_snapshot().unwrap(), None, None, None, true);
+    view.build(&vt.render_snapshot().unwrap(), None, &[], None, true);
     let target = renderer.create_offscreen(view.device);
     renderer.set_minimum_contrast(1.0);
     renderer.upload_atlas(&view.atlas());

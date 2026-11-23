@@ -21,7 +21,7 @@ pub(super) fn assert_tab_bar(renderer: &mut Renderer, device: &wgpu::Device, que
         vt.set_colors([100; 3], bg, None, &[[0; 3]; 16]).unwrap();
         let snapshot = vt.render_snapshot().unwrap();
         let labels = ["shell", "a long title that will not fit into its tab"];
-        view.build(&snapshot, None, None, None, true);
+        view.build(&snapshot, None, &[], None, true);
         view.draw_tabs(
             labels.into_iter().take(count),
             count - 1,

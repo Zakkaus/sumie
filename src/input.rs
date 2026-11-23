@@ -277,18 +277,29 @@ pub(crate) fn key_modifiers(modifiers: sumie_wayland::Modifiers) -> KeyModifiers
     }
 }
 
-pub(crate) fn mouse_phase(phase: sumie_wayland::PointerPhase) -> sumie_core::mouse::MousePhase {
+pub(crate) fn mouse_event(
+    phase: sumie_wayland::PointerPhase,
+    modifiers: sumie_wayland::Modifiers,
+    (cell, pixel): (sumie_core::CellPosition, [f32; 2]),
+) -> MouseEvent {
     use sumie_wayland::{PointerButton, PointerPhase};
     let button = |b| match b {
         PointerButton::Left => Button::Left,
         PointerButton::Middle => Button::Middle,
         PointerButton::Right => Button::Right,
     };
-    match phase {
+    let phase = match phase {
         PointerPhase::Press(b, time) => MousePhase::Press(button(b), time),
         PointerPhase::Release(b) => MousePhase::Release(button(b)),
         PointerPhase::Motion => MousePhase::Motion,
         PointerPhase::Wheel(delta) => MousePhase::Wheel(delta),
         PointerPhase::Cancel => MousePhase::Cancel,
+    };
+    MouseEvent {
+        phase,
+        cell,
+        pixel,
+        modifiers: key_modifiers(modifiers),
+        link: false,
     }
 }

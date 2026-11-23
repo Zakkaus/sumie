@@ -140,6 +140,29 @@ impl Tab {
         self.frame_dirty = true;
         Ok(())
     }
+
+    pub(super) fn update_snapshot(&mut self) -> Result<()> {
+        if self.snapshot_dirty {
+            self.snapshot_dirty = false;
+            self.hover.before_snapshot(&self.pane.terminal);
+            let next = self.pane.snapshot()?;
+            if let Some(range) = self.selection.range()
+                && !self
+                    .pane
+                    .terminal
+                    .selection_text_matches(range, &self.selected_text)?
+            {
+                self.clear_selection();
+                self.frame_dirty = true;
+            }
+            if self.snapshot.as_ref() != Some(&next) {
+                self.snapshot = Some(next);
+                self.frame_dirty = true;
+            }
+        }
+        Ok(())
+    }
+
     fn service(
         &mut self,
         gpu: &mut Gpu,

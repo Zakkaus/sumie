@@ -24,7 +24,7 @@ pub struct MouseEvent {
     pub cell: CellPosition,
     pub pixel: [f32; 2],
     pub modifiers: KeyModifiers,
-    /// Whether this press hit a link the desktop opener can handle.
+    /// Whether this Ctrl+left press found a link or this release hit the captured target.
     pub link: bool,
 }
 
@@ -96,6 +96,7 @@ impl Wheel {
 
 pub struct MouseState {
     selecting: Option<(SelectionUnit, CellPosition)>,
+    link_press: Option<[u32; 2]>,
     last_click: Option<(u32, CellPosition, KeyModifiers, SelectionUnit)>,
     click_interval: u32,
     // Only buttons whose press was routed to the application belong in motion reports.
@@ -107,6 +108,7 @@ impl Default for MouseState {
     fn default() -> Self {
         Self {
             selecting: None,
+            link_press: None,
             last_click: None,
             click_interval: 500,
             held: [None; 3],
@@ -136,8 +138,14 @@ impl MouseState {
     /// Reset local gestures without forgetting buttons already reported to the terminal.
     pub fn reset_gestures(&mut self) {
         self.selecting = None;
+        self.link_press = None;
         self.reset_clicks();
         self.wheel = Wheel::default();
+    }
+
+    #[must_use]
+    pub fn awaiting_link_release(&self) -> bool {
+        self.link_press.is_some()
     }
 
     /// Track a `Dispatch::Press` after its report has been queued to the PTY.
@@ -163,6 +171,7 @@ impl MouseState {
         match event.phase {
             MousePhase::Wheel(delta) => {
                 self.last_click = None;
+                self.link_press = None;
                 let route = if modes.tracking {
                     WheelRoute::Report
                 } else if modes.alternate && modes.alternate_scroll {
@@ -179,7 +188,9 @@ impl MouseState {
             }
             MousePhase::Press(Button::Left, _) if event.modifiers.control && event.link => {
                 self.reset_clicks();
-                Dispatch::OpenLink
+                self.link_press = Some(event.pixel.map(f32::to_bits));
+                self.selecting = Some((SelectionUnit::Cell, event.cell));
+                Dispatch::Select(SelectStep::Begin(SelectionUnit::Cell))
             }
             MousePhase::Press(button, time) => self.press(
                 button,
@@ -188,8 +199,8 @@ impl MouseState {
                 event.cell,
                 event.modifiers,
             ),
-            MousePhase::Release(button) => self.release(button),
-            MousePhase::Motion if self.selecting.is_some() => self.drag(event.cell),
+            MousePhase::Release(button) => self.release(button, event),
+            MousePhase::Motion if self.selecting.is_some() => self.drag(event),
             // Shift only chooses the route before a drag starts.
             MousePhase::Motion
                 if modes.tracking && (self.any_button() || !event.modifiers.shift) =>
@@ -210,11 +221,19 @@ impl MouseState {
         }
     }
 
-    fn release(&mut self, button: Button) -> Dispatch {
-        if button == Button::Left
-            && let Some((unit, _)) = self.selecting.take()
-        {
-            return Dispatch::Select(SelectStep::Finish(unit));
+    fn release(&mut self, button: Button, event: MouseEvent) -> Dispatch {
+        if button == Button::Left {
+            let link_press = self.link_press.take();
+            if let Some((unit, cell)) = self.selecting.take() {
+                return if event.link
+                    && event.cell == cell
+                    && link_press == Some(event.pixel.map(f32::to_bits))
+                {
+                    Dispatch::OpenLink
+                } else {
+                    Dispatch::Select(SelectStep::Finish(unit))
+                };
+            }
         }
         if let Some(i) = self.held.iter().position(|&b| b == Some(button)) {
             self.held[i..].rotate_left(1);
@@ -255,8 +274,14 @@ impl MouseState {
         }
     }
 
-    fn drag(&mut self, cell: CellPosition) -> Dispatch {
+    fn drag(&mut self, event: MouseEvent) -> Dispatch {
         let (unit, previous) = self.selecting.unwrap();
+        let cell = event.cell;
+        if let Some(pixel) = self.link_press
+            && (cell != previous || event.pixel.map(f32::to_bits) != pixel)
+        {
+            self.link_press = None;
+        }
         if cell == previous {
             return Dispatch::Ignore;
         }
