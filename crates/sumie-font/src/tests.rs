@@ -111,6 +111,35 @@ mod linux {
     }
 
     #[test]
+    fn common_ideographs_share_the_fallback_face_size() {
+        const FAMILY: &str = "JetBrainsMono Nerd Font";
+        // Light hinting is the terminal default; unhinted masks do not reproduce the overflow.
+        let options = FontOptions {
+            hinting: Hinting::Light,
+            weight: Some(500),
+        };
+        let mut fonts = FontSystem::new(FAMILY, 11.0 * 96.0 / 72.0, 1.25, options).unwrap();
+        if fonts.family(fonts.primary_face()) != Some(FAMILY) {
+            return;
+        }
+        let run = match fonts.shape("中文測試終端游標", &[2; 8]) {
+            Err(FontError::MissingGlyph(_)) => return,
+            result => result.unwrap(),
+        };
+        let first = run.glyphs[0].key;
+        if fonts.family(first.face()) != Some("Noto Sans CJK TC") {
+            eprintln!("skipped: Noto Sans CJK TC is not the selected fallback");
+            return;
+        }
+        let face_ppem = fonts.faces[first.face().0].ppem.to_bits();
+        assert_eq!(run.glyphs.len(), 8);
+        for glyph in run.glyphs {
+            assert_eq!(glyph.key.face(), first.face());
+            assert_eq!(glyph.key.ppem_bits, face_ppem, "{glyph:?}");
+        }
+    }
+
+    #[test]
     fn wide_fallback_preserves_baseline_and_punctuation_bearings() {
         let Some(mut fonts) = jetbrains() else { return };
         // Japanese and Taiwanese faces deliberately position the full stop differently.

@@ -32,21 +32,34 @@ impl CellMetrics {
 
     #[allow(clippy::cast_precision_loss)]
     pub(crate) fn fallback_ppem(self, font: &Font, primary_ppem: f32) -> f32 {
-        advance(font, '水', 1.0)
-            .map_or(primary_ppem, |ic_width| 2.0 * self.width as f32 / ic_width)
-            .min(2.0 * primary_ppem)
-            .min(MAX_PPEM)
+        let width_ppem = ['水', '한', 'あ', 'ア']
+            .into_iter()
+            .find_map(|ch| advance(font, ch, 1.0))
+            .map_or(primary_ppem, |advance| 2.0 * self.width as f32 / advance);
+        let mut ppem = width_ppem.min(2.0 * primary_ppem).min(MAX_PPEM);
+        if let Some((ascender, descender)) = fallback_extents(font, 1.0) {
+            ppem = ppem.min(self.height as f32 / (ascender - descender));
+        }
+        ppem
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     pub(crate) fn fallback_baseline(self, font: &Font, ppem: f32) -> i32 {
-        font.metrics()
-            .scaled_f32(ppem)
-            .h_line()
-            .map_or(self.baseline, |line| {
-                ((self.height as f32 + line.ascender + line.descender) * 0.5).round() as i32
-            })
+        fallback_extents(font, ppem).map_or(self.baseline, |(ascender, descender)| {
+            ((self.height as f32 + ascender + descender) * 0.5).round() as i32
+        })
     }
+}
+
+// A CJK font's hhea line can include space for accents outside the ideographic em.
+// Size and center the same typographic line rather than charging that space to each glyph.
+fn fallback_extents(font: &Font, ppem: f32) -> Option<(f32, f32)> {
+    let metrics = font.metrics().scaled_f32(ppem);
+    let line = metrics
+        .typo_line()
+        .filter(|line| line.ascender > line.descender)
+        .or_else(|| metrics.h_line())?;
+    (line.ascender > line.descender).then_some((line.ascender, line.descender))
 }
 
 fn advance(font: &Font, ch: char, ppem: f32) -> Option<f32> {
