@@ -197,7 +197,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
     if sys.platform == "darwin":
         probe("Core Text bypasses the fallback cascade", "test", "crates/sumie-font/src/discovery/core_text.rs",
-              replace_once("let fallback = ch.map(", "let fallback = ch.filter(|_| false).map("),
+              replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),
               "test tests::core_text_loads_the_named_collection_face_and_cjk_fallback ... FAILED")
 
 

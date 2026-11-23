@@ -75,7 +75,7 @@ The VT `selection` module converts viewport coordinates to native grid reference
 
 ## Font pipeline (`sumie-font`)
 
-`FontSystem` owns font discovery, loaded faces, shaping and rasterization scratch space, and one CPU atlas. Linux uses `fontconfig` for family aliases and locale-aware charset matches. On macOS, Core Text selects the primary font by name and uses its cascade for missing characters. The font file's PostScript names identify faces within collections. Font discovery and the first use of a fallback face can block on file I/O.
+`FontSystem` owns font discovery, loaded faces, shaping and rasterization scratch space, and one CPU atlas. Linux uses `fontconfig` for family aliases and locale-aware charset matches. On macOS, Core Text selects the primary font by name. The font file's PostScript names identify faces within collections. If the preferred fallback cannot be loaded or has no usable outline for the character (for example, an `hvgl`-only face), discovery tries Core Text's default cascade in order. Last Resort placeholders do not count as coverage. Exhausting the cascade reports a missing glyph for that character. Font discovery and the first use of a fallback face can block on file I/O.
 
 The caller supplies the grid widths for an already ordered, left-to-right run, including zero-width continuations. The font crate does not infer widths from Unicode or consult terminal state. HarfRust shapes face runs with `calt` and `liga`; glyph advances inside a cluster do not change its grid span. Wide clusters center their shaped advance in two cells. Fallback sizing uses the advance of `水`. Each fallback face shares one baseline that centers its ascent and descent in the row. Oversized ink shrinks to fit and is centered horizontally.
 

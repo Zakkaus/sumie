@@ -354,5 +354,13 @@ fn core_text_loads_the_named_collection_face_and_cjk_fallback() {
     let run = font.shape("水", &[2]).unwrap();
     let key = run.glyphs[0].key;
     assert_ne!(key.face(), font.primary_face());
-    assert!(font.rasterize(key).unwrap().rect.width > 0);
+    let rect = font.rasterize(key).unwrap().rect;
+    let atlas = font.atlas();
+    let [stride, _] = atlas.dimensions();
+    assert!((rect.y..rect.y + rect.height).any(|y| {
+        let start = (y * stride + rect.x) as usize;
+        atlas.pixels()[start..start + rect.width as usize]
+            .iter()
+            .any(|&coverage| coverage != 0)
+    }));
 }
