@@ -31,7 +31,7 @@ fn load_configuration() {
          background = '#fedcba'\ncursor = '#123456'\nselection-foreground = '#abcdef'\n\
          selection-background = '#654321'\npalette = {palette:?}\n"
     );
-    let cases: [Case<'_>; 9] = [
+    let cases: [Case<'_>; 11] = [
         (
             "[font]\nfamily = 'Monospace'\nsize = 18\nweight = 600\nhinting = 'normal'\n",
             Ok(|config| {
@@ -40,6 +40,10 @@ fn load_configuration() {
             }),
         ),
         ("[font]\nunknown = true\n", Err((2, 1, "unknown field"))),
+        (
+            "[colors]\nforeground = '#000000'\n",
+            Ok(|config| assert_eq!(config.colors.cursor(), Some([0; 3]))),
+        ),
         (
             "include = ['shared.toml']\n[font]\nsize = 15\nweight = 700\n",
             Ok(|config| {
@@ -52,6 +56,7 @@ fn load_configuration() {
             "[font]\nhinting = 'strong'\n",
             Err((2, 11, "unknown variant")),
         ),
+        ("", Ok(assert_defaults)),
         (&defaults, Ok(assert_defaults)),
         (&colors, Ok(assert_colors)),
         (
@@ -97,9 +102,15 @@ fn assert_font(font: Font, family: &str, px: f32, weight: u16, hinting: Hinting)
 
 fn assert_defaults(config: Config) {
     assert_eq!(config.minimum_contrast().to_bits(), 1.1_f32.to_bits());
-    assert_eq!(config.colors.foreground(), [0xcc; 3]);
-    assert_eq!(config.colors.background(), [0x1e; 3]);
-    assert_eq!(config.colors.palette()[1], [0xcd, 0x31, 0x31]);
+    assert_eq!(config.colors.foreground(), [0xff; 3]);
+    assert_eq!(config.colors.background(), [0x12, 0x27, 0x38]);
+    assert_eq!(config.colors.cursor(), Some([0xff; 3]));
+    assert_eq!(config.colors.selection_foreground(), Some([0xff; 3]));
+    assert_eq!(
+        config.colors.selection_background(),
+        Some([0x00, 0x50, 0xa4])
+    );
+    assert_eq!(config.colors.palette()[1], [0xff, 0x62, 0x8c]);
     assert_eq!(config.font.logical_px().to_bits(), 20.0_f32.to_bits());
     assert_eq!(config.font.weight(), None);
     assert_eq!(config.font.hinting(), Hinting::Light);

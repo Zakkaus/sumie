@@ -50,8 +50,8 @@ size = 15.0 # points at 96 DPI
 hinting = "light"
 
 [colors]
-foreground = "#cccccc"
-background = "#1e1e1e"
+foreground = "#ffffff"
+background = "#122738"
 
 [cursor]
 style = "block"
@@ -61,8 +61,9 @@ blink = true
 On Linux, saving the main file or an included file applies the changes without
 restarting sumie. Invalid settings leave the previous settings in effect and show
 the filename, line, and column at the top of the window until the next valid save.
-Colors use `#rrggbb` notation; an optional `palette` must contain all 16 ANSI colors
-in index order.
+
+Sumie uses Cobalt2 by default. Colors use `#rrggbb` notation; an optional
+`palette` must contain all 16 ANSI colors in index order.
 
 `scrollback-limit` sets the approximate scrollback limit in bytes. Lowering it
 can discard history immediately. Set it to `0` to clear and disable scrollback.

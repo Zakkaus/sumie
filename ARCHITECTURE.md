@@ -30,6 +30,8 @@ Two edges are deliberately closed:
 
 `main` handles the schema and defaults commands without opening a window. The Linux app loads TOML before connecting to Wayland. It maps font settings and environment overrides into `FontSettings`. It configures terminal colors before spawning the PTY, passes selection overrides to the view, and sets the renderer's minimum contrast ratio.
 
+`sumie-config` supplies the built-in Cobalt2 colors and uses the same defaults for JSON Schema and the generated TOML example.
+
 `app` drives Wayland and the PTY on one calloop thread. `pane` owns the local terminal, key encoder and PTY. The consumer calls `Pane::command` and draws from its own `Pane::snapshot` result; neither method waits for PTY I/O. `view` composes the owned snapshot and IME preedit into device-pixel draw lists and hands font atlas data to the renderer. `capture` handles opt-in frame readback and PNG output; normal presentation does not read back pixels.
 
 `sumie-core::WindowTabs` owns tab order. Each tab has a binary split tree with stable pane IDs, one focused leaf and optional pane zoom. `splits::geometry` partitions device pixels. It reserves a cell per leaf and a pixel per divider when space permits, using cell dimensions supplied by the view rather than font or PTY state. `app::tabs` binds the leaves to live PTYs, readiness sources, selections and searches. The focused pane owns the tab label, keyboard and IME. `app::directory` resolves local OSC 7 URIs for new tabs and splits without changing the process working directory.

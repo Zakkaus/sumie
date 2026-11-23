@@ -46,15 +46,17 @@ size = 15.0
 hinting = "light"
 
 [colors]
-foreground = "#cccccc"
-background = "#1e1e1e"
+foreground = "#ffffff"
+background = "#122738"
 
 [cursor]
 style = "block"
 blink = true
 ```
 
-在 Linux 上，儲存主設定檔或 `include` 引入的檔案即可套用變更，不必重新啟動 sumie。設定有誤時，sumie 會沿用上一份有效設定，並在視窗頂端顯示檔名、行號與欄號，直到儲存有效的設定為止。色碼採用 `#rrggbb` 格式；若設定 `palette`，須依索引順序列出全部 16 個 ANSI 色碼。
+在 Linux 上，儲存主設定檔或 `include` 引入的檔案即可套用變更，不必重新啟動 sumie。設定有誤時，sumie 會沿用上一份有效設定，並在視窗頂端顯示檔名、行號與欄號，直到儲存有效的設定為止。
+
+預設配色為 Cobalt2。色碼採用 `#rrggbb` 格式；若設定 `palette`，須依索引順序列出全部 16 個 ANSI 色碼。
 
 `scrollback-limit` 以位元組設定捲動記錄的近似上限。調低上限可能立即刪除較舊的記錄。設為 `0` 會清除並停用捲動記錄。
 

@@ -198,14 +198,14 @@ pub struct Colors {
     /// Default terminal background color.
     #[schemars(with = "Color", default = "default_background")]
     background: Option<Color>,
-    /// Cursor color. Omit to use the terminal foreground color.
-    #[schemars(with = "Color")]
+    /// Cursor color. Omit to use the foreground color.
+    #[schemars(with = "Color", default = "default_foreground")]
     cursor: Option<Color>,
-    /// Selected text color. Omit to use the cell's background color.
-    #[schemars(with = "Color")]
+    /// Selected text color.
+    #[schemars(with = "Color", default = "default_foreground")]
     selection_foreground: Option<Color>,
-    /// Selection background color. Omit to use the cell's foreground color.
-    #[schemars(with = "Color")]
+    /// Selection background color.
+    #[schemars(with = "Color", default = "default_selection_background")]
     selection_background: Option<Color>,
     /// ANSI colors 0 through 15, in index order.
     #[schemars(with = "Vec<Color>", length(equal = 16), default = "default_palette")]
@@ -225,17 +225,28 @@ impl Colors {
 
     #[must_use]
     pub fn cursor(&self) -> Option<[u8; 3]> {
-        self.cursor.map(|color| color.0)
+        Some(
+            self.cursor
+                .map_or_else(|| self.foreground(), |color| color.0),
+        )
     }
 
     #[must_use]
     pub fn selection_foreground(&self) -> Option<[u8; 3]> {
-        self.selection_foreground.map(|color| color.0)
+        Some(
+            self.selection_foreground
+                .unwrap_or_else(default_foreground)
+                .0,
+        )
     }
 
     #[must_use]
     pub fn selection_background(&self) -> Option<[u8; 3]> {
-        self.selection_background.map(|color| color.0)
+        Some(
+            self.selection_background
+                .unwrap_or_else(default_selection_background)
+                .0,
+        )
     }
 
     #[must_use]
@@ -256,31 +267,35 @@ impl Colors {
 }
 
 const fn default_foreground() -> Color {
-    Color([0xcc, 0xcc, 0xcc])
+    Color([0xff; 3])
 }
 
 const fn default_background() -> Color {
-    Color([0x1e, 0x1e, 0x1e])
+    Color([0x12, 0x27, 0x38])
+}
+
+const fn default_selection_background() -> Color {
+    Color([0x00, 0x50, 0xa4])
 }
 
 const fn default_palette() -> [Color; 16] {
     [
         Color([0x00, 0x00, 0x00]),
-        Color([0xcd, 0x31, 0x31]),
-        Color([0x0d, 0xbc, 0x79]),
-        Color([0xe5, 0xe5, 0x10]),
-        Color([0x24, 0x72, 0xc8]),
-        Color([0xbc, 0x3f, 0xbc]),
-        Color([0x11, 0xa8, 0xcd]),
-        Color([0xe5, 0xe5, 0xe5]),
-        Color([0x66, 0x66, 0x66]),
-        Color([0xf1, 0x4c, 0x4c]),
-        Color([0x23, 0xd1, 0x8b]),
-        Color([0xf5, 0xf5, 0x43]),
-        Color([0x3b, 0x8e, 0xea]),
-        Color([0xd6, 0x70, 0xd6]),
-        Color([0x29, 0xb8, 0xdb]),
-        Color([0xe5, 0xe5, 0xe5]),
+        Color([0xff, 0x62, 0x8c]),
+        Color([0x3a, 0xd9, 0x00]),
+        Color([0xff, 0xc6, 0x00]),
+        Color([0x00, 0x88, 0xff]),
+        Color([0xfb, 0x94, 0xff]),
+        Color([0x80, 0xfc, 0xff]),
+        Color([0xff; 3]),
+        Color([0x00, 0x50, 0xa4]),
+        Color([0xff, 0x62, 0x8c]),
+        Color([0x3a, 0xd9, 0x00]),
+        Color([0xff, 0xc6, 0x00]),
+        Color([0x00, 0x88, 0xff]),
+        Color([0xfb, 0x94, 0xff]),
+        Color([0x80, 0xfc, 0xff]),
+        Color([0xff; 3]),
     ]
 }
 
