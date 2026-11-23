@@ -25,13 +25,9 @@ pub(crate) struct LocalPane {
 }
 
 impl LocalPane {
-    pub(crate) fn login(size: Size, cell: [u32; 2], colors: &sumie_config::Colors) -> Result<Self> {
+    pub(crate) fn login(size: Size, cell: [u32; 2], config: &sumie_config::Config) -> Result<Self> {
         let mut env = request_environment();
-        let shell = sumie_config::user_config_path()
-            .and_then(|path| sumie_config::load(&path).ok())
-            .unwrap_or_default()
-            .shell;
-        let args = if shell.integration() {
+        let args = if config.shell.integration() {
             shell_integration::inject(&mut env)
         } else {
             None
@@ -42,7 +38,7 @@ impl LocalPane {
                 program: &env[std::ffi::OsStr::new("SHELL")],
                 args,
             });
-        Self::spawn(command, &env, size, cell, colors)
+        Self::spawn(command, &env, size, cell, config)
     }
 
     pub(crate) fn spawn(
@@ -50,13 +46,14 @@ impl LocalPane {
         env: &BTreeMap<OsString, OsString>,
         size: Size,
         cell: [u32; 2],
-        colors: &sumie_config::Colors,
+        config: &sumie_config::Config,
     ) -> Result<Self> {
         let mut terminal = Terminal::new(size.cols, size.rows)?;
         let term = env.get(std::ffi::OsStr::new("TERM"));
         terminal.set_identity(XTVERSION, term.map_or(&[], |term| term.as_encoded_bytes()))?;
         terminal.set_scrollback_bytes(10_000_000)?;
-        set_colors(&mut terminal, colors)?;
+        set_colors(&mut terminal, &config.colors)?;
+        set_cursor_defaults(&mut terminal, config.cursor)?;
         terminal.resize_pixels(size.cols, size.rows, cell)?;
         let mouse = mouse::Mouse::new(&terminal, [size.cols, size.rows], cell)?;
         Ok(Self {
@@ -115,6 +112,19 @@ pub(crate) fn set_colors(terminal: &mut Terminal, colors: &sumie_config::Colors)
         colors.cursor(),
         &colors.palette(),
     )?;
+    Ok(())
+}
+
+pub(crate) fn set_cursor_defaults(
+    terminal: &mut Terminal,
+    cursor: sumie_config::Cursor,
+) -> Result<()> {
+    let style = match cursor.style() {
+        sumie_config::CursorStyle::Block => sumie_vt::CursorStyle::Block,
+        sumie_config::CursorStyle::Bar => sumie_vt::CursorStyle::Bar,
+        sumie_config::CursorStyle::Underline => sumie_vt::CursorStyle::Underline,
+    };
+    terminal.set_cursor_defaults(style, cursor.blink())?;
     Ok(())
 }
 

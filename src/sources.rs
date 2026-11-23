@@ -1,9 +1,13 @@
 use std::cell::Cell;
 use std::os::fd::BorrowedFd;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use calloop::{EventLoop, Interest, Mode, PostAction, RegistrationToken, generic::Generic};
+use calloop::{
+    EventLoop, Interest, Mode, PostAction, RegistrationToken,
+    generic::Generic,
+    timer::{TimeoutAction, Timer},
+};
 use sumie_pty::Pty;
 use sumie_wayland::SourceHandle;
 
@@ -12,6 +16,13 @@ use crate::Result;
 const OUTPUT: u8 = 1;
 const INPUT: u8 = 2;
 const EXIT: u8 = 4;
+const BLINK_PHASE: Duration = Duration::from_millis(600);
+
+#[derive(Clone, Copy)]
+struct BlinkPhase {
+    deadline: Instant,
+    hidden: bool,
+}
 
 pub(crate) struct Sources {
     handle: SourceHandle,
@@ -19,6 +30,8 @@ pub(crate) struct Sources {
     input: Option<RegistrationToken>,
     output: Option<RegistrationToken>,
     exit: RegistrationToken,
+    blink: Option<RegistrationToken>,
+    blink_phase: Rc<Cell<Option<BlinkPhase>>>,
 }
 
 impl Sources {
@@ -44,6 +57,8 @@ impl Sources {
             input: None,
             output: Some(output),
             exit,
+            blink: None,
+            blink_phase: Rc::default(),
         })
     }
 
@@ -71,6 +86,58 @@ impl Sources {
         Ok(())
     }
 
+    pub(crate) fn watch_blink(&mut self, enabled: bool) -> Result<()> {
+        match (enabled, self.blink) {
+            (true, None) => {
+                let deadline = Instant::now() + BLINK_PHASE;
+                let phase = Rc::clone(&self.blink_phase);
+                self.blink = Some(self.handle.insert(
+                    Timer::from_deadline(deadline),
+                    move |_, ()| {
+                        let current = phase.get().expect("registered blink phase");
+                        let now = Instant::now();
+                        let deadline = if current.deadline <= now {
+                            let deadline = now + BLINK_PHASE;
+                            phase.set(Some(BlinkPhase {
+                                deadline,
+                                hidden: !current.hidden,
+                            }));
+                            deadline
+                        } else {
+                            current.deadline
+                        };
+                        TimeoutAction::ToInstant(deadline)
+                    },
+                )?);
+                self.blink_phase.set(Some(BlinkPhase {
+                    deadline,
+                    hidden: false,
+                }));
+            }
+            (false, Some(token)) => {
+                self.handle.remove(token);
+                self.blink = None;
+                self.blink_phase.set(None);
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reset_blink(&self) {
+        if self.blink_phase.get().is_some() {
+            // Keep the registered timer; its callback honors this later deadline.
+            self.blink_phase.set(Some(BlinkPhase {
+                deadline: Instant::now() + BLINK_PHASE,
+                hidden: false,
+            }));
+        }
+    }
+
+    pub(crate) fn cursor_hidden(&self) -> bool {
+        self.blink_phase.get().is_some_and(|phase| phase.hidden)
+    }
+
     pub(crate) fn remove_output(&mut self) {
         if let Some(token) = self.output.take() {
             self.handle.remove(token);
@@ -85,6 +152,9 @@ impl Drop for Sources {
             self.handle.remove(token);
         }
         self.handle.remove(self.exit);
+        if let Some(token) = self.blink {
+            self.handle.remove(token);
+        }
     }
 }
 

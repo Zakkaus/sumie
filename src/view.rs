@@ -7,7 +7,9 @@ use std::{
 use sumie_core::{CellPosition, CellRange};
 use sumie_font::{FontError, FontOptions, FontSystem, Hinting};
 use sumie_pty::Size;
-use sumie_render::{AtlasRect, AtlasUpload, Cursor, DrawList, GlyphQuad, PixelRect, Rgba, wgpu};
+use sumie_render::{
+    AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, PixelRect, Rgba, wgpu,
+};
 use sumie_vt::{Rgb, Snapshot, codepoint_width};
 use sumie_wayland::CursorRect;
 
@@ -169,6 +171,7 @@ impl View {
         snapshot: &Snapshot,
         selection: Option<CellRange>,
         banner: Option<&str>,
+        focused: bool,
     ) {
         self.backgrounds.clear();
         self.glyphs.clear();
@@ -247,7 +250,7 @@ impl View {
                 rgba(snapshot.foreground),
             );
         }
-        self.set_cursor(snapshot, overlay, banner.is_some());
+        self.set_cursor(snapshot, overlay, banner.is_some(), focused);
         self.collect_atlas_dirty();
     }
 
@@ -280,29 +283,53 @@ impl View {
         );
     }
 
-    fn set_cursor(&mut self, snapshot: &Snapshot, overlay: Option<(u32, u32, u32)>, banner: bool) {
+    fn set_cursor(
+        &mut self,
+        snapshot: &Snapshot,
+        overlay: Option<(u32, u32, u32)>,
+        banner: bool,
+        focused: bool,
+    ) {
         self.cursor = snapshot.cursor.and_then(|cursor| {
             if banner && cursor.row == 0 {
                 return None;
             }
             let [column, row] = [u32::from(cursor.column), u32::from(cursor.row)];
             let [x, y] = self.origin([column, row]);
-            let rect = if let Some((_, _, width)) = overlay {
-                PixelRect {
-                    origin: [x, y + self.cell[1].cast_signed() - 2],
-                    size: [width * self.cell[0], 2],
-                }
+            let (rect, shape) = if let Some((_, _, width)) = overlay {
+                (
+                    PixelRect {
+                        origin: [x, y + self.cell[1].cast_signed() - 2],
+                        size: [width * self.cell[0], 2],
+                    },
+                    CursorShape::Block,
+                )
             } else if cursor.visible {
-                PixelRect {
-                    origin: [x, y],
-                    size: [2, self.cell[1]],
-                }
+                let shape = if focused {
+                    match cursor.style {
+                        sumie_vt::CursorStyle::Block => CursorShape::Block,
+                        sumie_vt::CursorStyle::Bar => CursorShape::Bar,
+                        sumie_vt::CursorStyle::Underline => CursorShape::Underline,
+                        sumie_vt::CursorStyle::Hollow => CursorShape::Hollow,
+                    }
+                } else {
+                    CursorShape::Hollow
+                };
+                let width = snapshot.rows[row as usize][column as usize].width.max(1);
+                (
+                    PixelRect {
+                        origin: [x, y],
+                        size: [u32::from(width) * self.cell[0], self.cell[1]],
+                    },
+                    shape,
+                )
             } else {
                 return None;
             };
             Some(Cursor {
                 rect,
                 color: rgba(cursor.color),
+                shape,
             })
         });
     }
@@ -327,14 +354,14 @@ impl View {
         (cells > 0).then_some((u32::from(cursor.row), column, cells))
     }
 
-    pub(crate) fn draw_list(&self) -> DrawList<'_> {
+    pub(crate) fn draw_list(&self, cursor_hidden: bool) -> DrawList<'_> {
         DrawList {
             grid_size: self.grid,
             cell_size: self.cell,
             origin: [0, 0],
             backgrounds: &self.backgrounds,
             glyphs: &self.glyphs,
-            cursor: self.cursor,
+            cursor: self.cursor.filter(|_| !cursor_hidden),
         }
     }
 

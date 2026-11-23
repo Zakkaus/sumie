@@ -23,9 +23,52 @@ pub struct GlyphQuad {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorShape {
+    Block,
+    Bar,
+    Underline,
+    Hollow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cursor {
+    /// Cell bounds in device pixels, or the already-sized rectangle for a solid block.
     pub rect: PixelRect,
     pub color: Rgba,
+    pub shape: CursorShape,
+}
+
+impl Cursor {
+    fn instance_count(self) -> usize {
+        let [w, h] = self.rect.size;
+        if self.shape == CursorShape::Hollow && w > 2 && h > 2 {
+            4
+        } else {
+            1
+        }
+    }
+
+    fn write(self, mut write: impl FnMut(Instance)) {
+        let [x, y] = self.rect.origin;
+        let [w, h] = self.rect.size;
+        let stroke = || ((h + 8) / 16).max(1);
+        let mut solid =
+            |origin, size| write(Instance::solid(PixelRect { origin, size }, self.color));
+        match self.shape {
+            CursorShape::Bar => solid([x, y], [stroke().min(w), h]),
+            CursorShape::Underline => {
+                let height = stroke().min(h);
+                solid([x, y + (h - height).cast_signed()], [w, height]);
+            }
+            CursorShape::Hollow if self.instance_count() == 4 => {
+                solid([x, y], [w, 1]);
+                solid([x, y + h.cast_signed() - 1], [w, 1]);
+                solid([x, y + 1], [1, h - 2]);
+                solid([x + w.cast_signed() - 1, y + 1], [1, h - 2]);
+            }
+            CursorShape::Block | CursorShape::Hollow => solid([x, y], [w, h]),
+        }
+    }
 }
 
 /// One complete frame. All positions and sizes are in device pixels except `grid_size`.
@@ -82,7 +125,9 @@ impl DrawList<'_> {
         let [columns, rows] = self.grid_size;
         assert_eq!(self.backgrounds.len(), columns as usize * rows as usize);
         u32::try_from(
-            self.backgrounds.len() + self.glyphs.len() + usize::from(self.cursor.is_some()),
+            self.backgrounds.len()
+                + self.glyphs.len()
+                + self.cursor.map_or(0, Cursor::instance_count),
         )
         .expect("too many instances")
     }
@@ -114,7 +159,7 @@ impl DrawList<'_> {
             write(Instance::glyph(glyph, background));
         }
         if let Some(cursor) = self.cursor {
-            write(Instance::solid(cursor.rect, cursor.color));
+            cursor.write(write);
         }
     }
 }

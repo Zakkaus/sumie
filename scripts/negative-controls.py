@@ -162,6 +162,13 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")
+    probe("DECSCUSR underline read as bar", "test", "crates/sumie-vt/src/cursor.rs",
+          replace_once("ffi::CURSOR_STYLE_UNDERLINE => CursorStyle::Underline,",
+                       "ffi::CURSOR_STYLE_UNDERLINE => CursorStyle::Bar,"),
+          "test cursor::tests::decscusr_controls_shape_and_blink_until_reset ... FAILED")
+    probe("hollow cursor border widened", "test", "crates/sumie-render/src/grid.rs",
+          replace_once("solid([x, y + 1], [1, h - 2]);", "solid([x, y + 1], [2, h - 2]);"),
+          "test grid_on_selected_backend ... FAILED")
     probe("oversized OSC 52 clipboard write", "test", "crates/sumie-vt/src/effects.rs",
           replace_once("if len > OUTPUT_LIMIT - self.clipboard_bytes {",
                        "if len > OUTPUT_LIMIT + 1 - self.clipboard_bytes {"),

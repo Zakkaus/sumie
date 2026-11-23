@@ -19,8 +19,7 @@ client's runtime; a timeout exits with status 124 (137 if forced to kill it).
 
 For a screenshot, pass `--exit-after-frames N --screenshot /path/to/output.png`
 to sumie. Choose a frame count reached after the output you want to capture.
-Idle time does not generate frames; arrange for changing terminal output after
-injection if needed.
+Use changing terminal output or an enabled cursor blink to reach later frames.
 
 ## Why fake input
 

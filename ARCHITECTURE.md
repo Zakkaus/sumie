@@ -40,6 +40,8 @@ On Linux, `sumie-config::Watch` registers the primary file, every visited includ
 
 PTY readiness clears the wake before draining output into VT. Key commands carry unencoded input; the local pane encodes them with the terminal's current modes. IME preedit only changes the overlay; only commit bytes cross the pane boundary. Input writes remain ordered in the PTY FIFO. Wayland configures the first frame slot. After that, output, geometry or preedit can use a free slot, but a frame callback alone never dirties the view. Close drops GPU state before the Wayland window and drives child reaping from pidfd readiness and the PTY close deadline.
 
+One calloop timer advances the cursor's 600 ms blink phase when the focused viewport permits blinking. Key presses and PTY output restart the visible phase. Steady, off-viewport, VT-hidden, and unfocused cursors have no blink timer. A phase change can present the cached draw list without reshaping the grid. The text-input caret rectangle tracks the terminal cell independently of the drawn cursor.
+
 On Linux, core matches Ctrl+Shift+C and Ctrl+Shift+V by evdev position or keysym before key encoding. The Wayland `clipboard` module reads the keyboard seat's selection on a nonblocking calloop pipe. It delivers non-empty UTF-8 reads in request order and releases the slots of failed reads. Reaching the size limit closes the pipe without delivering a partial paste. The app passes each successful read as `PaneCommand::Paste`. In mode 2004, the VT wrapper removes embedded bracketed-paste end markers. In either mode, it strips control characters other than Tab, LF, and CR before calling `ghostty_paste_encode`. The pane enqueues the encoded paste in one operation, including both markers when mode 2004 is active. Clipboard warnings never include clipboard text.
 
 The core `selection` module tracks an inclusive viewport range, using the grid's stored widths to include both cells of a wide character. It does not read terminal text. The GUI maps surface coordinates to grid cells, inverts the selected cell colors unless overridden, and splits shaping runs at selection and foreground color boundaries. On release or a copy shortcut, the pane resolves the range with the VT plain-text formatter; neither command writes to the PTY. The Wayland `clipboard` module serves the resulting immutable text through nonblocking calloop writes. Read and write pipes have a five-second deadline. Replacing, clearing, or losing ownership of the selection cancels writes for the old source. The adapter does not publish a primary selection.
@@ -53,7 +55,7 @@ Viewport scrolling clears the selection and its drag anchor, as do resize and ou
 
 If surface acquisition times out, reports occlusion, or needs reconfiguration, the app retains the dirty frame and retries on a deadline. An idle or suspended surface has no retry deadline. Runtime font errors leave affected cells blank if no replacement glyph can be drawn; the view logs each error variant once without logging the input text.
 
-For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actual presentation. Use changing terminal output to reach N: the debug path does not generate frames on an idle terminal.
+For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actual presentation. Use changing terminal output or an enabled cursor blink to reach later frames.
 
 `gpu` creates the wgpu surface with safe `Instance::create_surface` and passes it to `SurfaceRenderer`. wgpu retains the shared `WindowOwner`; the renderer's GPU resources drop before the surface, and the native window cannot drop while the surface still owns it.
 
@@ -64,6 +66,8 @@ For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actu
 ## Terminal core (`sumie-vt`)
 
 `Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. It includes resolved foreground and background colors and the viewport cursor. No handles or borrowed native data escape the crate.
+
+The VT `cursor` module configures libghostty-vt's cursor defaults and reads the effective shape and blink mode from the render state. Ghostty preserves explicit DECSCUSR overrides through config reload; DECSCUSR 0 restores the latest defaults.
 
 The VT `effects` module owns the synchronous callback queues. PTY replies and pending decoded clipboard writes each have a 1 MiB limit. The clipboard read callback replies with denial; the write callback replies after admitting a supported write. The title callback copies the latest title. None of these callbacks call platform code or log payloads. PTY output readiness wakes the owner thread before feeding VT, so that same dispatch can drain effects without a second wakeup. VT 1.0.1 parses CSI 22/23 but ignores those actions in its C terminal handler.
 
@@ -96,6 +100,8 @@ The renderer uploads instances through a reusable staging belt and draws backgro
 On the render thread, call `upload_atlas` and `draw` only after releasing the terminal lock. The caller schedules frames; the renderer never draws or presents on its own. `Renderer` draws to a reusable offscreen target. `SurfaceRenderer` owns a caller-created surface, configures it at nonzero device-pixel sizes, and presents once per successful draw. `resize` may wait for swapchain GPU work. Drop `SurfaceRenderer` on the render thread; its renderer resources drop before its surface.
 
 The workspace tests use the same pixel checks on the selected backend and on Linux GLES. Set `SUMIE_REQUIRE_GPU=1` to fail instead of skipping when an adapter is unavailable. Set `SUMIE_RENDER_ARTIFACT_DIR` to an existing directory to save `grid.png` from the selected backend test.
+
+The cursor bar and underline use the same device-pixel thickness as a light box line: `max(1, round(cell_height / 16))`. The hollow block uses one device pixel per edge.
 
 ## Unix PTY (`sumie-pty`)
 

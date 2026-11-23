@@ -20,7 +20,7 @@ Build the workspace from the repository root with `cargo build --workspace --loc
 
 With Git, Python 3.11 or newer, rustfmt, and Clippy available, run `scripts/check-all.sh` from the repository root. Use `--fast` to skip the probes that temporarily edit source files. See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate boundaries and hook setup.
 
-## Configure fonts and colors on Linux
+## Configure fonts, colors, and the cursor on Linux
 
 Create `$XDG_CONFIG_HOME/sumie/sumie.toml` (or `~/.config/sumie/sumie.toml`):
 
@@ -37,6 +37,10 @@ hinting = "light"
 [colors]
 foreground = "#cccccc"
 background = "#1e1e1e"
+
+[cursor]
+style = "block"
+blink = true
 ```
 
 On Linux, saving the main file or an included file applies the changes without
@@ -44,6 +48,10 @@ restarting sumie. Invalid settings leave the previous settings in effect and sho
 the filename, line, and column at the top of the window until the next valid save.
 Colors use `#rrggbb` notation; an optional `palette` must contain all 16 ANSI colors
 in index order.
+
+Set `cursor.style` to `block`, `bar`, or `underline`. Terminal applications can
+override the shape and blink setting with DECSCUSR until they reset it. An
+unfocused window shows a steady outline for a visible cursor.
 
 Run `sumie config show --defaults` for all options. To enable editor completion,
 run `sumie config schema > sumie.schema.json` from the config directory.

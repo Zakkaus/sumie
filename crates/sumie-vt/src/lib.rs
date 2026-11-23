@@ -1,6 +1,7 @@
 //! Owns the safe `libghostty-vt` wrapper. Does not draw, call platform code, or
 //! decide which shortcuts to handle.
 
+mod cursor;
 mod effects;
 mod ffi;
 mod identity;
@@ -8,6 +9,7 @@ mod key;
 mod mouse;
 mod selection;
 mod shell;
+pub use cursor::{Cursor, CursorStyle};
 pub use effects::Event;
 pub use key::{KeyAction, KeyEncoder, KeyEvent};
 pub use mouse::{MouseAction, MouseButton, MouseEncoder, MouseReport};
@@ -29,14 +31,6 @@ pub struct Cell {
 }
 
 pub type Rgb = [u8; 3];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Cursor {
-    pub column: u16,
-    pub row: u16,
-    pub visible: bool,
-    pub color: Rgb,
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Snapshot {
@@ -356,24 +350,6 @@ impl Terminal {
             background,
             cursor,
         })
-    }
-
-    fn cursor(&self, color: Rgb) -> Result<Option<Cursor>, Error> {
-        // SAFETY: Each key is paired with its documented bool or u16 output layout.
-        unsafe {
-            if !self.render_value::<bool>(ffi::RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE)? {
-                return Ok(None);
-            }
-            let column: u16 = self.render_value(ffi::RENDER_STATE_DATA_CURSOR_VIEWPORT_X)?;
-            let wide_tail: bool =
-                self.render_value(ffi::RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL)?;
-            Ok(Some(Cursor {
-                column: column - u16::from(wide_tail),
-                row: self.render_value(ffi::RENDER_STATE_DATA_CURSOR_VIEWPORT_Y)?,
-                visible: self.render_value(ffi::RENDER_STATE_DATA_CURSOR_VISIBLE)?,
-                color,
-            }))
-        }
     }
 
     unsafe fn render_value<T: Default>(&self, data: c_int) -> Result<T, Error> {

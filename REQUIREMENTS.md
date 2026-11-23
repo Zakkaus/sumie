@@ -27,7 +27,7 @@ It warms both clients once, then alternates ten fresh processes per app in the
 same private KWin instance without clearing caches. Each client uses the
 comparison font and palette, prints one line, and sleeps. Ghostty sets
 `cursor-style-blink=false` and disables shell integration; the workload selects
-a steady block cursor in both terminals. sumie does not implement cursor blink.
+a steady block cursor in both terminals.
 
 Pass `--startup-only` after the artifact directory to repeat the ten startup
 samples without collecting idle or memory results.

@@ -40,6 +40,8 @@ pub struct Config {
     include: Vec<Spanned<PathBuf>>,
     /// Font selection and rasterization settings.
     pub font: Font,
+    /// Default terminal cursor appearance.
+    pub cursor: Cursor,
     /// Default terminal colors and selection overrides.
     pub colors: Colors,
     /// Interactive login shell settings.
@@ -66,6 +68,7 @@ impl Config {
     fn overlay(&mut self, file: Self) {
         self.font.overlay(file.font);
         self.colors.overlay(&file.colors);
+        self.cursor.overlay(file.cursor);
         self.shell.overlay(&file.shell);
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
     }
@@ -84,6 +87,48 @@ fn deserialize_contrast<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f6
             "minimum contrast must be between 1.0 and 21.0",
         ))
     }
+}
+
+/// Default cursor appearance; terminal applications can override it with DECSCUSR.
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct Cursor {
+    /// Cursor shape: block, bar, or underline.
+    #[schemars(with = "CursorStyle", default = "CursorStyle::default")]
+    style: Option<CursorStyle>,
+    /// Blink while the window is focused.
+    #[schemars(with = "bool", default = "default_cursor_blink")]
+    blink: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CursorStyle {
+    #[default]
+    Block,
+    Bar,
+    Underline,
+}
+
+impl Cursor {
+    #[must_use]
+    pub fn style(self) -> CursorStyle {
+        self.style.unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn blink(self) -> bool {
+        self.blink.unwrap_or_else(default_cursor_blink)
+    }
+
+    fn overlay(&mut self, file: Self) {
+        self.style = file.style.or(self.style);
+        self.blink = file.blink.or(self.blink);
+    }
+}
+
+const fn default_cursor_blink() -> bool {
+    true
 }
 
 /// A six-digit sRGB color in `#rrggbb` notation.
@@ -459,7 +504,7 @@ pub fn defaults_toml() -> String {
         "minimum-contrast",
         &properties["minimum-contrast"],
     );
-    for table in ["font", "colors", "shell"] {
+    for table in ["font", "colors", "cursor", "shell"] {
         use std::fmt::Write as _;
         writeln!(text, "\n[{table}]").expect("writing to a String is infallible");
         if let Some(fields) = properties[table]["properties"].as_object() {

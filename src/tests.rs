@@ -136,7 +136,7 @@ fn ready_pane(script: &str, env: &std::collections::BTreeMap<OsString, OsString>
         env,
         size,
         [12, 24],
-        &sumie_config::Colors::default(),
+        &sumie_config::Config::default(),
     )
     .unwrap();
     wait_for_line(&mut pane, "READY");

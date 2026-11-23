@@ -13,7 +13,7 @@ use crate::{
     Result, capture,
     gpu::Gpu,
     input,
-    pane::{LocalPane, set_colors},
+    pane::{LocalPane, set_colors, set_cursor_defaults},
     reload::Reload,
     sources::{self, Sources},
     view::{FontSettings, View, clear_color},
@@ -35,6 +35,7 @@ pub(crate) fn run(capture: capture::Options) -> Result<()> {
         config,
         reload,
         session: None,
+        focused: false,
         events: Vec::new(),
     };
     let result = app.drive();
@@ -52,6 +53,7 @@ struct App {
     config: sumie_config::Config,
     reload: Reload,
     session: Option<Session>,
+    focused: bool,
     events: Vec<Event>,
 }
 
@@ -64,6 +66,7 @@ struct Session {
     snapshot: Option<Snapshot>,
     snapshot_dirty: bool,
     frame_dirty: bool,
+    cursor_hidden: bool,
     frame_retry: Option<Instant>,
 }
 
@@ -100,10 +103,14 @@ impl App {
             if let Some(session) = &mut self.session {
                 session.watch_input()?;
                 let gpu = self.gpu.as_mut().unwrap();
-                if gpu.frame_slot_available()
-                    && retry.is_none_or(|at| Instant::now() >= at)
-                    && session.draw(gpu, &self.capture, self.reload.banner.as_deref())?
-                {
+                let ready =
+                    gpu.frame_slot_available() && retry.is_none_or(|at| Instant::now() >= at);
+                if ready {
+                    session.update_snapshot()?;
+                }
+                let banner = self.reload.banner.as_deref();
+                session.watch_blink(self.focused, banner)?;
+                if ready && session.draw(gpu, &self.capture, banner, self.focused)? {
                     return Ok(());
                 }
             }
@@ -142,6 +149,10 @@ impl App {
                 set_colors(&mut session.pane.terminal, &next.colors)?;
                 session.snapshot_dirty = true;
             }
+            if changes.cursor {
+                set_cursor_defaults(&mut session.pane.terminal, next.cursor)?;
+                session.snapshot_dirty = true;
+            }
             if changes.selection_colors {
                 session.view.set_selection_colors(&next.colors);
             }
@@ -164,6 +175,14 @@ impl App {
         match event {
             Event::CloseRequested => return Ok(true),
             Event::Presentation(feedback) => tracing::trace!(?feedback, "presentation feedback"),
+            Event::Configured { activated, .. } => {
+                if self.focused != activated {
+                    self.focused = activated;
+                    if let Some(session) = &mut self.session {
+                        session.frame_dirty = true;
+                    }
+                }
+            }
             Event::Resized {
                 device: (width, height),
                 scale,
@@ -179,8 +198,7 @@ impl App {
                         logical,
                         device,
                         handle.clone(),
-                        FontSettings::from_config(self.config.font.clone())?,
-                        &self.config.colors,
+                        &self.config,
                     )?);
                 }
                 self.gpu.as_mut().unwrap().resize(device);
@@ -210,11 +228,11 @@ impl Session {
         logical: [u32; 2],
         device: [u32; 2],
         handle: SourceHandle,
-        font: FontSettings,
-        colors: &sumie_config::Colors,
+        config: &sumie_config::Config,
     ) -> Result<Self> {
-        let view = View::new(scale, logical, device, font, colors)?;
-        let pane = LocalPane::login(view.size(), view.cell, colors)?;
+        let font = FontSettings::from_config(config.font.clone())?;
+        let view = View::new(scale, logical, device, font, &config.colors)?;
+        let pane = LocalPane::login(view.size(), view.cell, config)?;
         let sources = Sources::new(handle, &pane.pty)?;
         Ok(Self {
             shortcuts: Shortcuts::default(),
@@ -225,6 +243,7 @@ impl Session {
             snapshot: None,
             snapshot_dirty: true,
             frame_dirty: true,
+            cursor_hidden: false,
             frame_retry: None,
         })
     }
@@ -249,6 +268,12 @@ impl Session {
     }
 
     fn input(&mut self, event: Event, gpu: &mut Gpu) -> Result<()> {
+        if matches!(
+            event,
+            Event::Key { pressed: true, .. } | Event::ImeCommit { .. }
+        ) {
+            self.sources.as_ref().unwrap().reset_blink();
+        }
         let effect = if let Event::Pointer {
             phase,
             position,
@@ -322,6 +347,9 @@ impl Session {
         if ready.output() {
             let (dirty, eof) = self.pane.drain_output()?;
             self.snapshot_dirty |= dirty;
+            if dirty {
+                sources.reset_blink();
+            }
             for event in self.pane.terminal.drain_events() {
                 match event {
                     TerminalEvent::Clipboard(bytes) => gpu.write_terminal_clipboard(bytes),
@@ -365,35 +393,52 @@ impl Session {
         Ok(())
     }
 
+    fn watch_blink(&mut self, focused: bool, banner: Option<&str>) -> Result<()> {
+        let cursor = self.snapshot.as_ref().and_then(|snapshot| snapshot.cursor);
+        let enabled = focused
+            && self.view.preedit.is_empty()
+            && cursor.is_some_and(|cursor| {
+                cursor.visible && cursor.blink && (cursor.row != 0 || banner.is_none())
+            });
+        self.sources.as_mut().unwrap().watch_blink(enabled)
+    }
+
     fn draw(
         &mut self,
         gpu: &mut Gpu,
         options: &capture::Options,
         banner: Option<&str>,
+        focused: bool,
     ) -> Result<bool> {
         self.frame_retry = None;
-        self.update_snapshot()?;
-        if !self.frame_dirty {
+        let cursor_hidden = self.sources.as_ref().unwrap().cursor_hidden();
+        if !self.frame_dirty && self.cursor_hidden == cursor_hidden {
             return Ok(false);
         }
         let snapshot = self.snapshot.as_ref().expect("initial snapshot");
-        self.view.build(snapshot, self.selection.range(), banner);
-        gpu.upload_atlas(&self.view.atlas());
-        self.view.atlas_uploaded();
+        if self.frame_dirty {
+            self.view
+                .build(snapshot, self.selection.range(), banner, focused);
+            gpu.upload_atlas(&self.view.atlas());
+            self.view.atlas_uploaded();
+        }
         let final_frame = options
             .frames
             .is_some_and(|count| count == gpu.present_count() + 1);
         let frame = gpu.draw(
-            &self.view.draw_list(),
+            &self.view.draw_list(cursor_hidden),
             clear_color(snapshot.background),
             final_frame && options.screenshot.is_some(),
         );
-        if let Some(cursor) = snapshot.cursor {
+        if self.frame_dirty
+            && let Some(cursor) = snapshot.cursor
+        {
             gpu.set_cursor_rectangle(self.view.ime_rectangle(cursor));
         }
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
                 self.frame_dirty = false;
+                self.cursor_hidden = cursor_hidden;
                 tracing::debug!(count = gpu.present_count(), "submitted terminal frame");
                 if suboptimal {
                     gpu.resize(self.view.device);

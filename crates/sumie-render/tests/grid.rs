@@ -5,8 +5,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use sumie_render::{
-    AtlasRect, AtlasUpload, Cursor, DrawList, GlyphQuad, PixelRect, Renderer, Rgba, backends,
-    instance_descriptor, wgpu,
+    AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, OffscreenTarget, PixelRect,
+    Renderer, Rgba, backends, instance_descriptor, wgpu,
 };
 
 const WIDTH: u32 = 36;
@@ -89,6 +89,7 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
             writer.finish().unwrap();
         }
     }
+    assert_cursor_shapes(&mut renderer, &device, &queue, &target);
 }
 
 fn upload_atlas(renderer: &mut Renderer) {
@@ -162,6 +163,7 @@ const GRID: DrawList<'static> = DrawList {
             size: [8, 2],
         },
         color: [191, 46, 200, 255],
+        shape: CursorShape::Block,
     }),
 };
 
@@ -181,16 +183,73 @@ fn assert_grid(pixels: &[u8], [lightened, darkened]: [u8; 2]) {
         ([33, 19], [236, 231, 242, 255], 1),
     ];
     for ([x, y], expected, tolerance) in samples {
-        let offset = ((y * WIDTH + x) * 4) as usize;
-        let actual = &pixels[offset..offset + 4];
-        assert!(
-            actual
-                .iter()
-                .zip(expected)
-                .all(|(a, b)| a.abs_diff(b) <= tolerance),
-            "pixel ({x}, {y}): expected {expected:?} ±{tolerance}, got {actual:?}"
-        );
+        assert_pixel(pixels, x, y, expected, tolerance);
     }
+}
+
+fn assert_cursor_shapes(
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    target: &OffscreenTarget,
+) {
+    const SIZE: [u32; 2] = [8, 24];
+    const BACKGROUND: Rgba = [0, 0, 0, 255];
+    const INK: Rgba = [255; 4];
+    for shape in [
+        CursorShape::Bar,
+        CursorShape::Underline,
+        CursorShape::Hollow,
+    ] {
+        renderer.draw(
+            &DrawList {
+                grid_size: [1, 1],
+                cell_size: SIZE,
+                origin: [2, 1],
+                backgrounds: &[BACKGROUND],
+                glyphs: &[],
+                cursor: Some(Cursor {
+                    rect: PixelRect {
+                        origin: [2, 1],
+                        size: SIZE,
+                    },
+                    shape,
+                    color: INK,
+                }),
+            },
+            target,
+        );
+        let pixels = readback(device, queue, target.texture());
+        for y in 0..24 {
+            for x in 0..8 {
+                let marked = match shape {
+                    CursorShape::Bar => x < 2,
+                    CursorShape::Underline => y >= 22,
+                    CursorShape::Hollow => x == 0 || x == 7 || y == 0 || y == 23,
+                    CursorShape::Block => unreachable!(),
+                };
+                assert_pixel(
+                    &pixels,
+                    x + 2,
+                    y + 1,
+                    if marked { INK } else { BACKGROUND },
+                    0,
+                );
+            }
+        }
+    }
+}
+
+fn assert_pixel(pixels: &[u8], x: u32, y: u32, expected: Rgba, tolerance: u8) {
+    let offset = ((y * WIDTH + x) * 4) as usize;
+    let actual = &pixels[offset..offset + 4];
+    assert!(
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(a, b)| a.abs_diff(b) <= tolerance),
+        "pixel ({x}, {y}): expected {expected:?} ±{tolerance}, got {actual:?}"
+    );
 }
 
 fn readback(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {

@@ -8,6 +8,7 @@ use crate::{Config, Font, default_family};
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Changes {
     pub font: bool,
+    pub cursor: bool,
     pub terminal_colors: bool,
     pub selection_colors: bool,
     pub minimum_contrast: bool,
@@ -28,6 +29,8 @@ impl Config {
                 || self.font.logical_px().to_bits() != next.font.logical_px().to_bits()
                 || self.font.weight() != next.font.weight()
                 || self.font.hinting() != next.font.hinting(),
+            cursor: self.cursor.style() != next.cursor.style()
+                || self.cursor.blink() != next.cursor.blink(),
             terminal_colors: old.foreground() != new.foreground()
                 || old.background() != new.background()
                 || old.cursor() != new.cursor()
@@ -49,31 +52,49 @@ mod tests {
         let old = Config::default();
         let defaults = crate::defaults_toml();
         for (text, expected) in [
-            (&*defaults, [false; 4]),
-            ("[font]\nsize = 18", [true, false, false, false]),
-            ("[font]\nhinting = 'off'", [true, false, false, false]),
+            (&*defaults, [false; 5]),
+            ("[font]\nsize = 18", [true, false, false, false, false]),
+            (
+                "[font]\nhinting = 'off'",
+                [true, false, false, false, false],
+            ),
+            (
+                "[cursor]\nstyle = 'bar'",
+                [false, true, false, false, false],
+            ),
+            (
+                "[cursor]\nblink = false",
+                [false, true, false, false, false],
+            ),
             (
                 "[colors]\nbackground = '#123456'",
-                [false, true, false, false],
+                [false, false, true, false, false],
             ),
             (
                 "[colors]\nselection-background = '#123456'",
-                [false, false, true, false],
+                [false, false, false, true, false],
             ),
             (
                 "minimum-contrast = 7\n[font]\nweight = 500",
-                [true, false, false, true],
+                [true, false, false, false, true],
             ),
         ] {
             let new = toml::from_str(text).unwrap();
             let Changes {
                 font,
+                cursor,
                 terminal_colors,
                 selection_colors,
                 minimum_contrast,
             } = old.changes(&new);
             assert_eq!(
-                [font, terminal_colors, selection_colors, minimum_contrast],
+                [
+                    font,
+                    cursor,
+                    terminal_colors,
+                    selection_colors,
+                    minimum_contrast
+                ],
                 expected,
                 "{text}"
             );
