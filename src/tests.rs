@@ -332,7 +332,8 @@ fn ready_pane(script: &str, env: &std::collections::BTreeMap<OsString, OsString>
 }
 
 fn wait_for_line(pane: &mut LocalPane, expected: &str) {
-    let deadline = Instant::now() + Duration::from_secs(3);
+    // Shared CI runners can take several seconds to start a shell under parallel tests.
+    let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let timeout = Timespec::try_from(remaining).unwrap();
