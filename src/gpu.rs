@@ -32,7 +32,7 @@ pub(crate) struct Gpu {
 }
 
 impl Gpu {
-    pub(crate) fn new(capture: bool) -> Result<Self> {
+    pub(crate) fn new(capture: bool, minimum_contrast: f32) -> Result<Self> {
         let window = Platform::connect("sumie")?;
         let instance = wgpu::Instance::new(instance_descriptor(
             wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
@@ -52,6 +52,7 @@ impl Gpu {
                 ..Default::default()
             }))?;
         let mut target = SurfaceRenderer::new(surface, &adapter, &device, &queue, [0, 0])?;
+        target.set_minimum_contrast(minimum_contrast);
         if capture {
             target.enable_readback(&adapter)?;
         }

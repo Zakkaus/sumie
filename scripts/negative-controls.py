@@ -154,6 +154,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           append("#[test]\nfn test_probe() -> Result<(), &'static str> {\n"
                  '    Err("deliberate unit test failure")\n}\n'),
           "test test_probe ... FAILED")
+    probe("contrast above the supported range", "test", "crates/sumie-config/src/lib.rs",
+          replace_once("(1.0..=21.0).contains(&ratio)", "(1.0..=22.0).contains(&ratio)"),
+          "test tests::load_configuration ... FAILED")
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")

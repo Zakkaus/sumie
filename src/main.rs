@@ -79,9 +79,9 @@ fn run_app(args: impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
         .init();
 
     // TODO(P1): Hot reload must keep the last valid config and display errors in the window.
-    let font = sumie_config::load_user_font().unwrap_or_else(|error| {
+    let config = sumie_config::load_user_config().unwrap_or_else(|error| {
         tracing::warn!(%error, "invalid configuration; using defaults");
-        sumie_config::Font::default()
+        sumie_config::Config::default()
     });
-    app::run(capture, view::FontSettings::from_config(font)?)
+    app::run(capture, config)
 }

@@ -77,7 +77,6 @@ impl Renderer {
     /// Set the minimum WCAG contrast ratio for text in subsequent draws.
     /// Defaults to `1.1`; `1.0` disables correction.
     pub fn set_minimum_contrast(&mut self, minimum_contrast: f32) {
-        // TODO(P1): Pass the sumie.toml setting here from the config lane.
         self.minimum_contrast = minimum_contrast;
     }
 

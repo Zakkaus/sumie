@@ -229,7 +229,7 @@ impl Terminal {
         Ok(out)
     }
 
-    /// Override the default colors and the first sixteen palette entries.
+    /// Set default colors and ANSI palette entries; `None` clears the cursor default.
     ///
     /// # Errors
     /// Returns an error if Ghostty cannot read or update the palette.
@@ -237,10 +237,11 @@ impl Terminal {
         &mut self,
         foreground: Rgb,
         background: Rgb,
+        cursor: Option<Rgb>,
         palette: &[Rgb; 16],
     ) -> Result<(), Error> {
         let mut colors = [[0; 3]; 256];
-        // SAFETY: The live terminal accepts exactly these RGB and palette layouts and copies them.
+        // SAFETY: Ghostty copies RGB and palette inputs and accepts null for an unset RGB default.
         unsafe {
             check(ffi::ghostty_terminal_get(
                 self.raw,
@@ -249,13 +250,14 @@ impl Terminal {
             ))?;
             colors[..16].copy_from_slice(palette);
             for (option, color) in [
-                (ffi::TERMINAL_OPT_COLOR_FOREGROUND, foreground),
-                (ffi::TERMINAL_OPT_COLOR_BACKGROUND, background),
+                (ffi::TERMINAL_OPT_COLOR_FOREGROUND, Some(foreground)),
+                (ffi::TERMINAL_OPT_COLOR_BACKGROUND, Some(background)),
+                (ffi::TERMINAL_OPT_COLOR_CURSOR, cursor),
             ] {
                 check(ffi::ghostty_terminal_set(
                     self.raw,
                     option,
-                    color.as_ptr().cast(),
+                    color.as_ref().map_or(null(), std::ptr::from_ref).cast(),
                 ))?;
             }
             check(ffi::ghostty_terminal_set(

@@ -20,9 +20,11 @@ use crate::{
 
 const FRAME_RETRY_DELAY: Duration = Duration::from_millis(50);
 
-pub(crate) fn run(capture: capture::Options, font: FontSettings) -> Result<()> {
-    let gpu = Gpu::new(capture.screenshot.is_some())?;
-    let mut app = App::new(gpu, capture, font);
+pub(crate) fn run(capture: capture::Options, config: sumie_config::Config) -> Result<()> {
+    let minimum_contrast = config.minimum_contrast();
+    let font = FontSettings::from_config(config.font)?;
+    let gpu = Gpu::new(capture.screenshot.is_some(), minimum_contrast)?;
+    let mut app = App::new(gpu, capture, font, config.colors);
     let result = app.drive();
     let close = app.close();
     let reap = app
@@ -36,6 +38,7 @@ struct App {
     gpu: Option<Gpu>,
     capture: capture::Options,
     font: Option<FontSettings>,
+    colors: sumie_config::Colors,
     session: Option<Session>,
     events: Vec<Event>,
 }
@@ -53,11 +56,17 @@ struct Session {
 }
 
 impl App {
-    fn new(gpu: Gpu, capture: capture::Options, font: FontSettings) -> Self {
+    fn new(
+        gpu: Gpu,
+        capture: capture::Options,
+        font: FontSettings,
+        colors: sumie_config::Colors,
+    ) -> Self {
         Self {
             gpu: Some(gpu),
             capture,
             font: Some(font),
+            colors,
             session: None,
             events: Vec::new(),
         }
@@ -117,8 +126,14 @@ impl App {
                         .font
                         .take()
                         .expect("font settings before the first resize");
-                    self.session =
-                        Some(Session::new(scale, logical, device, handle.clone(), font)?);
+                    self.session = Some(Session::new(
+                        scale,
+                        logical,
+                        device,
+                        handle.clone(),
+                        font,
+                        &self.colors,
+                    )?);
                 }
                 self.gpu.as_mut().unwrap().resize(device);
             }
@@ -148,9 +163,10 @@ impl Session {
         device: [u32; 2],
         handle: SourceHandle,
         font: FontSettings,
+        colors: &sumie_config::Colors,
     ) -> Result<Self> {
-        let view = View::new(scale, logical, device, font)?;
-        let pane = LocalPane::login(view.size(), view.cell)?;
+        let view = View::new(scale, logical, device, font, colors)?;
+        let pane = LocalPane::login(view.size(), view.cell, colors)?;
         let sources = Sources::new(handle, &pane.pty)?;
         Ok(Self {
             shortcuts: Shortcuts::default(),

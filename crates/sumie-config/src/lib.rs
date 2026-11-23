@@ -19,14 +19,191 @@ const MIN_WEIGHT: u16 = 100;
 const MAX_WEIGHT: u16 = 900;
 const MAX_INCLUDE_DEPTH: usize = 64;
 
-#[derive(Default, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-struct Document {
+/// Startup settings for the terminal and its renderer.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Config {
     /// Share settings across machines. Paths are relative to the file that lists them.
     /// Later includes override earlier ones; this file overrides all of them per key.
     #[schemars(with = "Vec<PathBuf>")]
     include: Vec<Spanned<PathBuf>>,
-    font: Font,
+    /// Font selection and rasterization settings.
+    pub font: Font,
+    /// Default terminal colors and selection overrides.
+    pub colors: Colors,
+    /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
+    #[serde(deserialize_with = "deserialize_contrast")]
+    #[schemars(
+        with = "f64",
+        range(min = 1.0, max = 21.0),
+        default = "default_contrast"
+    )]
+    minimum_contrast: Option<f64>,
+}
+
+impl Config {
+    #[must_use]
+    pub fn minimum_contrast(&self) -> f32 {
+        #[expect(clippy::cast_possible_truncation, reason = "validated ratio in 1..=21")]
+        {
+            self.minimum_contrast.unwrap_or_else(default_contrast) as f32
+        }
+    }
+
+    fn overlay(&mut self, file: Self) {
+        self.font.overlay(file.font);
+        self.colors.overlay(&file.colors);
+        self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
+    }
+}
+
+const fn default_contrast() -> f64 {
+    1.1
+}
+
+fn deserialize_contrast<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f64>, D::Error> {
+    let ratio = f64::deserialize(input)?;
+    if (1.0..=21.0).contains(&ratio) {
+        Ok(Some(ratio))
+    } else {
+        Err(de::Error::custom(
+            "minimum contrast must be between 1.0 and 21.0",
+        ))
+    }
+}
+
+/// A six-digit sRGB color in `#rrggbb` notation.
+#[derive(Clone, Copy, Debug, JsonSchema)]
+#[schemars(transparent)]
+struct Color(#[schemars(with = "String", regex(pattern = r"^#[0-9a-fA-F]{6}$"))] [u8; 3]);
+
+impl<'de> Deserialize<'de> for Color {
+    fn deserialize<D: Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
+        struct HexColor;
+
+        impl de::Visitor<'_> for HexColor {
+            type Value = Color;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a color in #rrggbb notation")
+            }
+
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<Color, E> {
+                let rgb = text
+                    .strip_prefix('#')
+                    .filter(|hex| hex.len() == 6 && !hex.starts_with('+'))
+                    .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                    .ok_or_else(|| E::invalid_value(de::Unexpected::Str(text), &self))?
+                    .to_be_bytes();
+                Ok(Color([rgb[1], rgb[2], rgb[3]]))
+            }
+        }
+
+        input.deserialize_str(HexColor)
+    }
+}
+
+impl Serialize for Color {
+    fn serialize<S: serde::Serializer>(&self, output: S) -> Result<S::Ok, S::Error> {
+        let [r, g, b] = self.0;
+        output.collect_str(&format_args!("#{r:02x}{g:02x}{b:02x}"))
+    }
+}
+
+/// Terminal colors in `#rrggbb` notation.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Colors {
+    /// Default text color.
+    #[schemars(with = "Color", default = "default_foreground")]
+    foreground: Option<Color>,
+    /// Default terminal background color.
+    #[schemars(with = "Color", default = "default_background")]
+    background: Option<Color>,
+    /// Cursor color. Omit to use the terminal foreground color.
+    #[schemars(with = "Color")]
+    cursor: Option<Color>,
+    /// Selected text color. Omit to use the cell's background color.
+    #[schemars(with = "Color")]
+    selection_foreground: Option<Color>,
+    /// Selection background color. Omit to use the cell's foreground color.
+    #[schemars(with = "Color")]
+    selection_background: Option<Color>,
+    /// ANSI colors 0 through 15, in index order.
+    #[schemars(with = "Vec<Color>", length(equal = 16), default = "default_palette")]
+    palette: Option<[Color; 16]>,
+}
+
+impl Colors {
+    #[must_use]
+    pub fn foreground(&self) -> [u8; 3] {
+        self.foreground.unwrap_or_else(default_foreground).0
+    }
+
+    #[must_use]
+    pub fn background(&self) -> [u8; 3] {
+        self.background.unwrap_or_else(default_background).0
+    }
+
+    #[must_use]
+    pub fn cursor(&self) -> Option<[u8; 3]> {
+        self.cursor.map(|color| color.0)
+    }
+
+    #[must_use]
+    pub fn selection_foreground(&self) -> Option<[u8; 3]> {
+        self.selection_foreground.map(|color| color.0)
+    }
+
+    #[must_use]
+    pub fn selection_background(&self) -> Option<[u8; 3]> {
+        self.selection_background.map(|color| color.0)
+    }
+
+    #[must_use]
+    pub fn palette(&self) -> [[u8; 3]; 16] {
+        self.palette
+            .unwrap_or_else(default_palette)
+            .map(|color| color.0)
+    }
+
+    fn overlay(&mut self, file: &Self) {
+        self.foreground = file.foreground.or(self.foreground);
+        self.background = file.background.or(self.background);
+        self.cursor = file.cursor.or(self.cursor);
+        self.selection_foreground = file.selection_foreground.or(self.selection_foreground);
+        self.selection_background = file.selection_background.or(self.selection_background);
+        self.palette = file.palette.or(self.palette);
+    }
+}
+
+const fn default_foreground() -> Color {
+    Color([0xcc, 0xcc, 0xcc])
+}
+
+const fn default_background() -> Color {
+    Color([0x1e, 0x1e, 0x1e])
+}
+
+const fn default_palette() -> [Color; 16] {
+    [
+        Color([0x00, 0x00, 0x00]),
+        Color([0xcd, 0x31, 0x31]),
+        Color([0x0d, 0xbc, 0x79]),
+        Color([0xe5, 0xe5, 0x10]),
+        Color([0x24, 0x72, 0xc8]),
+        Color([0xbc, 0x3f, 0xbc]),
+        Color([0x11, 0xa8, 0xcd]),
+        Color([0xe5, 0xe5, 0xe5]),
+        Color([0x66, 0x66, 0x66]),
+        Color([0xf1, 0x4c, 0x4c]),
+        Color([0x23, 0xd1, 0x8b]),
+        Color([0xf5, 0xf5, 0x43]),
+        Color([0x3b, 0x8e, 0xea]),
+        Color([0xd6, 0x70, 0xd6]),
+        Color([0x29, 0xb8, 0xdb]),
+        Color([0xe5, 0xe5, 0xe5]),
+    ]
 }
 
 /// Font selection and rasterization settings.
@@ -135,12 +312,12 @@ pub enum Error {
     },
 }
 
-/// Load fonts from `$XDG_CONFIG_HOME/sumie/sumie.toml` or `~/.config/sumie/sumie.toml`.
+/// Load settings from `$XDG_CONFIG_HOME/sumie/sumie.toml` or `~/.config/sumie/sumie.toml`.
 /// An absent main file uses defaults.
 ///
 /// # Errors
 /// Returns the path of an unreadable file or the location of invalid settings.
-pub fn load_user_font() -> Result<Font, Error> {
+pub fn load_user_config() -> Result<Config, Error> {
     fn absolute_var(name: &str) -> Option<PathBuf> {
         env::var_os(name)
             .map(PathBuf::from)
@@ -150,15 +327,15 @@ pub fn load_user_font() -> Result<Font, Error> {
     absolute_var("XDG_CONFIG_HOME")
         .or_else(|| absolute_var("HOME").map(|home| home.join(".config")))
         .map_or_else(
-            || Ok(Font::default()),
+            || Ok(Config::default()),
             |dir| load(&dir.join("sumie/sumie.toml")),
         )
 }
 
-fn load(path: &Path) -> Result<Font, Error> {
+fn load(path: &Path) -> Result<Config, Error> {
     match fs::read_to_string(path) {
         Ok(text) => load_document(path, &text, &mut Vec::new()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Font::default()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
         Err(source) => Err(Error::Read {
             path: path.to_owned(),
             source,
@@ -166,8 +343,8 @@ fn load(path: &Path) -> Result<Font, Error> {
     }
 }
 
-fn load_document(path: &Path, text: &str, active: &mut Vec<PathBuf>) -> Result<Font, Error> {
-    let Document { include, font } = toml::from_str(text).map_err(|error: toml::de::Error| {
+fn load_document(path: &Path, text: &str, active: &mut Vec<PathBuf>) -> Result<Config, Error> {
+    let mut file: Config = toml::from_str(text).map_err(|error: toml::de::Error| {
         invalid(
             path,
             text,
@@ -175,8 +352,9 @@ fn load_document(path: &Path, text: &str, active: &mut Vec<PathBuf>) -> Result<F
             error.message().into(),
         )
     })?;
+    let include = std::mem::take(&mut file.include);
     if include.is_empty() {
-        return Ok(font);
+        return Ok(file);
     }
 
     if active.is_empty() {
@@ -186,7 +364,7 @@ fn load_document(path: &Path, text: &str, active: &mut Vec<PathBuf>) -> Result<F
         })?;
         active.push(identity);
     }
-    let mut merged = Font::default();
+    let mut merged = Config::default();
     for entry in include {
         let included = path.with_file_name(entry.get_ref());
         let at_entry = |message| invalid(path, text, entry.span().start, message);
@@ -209,7 +387,7 @@ fn load_document(path: &Path, text: &str, active: &mut Vec<PathBuf>) -> Result<F
         merged.overlay(load_document(&included, &source, active)?);
         active.pop();
     }
-    merged.overlay(font);
+    merged.overlay(file);
     Ok(merged)
 }
 
@@ -235,7 +413,7 @@ fn schema() -> Schema {
     SchemaSettings::default()
         .with(|settings| settings.inline_subschemas = true)
         .into_generator()
-        .into_root_schema_for::<Document>()
+        .into_root_schema_for::<Config>()
 }
 
 /// Generate the JSON Schema for the main file and its includes.
@@ -253,10 +431,18 @@ pub fn defaults_toml() -> String {
     let properties = &schema.as_value()["properties"];
     let mut text = String::from("#:schema ./sumie.schema.json\n\n");
     write_default(&mut text, "include", &properties["include"]);
-    text.push_str("\n[font]\n");
-    if let Some(fields) = properties["font"]["properties"].as_object() {
-        for (key, value) in fields {
-            write_default(&mut text, key, value);
+    write_default(
+        &mut text,
+        "minimum-contrast",
+        &properties["minimum-contrast"],
+    );
+    for table in ["font", "colors"] {
+        use std::fmt::Write as _;
+        writeln!(text, "\n[{table}]").expect("writing to a String is infallible");
+        if let Some(fields) = properties[table]["properties"].as_object() {
+            for (key, value) in fields {
+                write_default(&mut text, key, value);
+            }
         }
     }
     text
@@ -290,57 +476,106 @@ mod tests {
     }
 
     #[test]
-    fn load_font_configuration() {
+    fn load_configuration() {
+        type Case<'a> = (&'a str, Result<fn(Config), (usize, usize, &'static str)>);
+
         let dir = env::temp_dir().join(format!("sumie-config-{}", std::process::id()));
         fs::create_dir(&dir).unwrap();
         let scratch = Scratch(dir);
         let main = scratch.0.join("sumie.toml");
         fs::write(
             scratch.0.join("shared.toml"),
-            "[font]\nfamily = 'Iosevka'\nsize = 12\nweight = 500\nhinting = 'off'\n",
+            "minimum-contrast = 7.0\n[font]\nfamily = 'Iosevka'\nsize = 12\nweight = 500\n\
+             hinting = 'off'\n[colors]\nforeground = '#AB12EF'\nbackground = '#123456'\n",
         )
         .unwrap();
 
         let defaults = defaults_toml();
-        let default_font = ("JetBrains Mono", 20.0_f32, None, Hinting::Light);
-        let cases = [
+        let palette = ["#010203"; 16];
+        let colors = format!(
+            "include = ['shared.toml']\nminimum-contrast = 1.0\n[colors]\n\
+             background = '#fedcba'\ncursor = '#123456'\nselection-foreground = '#abcdef'\n\
+             selection-background = '#654321'\npalette = {palette:?}\n"
+        );
+        let cases: [Case<'_>; 9] = [
             (
                 "[font]\nfamily = 'Monospace'\nsize = 18\nweight = 600\nhinting = 'normal'\n",
-                Ok(("Monospace", 24.0, Some(600), Hinting::Normal)),
+                Ok(|config| assert_font(config.font, "Monospace", 24.0, 600, Hinting::Normal)),
             ),
-            ("[font]\nunknown = true\n", Err((2, "unknown field"))),
+            ("[font]\nunknown = true\n", Err((2, 1, "unknown field"))),
             (
                 "include = ['shared.toml']\n[font]\nsize = 15\nweight = 700\n",
-                Ok(("Iosevka", 20.0, Some(700), Hinting::Off)),
+                Ok(|config| {
+                    assert_eq!(config.minimum_contrast().to_bits(), 7.0_f32.to_bits());
+                    assert_font(config.font, "Iosevka", 20.0, 700, Hinting::Off);
+                }),
             ),
-            ("[font]\nhinting = 'strong'\n", Err((2, "unknown variant"))),
-            (&defaults, Ok(default_font)),
+            (
+                "[font]\nhinting = 'strong'\n",
+                Err((2, 11, "unknown variant")),
+            ),
+            (&defaults, Ok(assert_defaults)),
+            (&colors, Ok(assert_colors)),
+            (
+                "[colors]\nforeground = '#aa00gg'\n",
+                Err((2, 14, "#rrggbb")),
+            ),
+            ("[colors]\npalette = ['#+00000']\n", Err((2, 12, "#rrggbb"))),
+            (
+                "minimum-contrast = 21.00000001\n",
+                Err((1, 20, "between 1.0 and 21.0")),
+            ),
         ];
         for (input, expected) in cases {
             fs::write(&main, input).unwrap();
+            let result = load(&main);
             match expected {
-                Ok((family, px, weight, hinting)) => {
-                    let font = load(&main).unwrap();
-                    assert_eq!(font.logical_px().to_bits(), px.to_bits());
-                    assert_eq!(font.weight(), weight);
-                    assert_eq!(font.hinting(), hinting);
-                    assert_eq!(font.into_family(), family);
-                }
-                Err((expected_line, reason)) => match load(&main).unwrap_err() {
-                    Error::Invalid {
+                Ok(check) => check(result.unwrap()),
+                Err((line, column, reason)) => {
+                    let error = result.unwrap_err();
+                    let Error::Invalid {
                         path,
-                        line,
-                        column,
+                        line: actual_line,
+                        column: actual_column,
                         message,
-                    } => {
-                        assert_eq!(path, main);
-                        assert_eq!(line, expected_line);
-                        assert!((1..=12).contains(&column));
-                        assert!(message.contains(reason), "{message}");
-                    }
-                    error @ Error::Read { .. } => panic!("{error}"),
-                },
+                    } = error
+                    else {
+                        panic!("{error}");
+                    };
+                    assert_eq!(path, main);
+                    assert_eq!((actual_line, actual_column), (line, column), "{message}");
+                    assert!(message.contains(reason), "{message}");
+                }
             }
         }
+    }
+
+    fn assert_font(font: Font, family: &str, px: f32, weight: u16, hinting: Hinting) {
+        assert_eq!(font.logical_px().to_bits(), px.to_bits());
+        assert_eq!(font.weight(), Some(weight));
+        assert_eq!(font.hinting(), hinting);
+        assert_eq!(font.into_family(), family);
+    }
+
+    fn assert_defaults(config: Config) {
+        assert_eq!(config.minimum_contrast().to_bits(), 1.1_f32.to_bits());
+        assert_eq!(config.colors.foreground(), [0xcc; 3]);
+        assert_eq!(config.colors.background(), [0x1e; 3]);
+        assert_eq!(config.colors.palette()[1], [0xcd, 0x31, 0x31]);
+        assert_eq!(config.font.logical_px().to_bits(), 20.0_f32.to_bits());
+        assert_eq!(config.font.weight(), None);
+        assert_eq!(config.font.hinting(), Hinting::Light);
+        assert_eq!(config.font.into_family(), "JetBrains Mono");
+    }
+
+    fn assert_colors(config: Config) {
+        assert_eq!(config.minimum_contrast().to_bits(), 1.0_f32.to_bits());
+        let colors = config.colors;
+        assert_eq!(colors.foreground(), [0xab, 0x12, 0xef]);
+        assert_eq!(colors.background(), [0xfe, 0xdc, 0xba]);
+        assert_eq!(colors.cursor(), Some([0x12, 0x34, 0x56]));
+        assert_eq!(colors.selection_foreground(), Some([0xab, 0xcd, 0xef]));
+        assert_eq!(colors.selection_background(), Some([0x65, 0x43, 0x21]));
+        assert_eq!(colors.palette(), [[1, 2, 3]; 16]);
     }
 }

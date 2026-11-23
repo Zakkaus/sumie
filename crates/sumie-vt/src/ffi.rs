@@ -167,6 +167,7 @@ pub const TERMINAL_OPT_WRITE_PTY: c_int = 2;
 pub const TERMINAL_OPT_XTVERSION: c_int = 5;
 pub const TERMINAL_OPT_COLOR_FOREGROUND: c_int = 12;
 pub const TERMINAL_OPT_COLOR_BACKGROUND: c_int = 13;
+pub const TERMINAL_OPT_COLOR_CURSOR: c_int = 14;
 pub const TERMINAL_OPT_COLOR_PALETTE: c_int = 15;
 pub const TERMINAL_OPT_TERMINFO_NAME: c_int = 38;
 pub const TERMINAL_OPT_TITLE_CHANGED: c_int = 6;

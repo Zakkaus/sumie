@@ -24,6 +24,8 @@ pub(crate) struct View {
     pub(crate) preedit: String,
     grid: [u32; 2],
     backgrounds: Vec<Rgba>,
+    selection_foreground: Option<Rgb>,
+    selection_background: Option<Rgb>,
     glyphs: Vec<GlyphQuad>,
     atlas_dirty: Vec<AtlasRect>,
     cursor: Option<Cursor>,
@@ -61,6 +63,7 @@ impl View {
         logical: [u32; 2],
         device: [u32; 2],
         font_settings: FontSettings,
+        colors: &sumie_config::Colors,
     ) -> Result<Self> {
         let font = font_settings.at_scale(scale)?;
         let cell = [font.metrics().width, font.metrics().height];
@@ -76,6 +79,8 @@ impl View {
             grid,
             preedit: String::new(),
             backgrounds: Vec::new(),
+            selection_foreground: colors.selection_foreground(),
+            selection_background: colors.selection_background(),
             glyphs: Vec::new(),
             atlas_dirty: Vec::new(),
             cursor: None,
@@ -169,7 +174,10 @@ impl View {
                     .as_ref()
                     .is_some_and(|columns| columns.contains(&column));
                 let (foreground, background) = if highlighted {
-                    (cell.background, cell.foreground)
+                    (
+                        self.selection_foreground.unwrap_or(cell.background),
+                        self.selection_background.unwrap_or(cell.foreground),
+                    )
                 } else {
                     (cell.foreground, cell.background)
                 };
@@ -209,6 +217,10 @@ impl View {
             );
         }
         self.set_cursor(snapshot, overlay);
+        self.collect_atlas_dirty();
+    }
+
+    fn collect_atlas_dirty(&mut self) {
         self.atlas_dirty.clear();
         self.atlas_dirty.extend(
             self.font

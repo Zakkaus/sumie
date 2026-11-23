@@ -8,32 +8,12 @@ use std::sync::mpsc::TryRecvError;
 
 use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect};
 use sumie_pty::{Command, Pty, Size, SpawnOptions};
-use sumie_vt::{KeyEncoder, KeyEvent, Rgb, Snapshot, Terminal};
+use sumie_vt::{KeyEncoder, KeyEvent, Snapshot, Terminal};
 
 use crate::{Result, keycodes};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const XTVERSION: &str = concat!("sumie ", env!("CARGO_PKG_VERSION"));
-const FOREGROUND: Rgb = [0xcc, 0xcc, 0xcc];
-const BACKGROUND: Rgb = [0x1e, 0x1e, 0x1e];
-const PALETTE: [Rgb; 16] = [
-    [0x00, 0x00, 0x00],
-    [0xcd, 0x31, 0x31],
-    [0x0d, 0xbc, 0x79],
-    [0xe5, 0xe5, 0x10],
-    [0x24, 0x72, 0xc8],
-    [0xbc, 0x3f, 0xbc],
-    [0x11, 0xa8, 0xcd],
-    [0xe5, 0xe5, 0xe5],
-    [0x66, 0x66, 0x66],
-    [0xf1, 0x4c, 0x4c],
-    [0x23, 0xd1, 0x8b],
-    [0xf5, 0xf5, 0x43],
-    [0x3b, 0x8e, 0xea],
-    [0xd6, 0x70, 0xd6],
-    [0x29, 0xb8, 0xdb],
-    [0xe5, 0xe5, 0xe5],
-];
 
 pub(crate) struct LocalPane {
     pub(crate) terminal: Terminal,
@@ -43,8 +23,14 @@ pub(crate) struct LocalPane {
 }
 
 impl LocalPane {
-    pub(crate) fn login(size: Size, cell: [u32; 2]) -> Result<Self> {
-        Self::spawn(Command::LoginShell, &request_environment(), size, cell)
+    pub(crate) fn login(size: Size, cell: [u32; 2], colors: &sumie_config::Colors) -> Result<Self> {
+        Self::spawn(
+            Command::LoginShell,
+            &request_environment(),
+            size,
+            cell,
+            colors,
+        )
     }
 
     pub(crate) fn spawn(
@@ -52,12 +38,18 @@ impl LocalPane {
         env: &BTreeMap<OsString, OsString>,
         size: Size,
         cell: [u32; 2],
+        colors: &sumie_config::Colors,
     ) -> Result<Self> {
         let mut terminal = Terminal::new(size.cols, size.rows)?;
         let term = env.get(std::ffi::OsStr::new("TERM"));
         terminal.set_identity(XTVERSION, term.map_or(&[], |term| term.as_encoded_bytes()))?;
         terminal.set_scrollback_bytes(10_000_000)?;
-        terminal.set_colors(FOREGROUND, BACKGROUND, &PALETTE)?;
+        terminal.set_colors(
+            colors.foreground(),
+            colors.background(),
+            colors.cursor(),
+            &colors.palette(),
+        )?;
         terminal.resize_pixels(size.cols, size.rows, cell)?;
         let mouse = mouse::Mouse::new(&terminal, [size.cols, size.rows], cell)?;
         Ok(Self {

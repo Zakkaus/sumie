@@ -131,7 +131,14 @@ fn ready_pane(script: &str, env: &std::collections::BTreeMap<OsString, OsString>
         width_px: 480,
         height_px: 240,
     };
-    let mut pane = LocalPane::spawn(command, env, size, [12, 24]).unwrap();
+    let mut pane = LocalPane::spawn(
+        command,
+        env,
+        size,
+        [12, 24],
+        &sumie_config::Colors::default(),
+    )
+    .unwrap();
     wait_for_line(&mut pane, "READY");
     pane
 }

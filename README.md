@@ -16,19 +16,27 @@ Build the workspace from the repository root with `cargo build --workspace --loc
 
 With Git, Python 3.11 or newer, rustfmt, and Clippy available, run `scripts/check-all.sh` from the repository root. Use `--fast` to skip the probes that temporarily edit source files. See [ARCHITECTURE.md](ARCHITECTURE.md) for the crate boundaries and hook setup.
 
-## Configure fonts on Linux
+## Configure fonts and colors on Linux
 
 Create `$XDG_CONFIG_HOME/sumie/sumie.toml` (or `~/.config/sumie/sumie.toml`):
 
 ```toml
 #:schema ./sumie.schema.json
 include = []
+minimum-contrast = 1.1 # 1.0 disables text contrast correction
 
 [font]
 family = "JetBrains Mono"
 size = 15.0 # points at 96 DPI
 hinting = "light"
+
+[colors]
+foreground = "#cccccc"
+background = "#1e1e1e"
 ```
+
+Restart sumie to apply changes. Colors use `#rrggbb` notation; an optional
+`palette` must contain all 16 ANSI colors in index order.
 
 Run `sumie config show --defaults` for all options. To enable editor completion,
 run `sumie config schema > sumie.schema.json` from the config directory.
