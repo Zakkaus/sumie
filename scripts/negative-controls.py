@@ -182,6 +182,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("paste queued without framing", "test", "src/pane.rs",
               replace_once("self.terminal.encode_paste(text)?", "text.into_bytes()"),
               "test tests::bracketed_paste_fits_or_leaves_the_queue_unchanged ... FAILED")
+        probe("matched shortcut falls through to encoding", "test", "src/input.rs",
+              replace_once("Some(Shortcut::Copy) => return Ok(Effect::Copy(serial)),",
+                           "Some(Shortcut::Copy) => (),"),
+              "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
 
 
 def interrupted(_signum, _frame):

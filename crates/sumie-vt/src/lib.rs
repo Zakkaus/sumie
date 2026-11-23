@@ -186,7 +186,7 @@ impl Terminal {
     ///
     /// # Errors
     /// Returns an error if Ghostty cannot query mode 2004 or encode the text.
-    pub fn encode_paste(&self, text: String) -> Result<Vec<u8>, Error> {
+    pub fn encode_paste(&self, mut text: String) -> Result<Vec<u8>, Error> {
         const END: &str = "\x1b[201~";
         if text.is_empty() {
             return Ok(Vec::new());
@@ -203,11 +203,14 @@ impl Terminal {
                 from_mut(&mut mode).cast(),
             )
         })?;
-        let mut data = if mode.value && text.contains(END) {
-            text.replace(END, "").into_bytes()
-        } else {
-            text.into_bytes()
-        };
+        if mode.value && text.contains(END) {
+            text = text.replace(END, "");
+        }
+        text.retain(|ch| matches!(ch, '\t' | '\n' | '\r') || !ch.is_control());
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut data = text.into_bytes();
         let mut out = Vec::with_capacity(data.len() + if mode.value { 2 * END.len() } else { 0 });
         let mut written = 0;
         // SAFETY: The input is writable, and out has room for the payload and both
@@ -517,12 +520,20 @@ mod tests {
     use super::Terminal;
 
     #[test]
-    fn paste_uses_current_terminal_mode() {
+    fn paste_filters_controls_in_both_modes() {
         let mut terminal = Terminal::new(5, 2).unwrap();
         for (mode, input, expected) in [
-            ("\x1b[?2004h", "a\x1b[201~\nb", "\x1b[200~a\nb\x1b[201~"),
-            ("\x1b[?2004h", "", ""),
-            ("\x1b[?2004l", "a\nb", "a\rb"),
+            (
+                "\x1b[?2004h",
+                "a\x00\x01\x1b[201~\u{7f}\u{80}\u{9f}\t\nb\x1b中",
+                "\x1b[200~a\t\nb中\x1b[201~",
+            ),
+            ("\x1b[?2004h", "\x01\x1b[201~\u{9b}", ""),
+            (
+                "\x1b[?2004l",
+                "a\x00\x01\x1b\u{7f}\u{80}\u{9f}\t\rb\n中",
+                "a\t\rb\r中",
+            ),
         ] {
             terminal.write(mode.as_bytes());
             assert_eq!(

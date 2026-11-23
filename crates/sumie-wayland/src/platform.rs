@@ -167,12 +167,13 @@ impl Platform {
         self.state.events.drain(..)
     }
 
-    /// Request text from the keyboard seat's clipboard. Completed non-empty reads
-    /// up to `max_bytes` arrive as `Event::ClipboardText` on the event-loop thread.
+    /// Request text from the keyboard seat's clipboard. Non-empty UTF-8 reads
+    /// smaller than `max_bytes` arrive in request order as `Event::ClipboardText`.
+    /// Reads that reach the size limit or take more than five seconds are discarded.
     ///
     /// # Errors
     /// Returns an error if pipe creation or event source registration fails.
-    pub fn read_clipboard(&self, max_bytes: usize) -> std::io::Result<()> {
+    pub fn read_clipboard(&mut self, max_bytes: usize) -> std::io::Result<()> {
         self.state.read_clipboard(max_bytes)
     }
 

@@ -16,19 +16,7 @@ fn local_pane_executes_committed_input_without_preedit() {
     let mut env = request_environment();
     env.insert("ENV".into(), "/dev/null".into());
     env.insert("PS1".into(), "".into());
-    let args = ["-c", "stty -echo; printf 'READY\\n'; exec /bin/sh -i"].map(OsString::from);
-    let command = Command::Argv {
-        program: OsStr::new("/bin/sh"),
-        args: &args,
-    };
-    let size = Size {
-        cols: 40,
-        rows: 10,
-        width_px: 480,
-        height_px: 240,
-    };
-    let mut pane = LocalPane::spawn(command, &env, size, [12, 24]).unwrap();
-    wait_for_line(&mut pane, "READY");
+    let mut pane = ready_pane("stty -echo; printf 'READY\\n'; exec /bin/sh -i", &env);
     input::route(
         &mut pane,
         &mut sumie_core::Shortcuts::default(),
@@ -56,19 +44,10 @@ fn local_pane_executes_committed_input_without_preedit() {
 #[test]
 fn bracketed_paste_fits_or_leaves_the_queue_unchanged() {
     use sumie_pty::INPUT_LIMIT;
-    let args = ["-c", "printf '\\033[?2004hREADY\\n'; exec cat"].map(OsString::from);
-    let command = Command::Argv {
-        program: OsStr::new("/bin/sh"),
-        args: &args,
-    };
-    let size = Size {
-        cols: 40,
-        rows: 10,
-        width_px: 480,
-        height_px: 240,
-    };
-    let mut pane = LocalPane::spawn(command, &request_environment(), size, [12, 24]).unwrap();
-    wait_for_line(&mut pane, "READY");
+    let mut pane = ready_pane(
+        "printf '\\033[?2004hREADY\\n'; exec cat",
+        &request_environment(),
+    );
     pane.command(PaneCommand::Text(b"x")).unwrap();
     // With one byte queued, the first framed paste exceeds the FIFO by one byte.
     let error = pane
@@ -86,6 +65,75 @@ fn bracketed_paste_fits_or_leaves_the_queue_unchanged() {
     );
     pane.command(PaneCommand::Close).unwrap();
     crate::sources::reap(&mut pane.pty).unwrap();
+}
+
+#[test]
+fn matched_shortcuts_never_reach_the_pty() {
+    // A non-Latin layout supplies printable text even with Ctrl+Shift held.
+    // Release the modifiers first so Kitty can also encode the key release.
+    let mut pane = ready_pane(
+        "printf '\\033[>11uREADY\\n'; exec cat",
+        &request_environment(),
+    );
+    let mut shortcuts = sumie_core::Shortcuts::default();
+    for (physical, shifted, base, text) in [
+        (
+            46,
+            xkeysym::key::Cyrillic_ES,
+            xkeysym::key::Cyrillic_es,
+            "С",
+        ),
+        (
+            47,
+            xkeysym::key::Cyrillic_EM,
+            xkeysym::key::Cyrillic_em,
+            "М",
+        ),
+    ] {
+        for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
+            input::route(
+                &mut pane,
+                &mut shortcuts,
+                Event::Key {
+                    physical,
+                    keysym: if pressed { shifted } else { base },
+                    utf8: pressed.then(|| text.into()),
+                    modifiers: sumie_wayland::Modifiers {
+                        ctrl: pressed,
+                        shift: pressed,
+                        ..Default::default()
+                    },
+                    pressed,
+                    repeat,
+                    serial: u32::from(!repeat),
+                },
+            )
+            .unwrap();
+            assert!(
+                pane.pty.input_fd().is_none(),
+                "matched key queued PTY input: {physical}, pressed={pressed}, repeat={repeat}"
+            );
+        }
+    }
+    pane.command(PaneCommand::Close).unwrap();
+    crate::sources::reap(&mut pane.pty).unwrap();
+}
+
+fn ready_pane(script: &str, env: &std::collections::BTreeMap<OsString, OsString>) -> LocalPane {
+    let args = ["-c", script].map(OsString::from);
+    let command = Command::Argv {
+        program: OsStr::new("/bin/sh"),
+        args: &args,
+    };
+    let size = Size {
+        cols: 40,
+        rows: 10,
+        width_px: 480,
+        height_px: 240,
+    };
+    let mut pane = LocalPane::spawn(command, env, size, [12, 24]).unwrap();
+    wait_for_line(&mut pane, "READY");
+    pane
 }
 
 fn wait_for_line(pane: &mut LocalPane, expected: &str) {

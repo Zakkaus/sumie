@@ -150,19 +150,44 @@ impl View {
                 .filter(|&(y, _, _)| y == row)
                 .map(|(_, x, width)| x..x + width);
             self.line.clear();
+            let mut start = 0;
+            let mut run = None;
+            let mut draw = |line: &mut Line, column, color| {
+                line.trim_spaces();
+                line.draw(
+                    &mut self.font,
+                    &mut self.font_errors,
+                    &mut self.glyphs,
+                    [column, row],
+                    color,
+                );
+                line.clear();
+            };
             for (column, cell) in (0..).zip(cells) {
+                let highlighted = highlighted(column);
                 let covered = columns
                     .as_ref()
                     .is_some_and(|columns| columns.contains(&column));
+                let (foreground, background) = if highlighted {
+                    (cell.background, cell.foreground)
+                } else {
+                    (cell.foreground, cell.background)
+                };
                 self.backgrounds.push(rgba(if covered {
                     snapshot.background
-                } else if highlighted(column) {
-                    cell.foreground
                 } else {
-                    cell.background
+                    background
                 }));
                 if cell.width == 0 {
                     continue;
+                }
+                let color = rgba(foreground);
+                if run != Some((highlighted, color)) {
+                    if let Some((_, previous)) = run {
+                        draw(&mut self.line, start, previous);
+                    }
+                    start = column;
+                    run = Some((highlighted, color));
                 }
                 let intersects = columns.as_ref().is_some_and(|columns| {
                     columns.start < column + u32::from(cell.width) && column < columns.end
@@ -170,21 +195,9 @@ impl View {
                 self.line
                     .push(if intersects { "" } else { &cell.text }, cell.width);
             }
-            self.line.trim_spaces();
-            self.line.draw(
-                &mut self.font,
-                &mut self.font_errors,
-                &mut self.glyphs,
-                [0, row],
-                |column| {
-                    let cell = &cells[column as usize];
-                    rgba(if highlighted(column) {
-                        cell.background
-                    } else {
-                        cell.foreground
-                    })
-                },
-            );
+            if let Some((_, color)) = run {
+                draw(&mut self.line, start, color);
+            }
         }
         if let Some((row, column, _)) = overlay {
             self.composition.draw(
@@ -192,7 +205,7 @@ impl View {
                 &mut self.font_errors,
                 &mut self.glyphs,
                 [column, row],
-                |_| rgba(snapshot.foreground),
+                rgba(snapshot.foreground),
             );
         }
         self.set_cursor(snapshot, overlay);
@@ -329,7 +342,7 @@ impl Line {
         errors: &mut FontErrors,
         glyphs: &mut Vec<GlyphQuad>,
         [col, row]: [u32; 2],
-        foreground: impl Fn(u32) -> Rgba,
+        foreground: Rgba,
     ) {
         if self.text.is_empty() {
             return;
@@ -373,7 +386,7 @@ impl Line {
                         origin: [x + glyph.x + image.left, y + glyph.y + image.top],
                         size,
                     },
-                    color: foreground(column),
+                    color: foreground,
                     cell: [column, row],
                 });
             }

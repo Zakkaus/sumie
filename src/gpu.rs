@@ -68,7 +68,7 @@ impl Gpu {
         self.window.loop_handle()
     }
 
-    pub(crate) fn read_clipboard(&self) {
+    pub(crate) fn read_clipboard(&mut self) {
         if let Err(error) = self.window.read_clipboard(sumie_pty::INPUT_LIMIT) {
             tracing::warn!(%error, "could not request clipboard text");
         }

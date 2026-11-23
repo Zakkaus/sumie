@@ -1,4 +1,4 @@
-use std::{io, mem, rc::Rc};
+use std::{collections::VecDeque, io, mem, rc::Rc, time::Duration};
 
 use rustix::{
     fs::{OFlags, fcntl_getfl, fcntl_setfl},
@@ -13,7 +13,11 @@ use smithay_client_toolkit::{
         data_source::{CopyPasteSource, DataSourceHandler},
     },
     reexports::{
-        calloop::{Interest, Mode, PostAction, RegistrationToken, generic::Generic},
+        calloop::{
+            Interest, Mode, PostAction, RegistrationToken,
+            generic::Generic,
+            timer::{TimeoutAction, Timer},
+        },
         client::{
             Connection, QueueHandle,
             protocol::{
@@ -28,16 +32,67 @@ use crate::{Event, platform::State};
 
 const TEXT_TYPES: [&str; 3] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
 const CHUNK_BYTES: usize = 8192;
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub(crate) struct Clipboard {
     source: Option<ClipboardSource>,
-    writes: Vec<Option<RegistrationToken>>,
+    reads: PasteQueue<Transfer>,
+    writes: Vec<Option<Transfer>>,
 }
 
 struct ClipboardSource {
     source: CopyPasteSource,
     bytes: Rc<Vec<u8>>,
+}
+
+struct Transfer {
+    pipe: RegistrationToken,
+    timer: RegistrationToken,
+}
+
+enum Paste<T> {
+    Pending(T),
+    Ready(Option<String>),
+}
+
+struct PasteQueue<T> {
+    first: usize,
+    slots: VecDeque<Paste<T>>,
+}
+
+impl<T> Default for PasteQueue<T> {
+    fn default() -> Self {
+        Self {
+            first: 0,
+            slots: VecDeque::new(),
+        }
+    }
+}
+
+impl<T> PasteQueue<T> {
+    fn next_sequence(&self) -> usize {
+        self.first.wrapping_add(self.slots.len())
+    }
+
+    fn push(&mut self, transfer: T) {
+        self.slots.push_back(Paste::Pending(transfer));
+    }
+
+    fn finish(&mut self, sequence: usize, text: Option<String>, events: &mut VecDeque<Event>) -> T {
+        let index = sequence.wrapping_sub(self.first);
+        let Paste::Pending(transfer) = mem::replace(&mut self.slots[index], Paste::Ready(text))
+        else {
+            unreachable!("clipboard read completes once");
+        };
+        while matches!(self.slots.front(), Some(Paste::Ready(_))) {
+            if let Some(Paste::Ready(Some(text))) = self.slots.pop_front() {
+                events.push_back(Event::ClipboardText(text));
+            }
+            self.first = self.first.wrapping_add(1);
+        }
+        transfer
+    }
 }
 
 impl State {
@@ -52,70 +107,104 @@ impl State {
         else {
             return;
         };
-        let Some(bytes) = bytes else {
+        let source = if let Some(bytes) = bytes {
+            let source = manager.create_copy_paste_source(&self.qh, TEXT_TYPES);
+            source.set_selection(device, serial);
+            Some(ClipboardSource {
+                source,
+                bytes: Rc::new(bytes),
+            })
+        } else {
             device.unset_selection(serial);
-            self.clipboard.source = None;
-            return;
+            None
         };
-        let source = manager.create_copy_paste_source(&self.qh, TEXT_TYPES);
-        source.set_selection(device, serial);
-        self.clipboard.source = Some(ClipboardSource {
-            source,
-            bytes: Rc::new(bytes),
-        });
+        self.cancel_clipboard_writes();
+        self.clipboard.source = source;
     }
 
     pub(crate) fn close_clipboard(&mut self) {
+        self.cancel_clipboard_writes();
+        for paste in self.clipboard.reads.slots.drain(..) {
+            if let Paste::Pending(transfer) = paste {
+                self.loop_handle.remove(transfer.pipe);
+                self.loop_handle.remove(transfer.timer);
+            }
+        }
+    }
+
+    fn cancel_clipboard_writes(&mut self) {
         self.clipboard.source = None;
-        for token in self.clipboard.writes.drain(..).flatten() {
-            self.loop_handle.remove(token);
+        for transfer in self.clipboard.writes.drain(..).flatten() {
+            self.loop_handle.remove(transfer.pipe);
+            self.loop_handle.remove(transfer.timer);
+        }
+    }
+
+    fn clipboard_deadline(
+        &self,
+        pipe: RegistrationToken,
+        mut expire: impl FnMut(&mut Self) + 'static,
+    ) -> io::Result<Transfer> {
+        match self.loop_handle.insert_source(
+            Timer::from_duration(TRANSFER_TIMEOUT),
+            move |_, (), state| {
+                state.loop_handle.remove(pipe);
+                expire(state);
+                TimeoutAction::Drop
+            },
+        ) {
+            Ok(timer) => Ok(Transfer { pipe, timer }),
+            Err(error) => {
+                self.loop_handle.remove(pipe);
+                Err(error.error.into())
+            }
         }
     }
 
     fn queue_clipboard_write(&mut self, fd: WritePipe, bytes: Rc<Vec<u8>>) -> io::Result<()> {
         fcntl_setfl(&fd, fcntl_getfl(&fd)? | OFlags::NONBLOCK)?;
-        // Each requested fd keeps its own offset and source bytes, even after replacement.
         let mut offset = 0;
-        let writes = &mut self.clipboard.writes;
-        let slot = writes
+        let slot = self
+            .clipboard
+            .writes
             .iter()
             .position(Option::is_none)
-            .unwrap_or(writes.len());
-        let token = self
+            .unwrap_or(self.clipboard.writes.len());
+        let pipe = self
             .loop_handle
             .insert_source(fd, move |(), fd, state| {
                 let remaining = &bytes[offset..];
-                let action = match write(fd, &remaining[..remaining.len().min(CHUNK_BYTES)]) {
-                    Ok(0) | Err(Errno::PIPE) => PostAction::Remove,
+                match write(fd, &remaining[..remaining.len().min(CHUNK_BYTES)]) {
+                    Ok(0) | Err(Errno::PIPE) => (),
                     Ok(n) => {
                         offset += n;
-                        if offset == bytes.len() {
-                            PostAction::Remove
-                        } else {
-                            PostAction::Continue
+                        if offset < bytes.len() {
+                            return PostAction::Continue;
                         }
                     }
-                    Err(Errno::AGAIN | Errno::INTR) => PostAction::Continue,
-                    Err(error) => {
-                        tracing::warn!(%error, "clipboard write failed");
-                        PostAction::Remove
-                    }
-                };
-                if action == PostAction::Remove {
-                    state.clipboard.writes[slot] = None;
+                    Err(Errno::AGAIN | Errno::INTR) => return PostAction::Continue,
+                    Err(error) => tracing::warn!(%error, "clipboard write failed"),
                 }
-                action
+                let transfer = state.clipboard.writes[slot]
+                    .take()
+                    .expect("active clipboard write");
+                state.loop_handle.remove(transfer.timer);
+                PostAction::Remove
             })
             .map_err(|e| e.error)?;
-        if let Some(entry) = writes.get_mut(slot) {
-            *entry = Some(token);
+        let transfer = self.clipboard_deadline(pipe, move |state| {
+            state.clipboard.writes[slot] = None;
+            tracing::warn!("clipboard write timed out");
+        })?;
+        if let Some(entry) = self.clipboard.writes.get_mut(slot) {
+            *entry = Some(transfer);
         } else {
-            writes.push(Some(token));
+            self.clipboard.writes.push(Some(transfer));
         }
         Ok(())
     }
 
-    pub(crate) fn read_clipboard(&self, max_bytes: usize) -> io::Result<()> {
+    pub(crate) fn read_clipboard(&mut self, max_bytes: usize) -> io::Result<()> {
         let Some(offer) = self
             .keyboard
             .as_ref()
@@ -133,49 +222,69 @@ impl State {
         let (reader, writer) = pipe_with(PipeFlags::CLOEXEC)?;
         // The selection owner may expect blocking writes; change only our end.
         fcntl_setfl(&reader, fcntl_getfl(&reader)? | OFlags::NONBLOCK)?;
-        receive_to_fd(offer.inner(), mime.to_owned(), writer);
         let source = Generic::new(reader, Interest::READ, Mode::Level);
+        let sequence = self.clipboard.reads.next_sequence();
         let mut data = Vec::new();
-        let mut bytes = 0usize;
-        self.loop_handle
+        let pipe = self
+            .loop_handle
             .insert_source(source, move |_, fd, state| {
                 let mut chunk = [0; CHUNK_BYTES];
-                match read(fd, &mut chunk) {
-                    Ok(0) => {
-                        state.finish_clipboard(mem::take(&mut data), bytes);
-                        Ok(PostAction::Remove)
+                let remaining = max_bytes - data.len();
+                let text = match read(fd, &mut chunk[..remaining.min(CHUNK_BYTES)]) {
+                    Ok(0) => clipboard_text(mem::take(&mut data)),
+                    Ok(n) if n == remaining => {
+                        tracing::warn!(
+                            bytes = max_bytes,
+                            reason = "oversized",
+                            "discarded clipboard transfer"
+                        );
+                        None
                     }
                     Ok(n) => {
-                        bytes = bytes.saturating_add(n);
-                        if bytes <= max_bytes {
-                            data.extend_from_slice(&chunk[..n]);
-                        }
-                        Ok(PostAction::Continue)
+                        data.extend_from_slice(&chunk[..n]);
+                        return Ok(PostAction::Continue);
                     }
-                    Err(Errno::AGAIN | Errno::INTR) => Ok(PostAction::Continue),
+                    Err(Errno::AGAIN | Errno::INTR) => return Ok(PostAction::Continue),
                     Err(error) => {
                         tracing::warn!(%error, "clipboard read failed");
-                        Ok(PostAction::Remove)
+                        None
                     }
-                }
+                };
+                let transfer = state
+                    .clipboard
+                    .reads
+                    .finish(sequence, text, &mut state.events);
+                state.loop_handle.remove(transfer.timer);
+                Ok(PostAction::Remove)
             })
             .map_err(|e| e.error)?;
+        let transfer = self.clipboard_deadline(pipe, move |state| {
+            tracing::warn!("clipboard read timed out");
+            state
+                .clipboard
+                .reads
+                .finish(sequence, None, &mut state.events);
+        })?;
+        self.clipboard.reads.push(transfer);
+        receive_to_fd(offer.inner(), mime.to_owned(), writer);
         Ok(())
     }
+}
 
-    fn finish_clipboard(&mut self, data: Vec<u8>, bytes: usize) {
-        if bytes == 0 {
-            return;
-        }
-        let reason = if bytes != data.len() {
-            "oversized"
-        } else if let Ok(text) = String::from_utf8(data) {
-            self.events.push_back(Event::ClipboardText(text));
-            return;
-        } else {
-            "invalid UTF-8"
-        };
-        tracing::warn!(bytes, reason, "discarded clipboard transfer");
+fn clipboard_text(data: Vec<u8>) -> Option<String> {
+    if data.is_empty() {
+        return None;
+    }
+    let bytes = data.len();
+    if let Ok(text) = String::from_utf8(data) {
+        Some(text)
+    } else {
+        tracing::warn!(
+            bytes,
+            reason = "invalid UTF-8",
+            "discarded clipboard transfer"
+        );
+        None
     }
 }
 
@@ -247,7 +356,7 @@ impl DataSourceHandler for State {
             .as_ref()
             .is_some_and(|clipboard| clipboard.source.inner() == source)
         {
-            self.clipboard.source = None;
+            self.cancel_clipboard_writes();
         }
     }
 
@@ -262,4 +371,29 @@ impl DataSourceHandler for State {
     fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
     fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
     fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: DndAction) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Event, PasteQueue, VecDeque};
+
+    #[test]
+    fn paste_results_keep_request_order_after_failure() {
+        let mut queue = PasteQueue::default();
+        let mut events = VecDeque::new();
+        let [first, failed, last] = std::array::from_fn(|_| {
+            let sequence = queue.next_sequence();
+            queue.push(());
+            sequence
+        });
+
+        queue.finish(last, Some("last".into()), &mut events);
+        assert!(events.is_empty());
+        queue.finish(first, Some("first".into()), &mut events);
+        assert!(matches!(events.pop_front(), Some(Event::ClipboardText(text)) if text == "first"));
+        assert!(events.is_empty());
+        queue.finish(failed, None, &mut events);
+        assert!(matches!(events.pop_front(), Some(Event::ClipboardText(text)) if text == "last"));
+        assert!(events.is_empty());
+    }
 }
