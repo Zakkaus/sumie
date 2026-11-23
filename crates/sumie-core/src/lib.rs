@@ -13,7 +13,7 @@
 pub mod mouse;
 mod selection;
 
-pub use selection::{CellPosition, CellRange, Selection};
+pub use selection::{CellPosition, CellRange, Selection, SelectionPoint};
 
 /// Key action before encoding against the active terminal modes.
 #[derive(Clone, Copy)]

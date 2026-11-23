@@ -1,3 +1,5 @@
+use std::{env, process::Command};
+
 use smithay_client_toolkit::{
     reexports::client::{
         Connection, Proxy, QueueHandle,
@@ -12,6 +14,40 @@ use crate::{Event, Modifiers, PointerButton, PointerPhase, keyboard::Keyboard, p
 
 const VALUE120_PER_NOTCH: f64 = 120.0;
 const LOGICAL_UNITS_PER_NOTCH: f64 = 10.0;
+
+/// Read the desktop's double-click setting before dispatch starts. Wayland only
+/// provides event times, not a double-click interval.
+#[must_use]
+pub fn double_click_interval() -> Option<u32> {
+    let desktop = env::var("XDG_CURRENT_DESKTOP").ok()?;
+    let output = desktop.split(':').find_map(|name| match name {
+        "KDE" => Command::new("kreadconfig6")
+            .args([
+                "--file",
+                "kdeglobals",
+                "--group",
+                "KDE",
+                "--key",
+                "DoubleClickInterval",
+            ])
+            .output()
+            .ok(),
+        "GNOME" => Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.peripherals.mouse", "double-click"])
+            .output()
+            .ok(),
+        _ => None,
+    })?;
+    if !output.status.success() {
+        return None;
+    }
+    std::str::from_utf8(&output.stdout)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|&ms| ms > 0)
+}
 
 pub(crate) struct Pointer {
     proxy: WlPointer,
@@ -32,9 +68,11 @@ impl Pointer {
             }
             PointerEventKind::Leave { .. } => return self.cancel(modifiers),
             PointerEventKind::Motion { .. } => (PointerPhase::Motion, 0),
-            PointerEventKind::Press { button, serial, .. } => {
-                (PointerPhase::Press(pointer_button(button)?), serial)
-            }
+            PointerEventKind::Press {
+                button,
+                serial,
+                time,
+            } => (PointerPhase::Press(pointer_button(button)?, time), serial),
             PointerEventKind::Release { button, serial, .. } => {
                 (PointerPhase::Release(pointer_button(button)?), serial)
             }

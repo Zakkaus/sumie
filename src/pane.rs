@@ -170,11 +170,7 @@ impl Pane for LocalPane {
                 return self.follow_input();
             }
             PaneCommand::Copy(range) => {
-                let point = |p: sumie_core::CellPosition| [p.column, p.row];
-                return Ok(PaneEffect::Copied(
-                    self.terminal
-                        .selection_text(point(range.start), point(range.end))?,
-                ));
+                return Ok(PaneEffect::Copied(self.terminal.selection_text(range)?));
             }
             PaneCommand::Resize {
                 cols,

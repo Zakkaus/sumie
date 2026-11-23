@@ -197,6 +197,13 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("mouse tracking bypass ignores Shift", "test", "crates/sumie-core/src/mouse.rs",
           replace_once("modes.tracking && !event.modifiers.shift", "modes.tracking"),
           "test mouse::tests::routes_mouse_by_mode_and_gesture ... FAILED")
+    probe("double click remains cell-wise", "test", "crates/sumie-core/src/mouse.rs",
+          replace_once("SelectionUnit::Cell)) => SelectionUnit::Word,",
+                       "SelectionUnit::Cell)) => SelectionUnit::Cell,"),
+          "test mouse::tests::routes_mouse_by_mode_and_gesture ... FAILED")
+    probe("logical line selection clips the final wide cell", "test", "crates/sumie-vt/src/selection.rs",
+          replace_once("end.column += 1;", "end.column += 0;"),
+          "test selection::tests::selects_words_and_wrapped_lines ... FAILED")
     probe("unchanged settings request a contrast redraw", "test", "crates/sumie-config/src/changes.rs",
           replace_once("!= next.minimum_contrast().to_bits()",
                        "== next.minimum_contrast().to_bits()"),

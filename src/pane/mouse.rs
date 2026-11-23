@@ -70,12 +70,20 @@ impl Mouse {
 }
 
 impl LocalPane {
+    pub(crate) fn set_click_interval(&mut self, millis: u32) {
+        self.mouse.state.set_click_interval(millis);
+    }
+
+    pub(crate) fn cancel_pointer_selection(&mut self) {
+        self.mouse.state.cancel_selection();
+    }
+
     pub(crate) fn reset_pointer_gestures(&mut self) {
         self.mouse.state.reset_gestures();
     }
 
     pub(crate) fn search_pointer(&mut self, event: MouseEvent) -> Result<PaneEffect> {
-        if matches!(event.phase, MousePhase::Press(_) | MousePhase::Motion) {
+        if matches!(event.phase, MousePhase::Press(..) | MousePhase::Motion) {
             return Ok(PaneEffect::None);
         }
         let history_only = MouseModes {

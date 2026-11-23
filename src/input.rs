@@ -189,7 +189,7 @@ impl Routing {
         hit: impl FnOnce() -> Option<SearchTarget>,
     ) -> Result<Effect> {
         match event.phase {
-            MousePhase::Press(button) if searching => {
+            MousePhase::Press(button, _) if searching => {
                 self.search_presses[button as usize] = hit();
             }
             MousePhase::Motion if self.search_presses.iter().any(Option::is_some) => {
@@ -273,7 +273,7 @@ pub(crate) fn mouse_phase(phase: sumie_wayland::PointerPhase) -> sumie_core::mou
         PointerButton::Right => Button::Right,
     };
     match phase {
-        PointerPhase::Press(b) => MousePhase::Press(button(b)),
+        PointerPhase::Press(b, time) => MousePhase::Press(button(b), time),
         PointerPhase::Release(b) => MousePhase::Release(button(b)),
         PointerPhase::Motion => MousePhase::Motion,
         PointerPhase::Wheel(delta) => MousePhase::Wheel(delta),

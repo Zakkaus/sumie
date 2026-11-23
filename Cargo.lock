@@ -1868,6 +1868,9 @@ version = "0.0.0"
 [[package]]
 name = "sumie-vt"
 version = "0.0.0"
+dependencies = [
+ "sumie-core",
+]
 
 [[package]]
 name = "sumie-wayland"

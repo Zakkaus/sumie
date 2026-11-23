@@ -7,17 +7,36 @@ pub struct CellPosition {
     pub column: u16,
 }
 
+/// Selection coordinates in reading order, relative to the viewport's top row.
+/// A logical line or word can extend outside the visible rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SelectionPoint {
+    pub row: i64,
+    pub column: u16,
+}
+
+impl From<CellPosition> for SelectionPoint {
+    fn from(cell: CellPosition) -> Self {
+        Self {
+            row: i64::from(cell.row),
+            column: cell.column,
+        }
+    }
+}
+
 /// Inclusive endpoints, ordered and expanded to whole cell groups.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellRange {
-    pub start: CellPosition,
-    pub end: CellPosition,
+    pub start: SelectionPoint,
+    pub end: SelectionPoint,
 }
 
 impl CellRange {
-    fn group(hit: CellPosition, width: u8) -> Self {
-        let mut start = hit;
-        let mut end = hit;
+    /// Expand a hit to include both columns of a wide glyph.
+    #[must_use]
+    pub fn group(hit: CellPosition, width: u8) -> Self {
+        let mut start = SelectionPoint::from(hit);
+        let mut end = start;
         // A zero-width cell is the trailing column of a wide glyph in the snapshot.
         if width == 0 {
             start.column -= 1;
@@ -30,15 +49,14 @@ impl CellRange {
     /// Columns to highlight on this row, bounded by the caller's grid.
     #[must_use]
     pub fn columns(self, row: u32) -> Option<RangeInclusive<u32>> {
-        let first = u32::from(self.start.row);
-        let last = u32::from(self.end.row);
-        (first..=last).contains(&row).then(|| {
-            let left = if row == first {
+        let row = i64::from(row);
+        (self.start.row..=self.end.row).contains(&row).then(|| {
+            let left = if row == self.start.row {
                 u32::from(self.start.column)
             } else {
                 0
             };
-            let right = if row == last {
+            let right = if row == self.end.row {
                 u32::from(self.end.column)
             } else {
                 u32::MAX
@@ -48,32 +66,58 @@ impl CellRange {
     }
 }
 
+struct Drag {
+    origin: CellPosition,
+    head: CellPosition,
+    group: Option<CellRange>,
+}
+
 #[derive(Default)]
 pub struct Selection {
-    anchor: Option<(CellPosition, CellRange)>,
+    drag: Option<Drag>,
     range: Option<CellRange>,
 }
 
 impl Selection {
-    pub fn press(&mut self, hit: CellPosition, width: u8) {
-        self.anchor = Some((hit, CellRange::group(hit, width)));
-        self.range = None;
+    pub fn press(&mut self, hit: CellPosition, group: Option<CellRange>, select: bool) {
+        self.drag = Some(Drag {
+            origin: hit,
+            head: hit,
+            group,
+        });
+        self.range = if select { group } else { None };
     }
 
-    pub fn drag(&mut self, hit: CellPosition, width: u8) {
-        if let Some((origin, anchor)) = self.anchor
-            && (hit != origin || self.range.is_some())
-        {
-            let other = CellRange::group(hit, width);
-            self.range = Some(CellRange {
-                start: anchor.start.min(other.start),
-                end: anchor.end.max(other.end),
-            });
-        }
+    /// Resolve the group at the moved endpoint towards the original press.
+    ///
+    /// # Errors
+    /// Returns a group resolution error unchanged.
+    pub fn drag<E>(
+        &mut self,
+        hit: CellPosition,
+        mut resolve: impl FnMut(CellPosition, CellPosition) -> Result<Option<CellRange>, E>,
+    ) -> Result<(), E> {
+        let Some(drag) = self.drag.as_mut().filter(|drag| drag.head != hit) else {
+            return Ok(());
+        };
+        self.range = if let Some(group) = resolve(hit, drag.origin)? {
+            let anchor = match drag.group {
+                Some(group) => Some(group),
+                None => resolve(drag.origin, hit)?,
+            };
+            anchor.map(|anchor| CellRange {
+                start: anchor.start.min(group.start),
+                end: anchor.end.max(group.end),
+            })
+        } else {
+            None
+        };
+        drag.head = hit;
+        Ok(())
     }
 
     pub fn release(&mut self) -> Option<CellRange> {
-        self.anchor.take().and(self.range)
+        self.drag.take().and(self.range)
     }
 
     #[must_use]
@@ -83,9 +127,13 @@ impl Selection {
 
     /// Include the pressed cell before the pointer has crossed a cell boundary.
     #[must_use]
-    pub fn affected_rows(&self) -> Option<RangeInclusive<usize>> {
-        let range = self.range.or_else(|| self.anchor.map(|(_, group)| group))?;
-        Some(usize::from(range.start.row)..=usize::from(range.end.row))
+    pub fn affected_rows(&self) -> Option<RangeInclusive<i64>> {
+        if let Some(range) = self.range.or_else(|| self.drag.as_ref()?.group) {
+            Some(range.start.row..=range.end.row)
+        } else {
+            let row = i64::from(self.drag.as_ref()?.origin.row);
+            Some(row..=row)
+        }
     }
 }
 
@@ -104,8 +152,13 @@ mod tests {
             (3, 3, None),
         ] {
             let mut selection = Selection::default();
-            selection.press(position(press), widths[usize::from(press)]);
-            selection.drag(position(end), widths[usize::from(end)]);
+            let group = |x| CellRange::group(position(x), widths[usize::from(x)]);
+            selection.press(position(press), Some(group(press)), false);
+            selection
+                .drag(position(end), |hit, _| {
+                    Ok::<_, std::convert::Infallible>(Some(group(hit.column)))
+                })
+                .unwrap();
             assert_eq!(
                 selection.release().map(|r| (r.start.column, r.end.column)),
                 expected

@@ -1,5 +1,7 @@
-use std::ffi::c_void;
+use std::ffi::{c_int, c_void};
 use std::ptr::{from_mut, from_ref, null, null_mut};
+
+use sumie_core::{CellPosition, CellRange, SelectionPoint, mouse::SelectionUnit};
 
 use crate::{Error, Terminal, check, ffi};
 
@@ -19,12 +21,28 @@ unsafe extern "C" fn append(data: *mut c_void, bytes: *const u8, len: usize) -> 
     true
 }
 
+fn cell_wide(reference: &ffi::GridRef) -> Result<c_int, Error> {
+    let mut cell = 0;
+    let mut wide = 0;
+    // SAFETY: The reference was returned by Ghostty and the terminal has not been mutated.
+    // CELL_DATA_WIDE writes a C enum.
+    unsafe {
+        check(ffi::ghostty_grid_ref_cell(reference, &raw mut cell))?;
+        check(ffi::ghostty_cell_get(
+            cell,
+            ffi::CELL_DATA_WIDE,
+            from_mut(&mut wide).cast(),
+        ))?;
+    }
+    Ok(wide)
+}
+
 impl Terminal {
-    fn grid_ref(&self, [x, y]: [u16; 2]) -> Result<ffi::GridRef, Error> {
+    fn grid_ref(&self, tag: c_int, x: u16, y: u32) -> Result<ffi::GridRef, Error> {
         let point = ffi::Point {
-            tag: ffi::POINT_TAG_VIEWPORT,
+            tag,
             value: ffi::PointValue {
-                coordinate: ffi::PointCoordinate { x, y: y.into() },
+                coordinate: ffi::PointCoordinate { x, y },
             },
         };
         let mut cell = ffi::GridRef::default();
@@ -33,15 +51,135 @@ impl Terminal {
         Ok(cell)
     }
 
-    /// Format the inclusive viewport selection as plain UTF-8, joining soft-wrapped rows.
-    /// Coordinates are `[column, row]`, ordered and expanded to whole cell groups.
+    fn point(&self, reference: &ffi::GridRef, tag: c_int) -> Result<ffi::PointCoordinate, Error> {
+        let mut coord = ffi::PointCoordinate { x: 0, y: 0 };
+        // SAFETY: The reference belongs to the live, immutably borrowed terminal.
+        check(unsafe {
+            ffi::ghostty_terminal_point_from_grid_ref(self.raw, reference, tag, &raw mut coord)
+        })?;
+        Ok(coord)
+    }
+
+    fn selection_point(&self, reference: &ffi::GridRef) -> Result<SelectionPoint, Error> {
+        match self.point(reference, ffi::POINT_TAG_VIEWPORT) {
+            Ok(point) => Ok(SelectionPoint {
+                row: point.y.into(),
+                column: point.x,
+            }),
+            Err(Error(ffi::NO_VALUE)) => {
+                let point = self.point(reference, ffi::POINT_TAG_SCREEN)?;
+                Ok(SelectionPoint {
+                    row: i64::from(point.y) - i64::from(self.viewport_top()?),
+                    column: point.x,
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Resolve a word or logical line with Ghostty's default boundaries.
+    /// Word resolution starts at `hit` and searches towards `toward` through unwritten cells.
+    /// `Cell` returns no native range.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid hit or a native selection failure.
+    pub fn selection_group(
+        &self,
+        hit: CellPosition,
+        toward: CellPosition,
+        unit: SelectionUnit,
+    ) -> Result<Option<CellRange>, Error> {
+        if unit == SelectionUnit::Cell {
+            return Ok(None);
+        }
+        let start = self.grid_ref(ffi::POINT_TAG_VIEWPORT, hit.column, hit.row.into())?;
+        let mut selection = ffi::Selection {
+            start: ffi::GridRef::default(),
+            end: ffi::GridRef::default(),
+            rectangle: false,
+        };
+        let result = if unit == SelectionUnit::Word {
+            let end = if toward == hit {
+                start
+            } else {
+                self.grid_ref(ffi::POINT_TAG_VIEWPORT, toward.column, toward.row.into())?
+            };
+            // SAFETY: The sized options match the pinned C header and both references
+            // belong to this terminal. The output is written synchronously.
+            unsafe {
+                ffi::ghostty_terminal_select_word_between(
+                    self.raw,
+                    &ffi::SelectWordBetweenOptions {
+                        size: size_of::<ffi::SelectWordBetweenOptions>(),
+                        start,
+                        end,
+                        boundary_codepoints: null(),
+                        boundary_codepoints_len: 0,
+                    },
+                    &raw mut selection,
+                )
+            }
+        } else {
+            self.select_line(start, &mut selection)
+        };
+        if result == ffi::NO_VALUE {
+            return Ok(None);
+        }
+        check(result)?;
+        let mut start = self.selection_point(&selection.start)?;
+        let mut end = self.selection_point(&selection.end)?;
+        if cell_wide(&selection.start)? == ffi::CELL_WIDE_SPACER_TAIL {
+            start.column -= 1;
+        }
+        if cell_wide(&selection.end)? == ffi::CELL_WIDE_WIDE {
+            end.column += 1;
+        }
+        Ok(Some(CellRange { start, end }))
+    }
+
+    fn select_line(&self, reference: ffi::GridRef, selection: &mut ffi::Selection) -> c_int {
+        let mut options = ffi::SelectLineOptions {
+            size: size_of::<ffi::SelectLineOptions>(),
+            reference,
+            whitespace: null(),
+            whitespace_len: 0,
+            semantic_prompt_boundary: false,
+        };
+        // SAFETY: The sized options match the pinned C header. The reference and
+        // output stay live for each call. A non-null pointer with zero length
+        // tells Ghostty to use an empty whitespace set, without reading it.
+        unsafe {
+            let result = ffi::ghostty_terminal_select_line(self.raw, from_ref(&options), selection);
+            if result != ffi::NO_VALUE {
+                return result;
+            }
+            // A line of written spaces can itself wrap.
+            options.whitespace = from_ref(&0);
+            ffi::ghostty_terminal_select_line(self.raw, from_ref(&options), selection)
+        }
+    }
+
+    fn selection_ref(&self, point: SelectionPoint) -> Result<ffi::GridRef, Error> {
+        let (tag, row) = if point.row < 0 {
+            (
+                ffi::POINT_TAG_SCREEN,
+                i64::from(self.viewport_top()?) + point.row,
+            )
+        } else {
+            (ffi::POINT_TAG_VIEWPORT, point.row)
+        };
+        let row = u32::try_from(row).map_err(|_| Error(ffi::INVALID_VALUE))?;
+        self.grid_ref(tag, point.column, row)
+    }
+
+    /// Format an inclusive selection as plain UTF-8, joining soft-wrapped rows.
     ///
     /// # Errors
     /// Returns an error for invalid endpoints or a native formatter failure.
-    pub fn selection_text(&self, start: [u16; 2], end: [u16; 2]) -> Result<String, Error> {
+    pub fn selection_text(&self, range: CellRange) -> Result<String, Error> {
         let selection = ffi::Selection {
-            start: self.grid_ref(start)?,
-            end: self.grid_ref(end)?,
+            start: self.selection_ref(range.start)?,
+            end: self.selection_ref(range.end)?,
             rectangle: false,
         };
         let mut raw = null_mut();
@@ -81,8 +219,39 @@ mod tests {
         let mut terminal = Terminal::new(5, 3).unwrap();
         terminal.write("0界abcd\r\nxy".as_bytes());
         assert_eq!(
-            terminal.selection_text([1, 0], [4, 2]).unwrap(),
+            terminal
+                .selection_text(CellRange {
+                    start: SelectionPoint { row: 0, column: 1 },
+                    end: SelectionPoint { row: 2, column: 4 },
+                })
+                .unwrap(),
             "界abcd\nxy"
         );
+    }
+
+    #[test]
+    fn selects_words_and_wrapped_lines() {
+        use SelectionUnit::{Line, Word};
+
+        let mut terminal = Terminal::new(24, 2).unwrap();
+        let line = "tag: 中文 https://ex.io/a?q=1 終";
+        terminal.write(line.as_bytes());
+        terminal.write(b"\r\nnext");
+        let cell = |(row, column)| CellPosition { row, column };
+        for (top, hit, toward, unit, end_column, expected) in [
+            (0, (0, 6), None, Word, 8, "中文"),
+            (0, (0, 12), None, Word, 14, "https"),
+            (0, (0, 20), None, Word, 4, "//ex.io/a?q=1"),
+            (0, (1, 22), Some((1, 2)), Word, 7, "終"),
+            (1, (0, 1), None, Line, 7, line),
+        ] {
+            terminal.restore_viewport(top).unwrap();
+            let range = terminal
+                .selection_group(cell(hit), cell(toward.unwrap_or(hit)), unit)
+                .unwrap()
+                .unwrap();
+            assert_eq!(range.end.column, end_column);
+            assert_eq!(terminal.selection_text(range).unwrap(), expected);
+        }
     }
 }

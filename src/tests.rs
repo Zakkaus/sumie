@@ -248,18 +248,18 @@ fn search_pointer_only_scrolls_history() {
     let mut routing = input::Routing::default();
     let close_hit = || Some(input::SearchTarget::Close);
     let scenarios = [
-        (true, Press(right), false, Effect::None),
+        (true, Press(right, 0), false, Effect::None),
         (true, Motion, false, Effect::None),
         (true, Release(right), false, Effect::None),
         (true, Cancel, false, Effect::None),
-        (false, Press(right), true, Effect::None),
+        (false, Press(right, 0), true, Effect::None),
         (true, Motion, false, Effect::None),
         (false, Release(right), true, Effect::None),
-        (false, Press(right), true, Effect::None),
+        (false, Press(right, 0), true, Effect::None),
         (true, Release(right), true, Effect::None),
-        (true, Press(right), false, Effect::None),
+        (true, Press(right, 0), false, Effect::None),
         (false, Release(right), false, Effect::None),
-        (true, Press(left), false, Effect::None),
+        (true, Press(left, 0), false, Effect::None),
         (true, Motion, false, Effect::None),
         (
             true,

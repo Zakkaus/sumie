@@ -12,6 +12,7 @@ mod scale;
 
 pub use ime::CursorRect;
 pub use platform::{ConnectError, Platform, ShmPresentError, SourceHandle, WindowOwner};
+pub use pointer::double_click_interval;
 pub use presentation::PresentationFeedback;
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
@@ -74,7 +75,8 @@ pub enum Event {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PointerPhase {
-    Press(PointerButton),
+    /// Button and Wayland event time in milliseconds.
+    Press(PointerButton, u32),
     Release(PointerButton),
     Motion,
     Cancel,

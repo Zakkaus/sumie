@@ -4,8 +4,8 @@ mod search;
 use std::time::{Duration, Instant};
 
 use sumie_core::{
-    Pane, PaneCommand, PaneEffect, Selection,
-    mouse::{MouseEvent, SelectStep},
+    CellPosition, CellRange, Pane, PaneCommand, PaneEffect, Selection,
+    mouse::{MouseEvent, SelectStep, SelectionUnit},
 };
 use sumie_render::{SurfaceError, SurfaceFrame};
 use sumie_vt::Event as TerminalEvent;
@@ -37,6 +37,7 @@ pub(crate) fn run(capture: capture::Options) -> Result<()> {
         capture,
         config,
         reload,
+        click_interval: sumie_wayland::double_click_interval(),
         session: None,
         focused: false,
         suspended: false,
@@ -56,6 +57,7 @@ struct App {
     capture: capture::Options,
     config: sumie_config::Config,
     reload: Reload,
+    click_interval: Option<u32>,
     session: Option<Session>,
     focused: bool,
     suspended: bool,
@@ -225,13 +227,12 @@ impl App {
                 if let Some(session) = &mut self.session {
                     session.resize(scale, logical, device)?;
                 } else {
-                    self.session = Some(Session::new(
-                        scale,
-                        logical,
-                        device,
-                        handle.clone(),
-                        &self.config,
-                    )?);
+                    let mut session =
+                        Session::new(scale, logical, device, handle.clone(), &self.config)?;
+                    if let Some(millis) = self.click_interval {
+                        session.pane.set_click_interval(millis);
+                    }
+                    self.session = Some(session);
                 }
                 self.gpu.as_mut().unwrap().resize(device);
             }
@@ -318,6 +319,9 @@ impl Session {
             modifiers,
         } = event
         {
+            if matches!(phase, sumie_wayland::PointerPhase::Press(..)) {
+                self.update_snapshot()?;
+            }
             let (cell, pixel) = self.view.pointer_position(position);
             let mouse = MouseEvent {
                 phase: input::mouse_phase(phase),
@@ -372,19 +376,41 @@ impl Session {
         Ok(())
     }
 
-    /// Returns true only for the release that completes a drag.
-    fn select(&mut self, step: SelectStep, hit: sumie_core::CellPosition) -> Result<bool> {
+    /// Returns true only on release of a completed selection.
+    fn select(&mut self, step: SelectStep, hit: CellPosition) -> Result<bool> {
         self.update_snapshot()?;
-        let snapshot = self.snapshot.as_ref().expect("current pointer snapshot");
-        let width = snapshot.rows[usize::from(hit.row)][usize::from(hit.column)].width;
         let old = self.selection.range();
+        let resolve = |from: CellPosition, toward, unit| -> Result<Option<CellRange>> {
+            let native = self.pane.terminal.selection_group(from, toward, unit)?;
+            if native.is_some() || unit == SelectionUnit::Word {
+                return Ok(native);
+            }
+            let row = &self
+                .snapshot
+                .as_ref()
+                .expect("current pointer snapshot")
+                .rows[usize::from(from.row)];
+            let mut range = CellRange::group(from, row[usize::from(from.column)].width);
+            if unit == SelectionUnit::Line {
+                range.start.column = 0;
+                range.end.column = self.view.size().cols - 1;
+            }
+            Ok(Some(range))
+        };
         match step {
-            SelectStep::Begin => self.selection.press(hit, width),
-            SelectStep::Drag | SelectStep::Finish => self.selection.drag(hit, width),
+            SelectStep::Begin(unit) => {
+                let group = resolve(hit, hit, unit)?;
+                self.selection
+                    .press(hit, group, unit != SelectionUnit::Cell);
+            }
+            SelectStep::Drag(unit) | SelectStep::Finish(unit) => {
+                self.selection
+                    .drag(hit, |from, toward| resolve(from, toward, unit))?;
+            }
             SelectStep::Clear => self.selection = Selection::default(),
         }
         self.frame_dirty |= old != self.selection.range();
-        Ok(step == SelectStep::Finish && self.selection.release().is_some())
+        Ok(matches!(step, SelectStep::Finish(_)) && self.selection.release().is_some())
     }
 
     fn service_pty(&mut self, gpu: &mut Gpu) -> Result<bool> {
@@ -433,15 +459,22 @@ impl Session {
         if self.snapshot_dirty {
             self.snapshot_dirty = false;
             let next = self.pane.snapshot()?;
-            if self.snapshot.as_ref() != Some(&next) {
-                if let Some(rows) = self.selection.affected_rows()
-                    && self
-                        .snapshot
-                        .as_ref()
-                        .is_some_and(|prev| prev.rows[rows.clone()] != next.rows[rows])
-                {
+            if let Some(prev) = &self.snapshot
+                && let Some(rows) = self.selection.affected_rows()
+            {
+                let bounds = usize::try_from(*rows.start())
+                    .ok()
+                    .zip(usize::try_from(*rows.end()).ok());
+                // A viewport snapshot cannot validate selected rows outside the viewport.
+                if bounds.is_none_or(|(start, end)| {
+                    end >= next.rows.len() || prev.rows[start..=end] != next.rows[start..=end]
+                }) {
+                    self.frame_dirty |= self.selection.range().is_some();
                     self.selection = Selection::default();
+                    self.pane.cancel_pointer_selection();
                 }
+            }
+            if self.snapshot.as_ref() != Some(&next) {
                 self.snapshot = Some(next);
                 self.frame_dirty = true;
             }

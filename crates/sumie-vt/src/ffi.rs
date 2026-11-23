@@ -130,7 +130,7 @@ pub struct Point {
 }
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct GridRef {
     node: *mut c_void,
     x: u16,
@@ -142,6 +142,24 @@ pub struct Selection {
     pub start: GridRef,
     pub end: GridRef,
     pub rectangle: bool,
+}
+
+#[repr(C)]
+pub struct SelectWordBetweenOptions {
+    pub size: usize,
+    pub start: GridRef,
+    pub end: GridRef,
+    pub boundary_codepoints: *const u32,
+    pub boundary_codepoints_len: usize,
+}
+
+#[repr(C)]
+pub struct SelectLineOptions {
+    pub size: usize,
+    pub reference: GridRef,
+    pub whitespace: *const u32,
+    pub whitespace_len: usize,
+    pub semantic_prompt_boundary: bool,
 }
 
 #[repr(C)]
@@ -260,6 +278,23 @@ unsafe extern "C" {
     pub fn ghostty_terminal_set(terminal: Terminal, option: c_int, value: *const c_void) -> c_int;
     pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
     pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
+    pub fn ghostty_terminal_point_from_grid_ref(
+        terminal: Terminal,
+        reference: *const GridRef,
+        tag: c_int,
+        out: *mut PointCoordinate,
+    ) -> c_int;
+    pub fn ghostty_grid_ref_cell(reference: *const GridRef, out: *mut Cell) -> c_int;
+    pub fn ghostty_terminal_select_word_between(
+        terminal: Terminal,
+        options: *const SelectWordBetweenOptions,
+        out: *mut Selection,
+    ) -> c_int;
+    pub fn ghostty_terminal_select_line(
+        terminal: Terminal,
+        options: *const SelectLineOptions,
+        out: *mut Selection,
+    ) -> c_int;
     pub fn ghostty_formatter_terminal_new(
         allocator: *const Allocator,
         formatter: *mut Formatter,
