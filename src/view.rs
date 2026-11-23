@@ -335,7 +335,10 @@ fn grid_size(device: [u32; 2], cell: [u32; 2]) -> Result<[u32; 2]> {
 
 fn font_at_scale(scale: u32) -> Result<FontSystem> {
     let scale_units = u16::try_from(scale)?;
-    let font = FontSystem::new("JetBrains Mono", 20.0, f32::from(scale_units) / 120.0)?;
+    // P0 comparison overrides until the TOML config lands in P1.
+    let family = std::env::var("SUMIE_FONT").unwrap_or_else(|_| "JetBrains Mono".into());
+    let px = std::env::var("SUMIE_FONT_PX").map_or(Ok(20.0), |px| px.parse::<f32>())?;
+    let font = FontSystem::new(&family, px, f32::from(scale_units) / 120.0)?;
     let metrics = font.metrics();
     tracing::info!(
         family = font.family(font.primary_face()),
