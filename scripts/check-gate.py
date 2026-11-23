@@ -328,6 +328,22 @@ def check_terminfo():
     return int(bool(errors))
 
 
+def check_shell():
+    scripts = ROOT / "shell-integration"
+    for file in ("bash/sumie.bash", "zsh/.zshenv", "fish/vendor_conf.d/sumie.fish"):
+        source = (scripts / file).read_text()
+        for marker in ("133;A", "133;B", "133;C", "133;D;%d", "TERM=xterm-256color",
+                       "SendEnv=COLORTERM TERM_PROGRAM"):
+            if marker not in source:
+                print(f"{file}: missing {marker}", file=sys.stderr)
+                return 1
+    for file in ("cwd.sh", "fish/vendor_conf.d/sumie.fish"):
+        if "7;file://" not in (scripts / file).read_text():
+            print(f"{file}: missing OSC 7 file URI", file=sys.stderr)
+            return 1
+    return 0
+
+
 def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
@@ -335,7 +351,7 @@ def main():
         "test": ("test", "--locked", "--workspace", "--message-format=json"),
     }
     parser = argparse.ArgumentParser()
-    parser.add_argument("gate", choices=("structure", "terminfo", *commands))
+    parser.add_argument("gate", choices=("structure", "terminfo", "shell", *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -347,6 +363,8 @@ def main():
             return check_structure()
         if gate == "terminfo":
             return check_terminfo()
+        if gate == "shell":
+            return check_shell()
         return check_cargo(gate, commands[gate])
     except (CannotCheck, OSError, KeyError, ValueError) as error:
         print(f"{gate}: could not run: {error}", file=sys.stderr)

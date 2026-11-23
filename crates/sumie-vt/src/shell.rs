@@ -1,0 +1,52 @@
+use std::ffi::c_int;
+use std::ptr::{from_mut, null};
+
+use crate::{Error, Terminal, check, ffi};
+
+const DATA_CURSOR_AT_PROMPT: c_int = 39;
+const DATA_PWD: c_int = 13;
+
+impl Terminal {
+    /// Whether the cursor is at an OSC 133 prompt or input area on the primary screen.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the cursor state.
+    pub fn cursor_at_prompt(&self) -> Result<bool, Error> {
+        let mut prompt = false;
+        // SAFETY: The live terminal writes a C bool for CURSOR_AT_PROMPT.
+        unsafe {
+            check(ffi::ghostty_terminal_get(
+                self.raw,
+                DATA_CURSOR_AT_PROMPT,
+                from_mut(&mut prompt).cast(),
+            ))?;
+        }
+        Ok(prompt)
+    }
+
+    /// Copy the last OSC 7 URI without interpreting its host, encoding or scheme.
+    /// An empty result means no working directory was reported or it was cleared.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the working directory.
+    pub fn pwd(&self) -> Result<Vec<u8>, Error> {
+        let mut pwd = ffi::Str {
+            ptr: null(),
+            len: 0,
+        };
+        // SAFETY: PWD writes a GhosttyString valid until the next mutating call.
+        // Copy its bytes before releasing the borrow; an empty string may be null.
+        unsafe {
+            check(ffi::ghostty_terminal_get(
+                self.raw,
+                DATA_PWD,
+                from_mut(&mut pwd).cast(),
+            ))?;
+            Ok(if pwd.len == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(pwd.ptr, pwd.len).to_vec()
+            })
+        }
+    }
+}

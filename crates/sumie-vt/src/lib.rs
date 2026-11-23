@@ -7,7 +7,7 @@ mod identity;
 mod key;
 mod mouse;
 mod selection;
-
+mod shell;
 pub use effects::Event;
 pub use key::{KeyAction, KeyEncoder, KeyEvent};
 pub use mouse::{MouseAction, MouseButton, MouseEncoder, MouseReport};

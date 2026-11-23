@@ -77,6 +77,8 @@ def probe(name, gate, file, change, marker, expected=1, *, new=False):
 
 
 def controls():
+    probe("shell drops command status", "shell", "shell-integration/bash/sumie.bash",
+          replace_once("133;D;%d", "133;D"), "bash/sumie.bash: missing 133;D;%d")
     probe("terminfo replaces Tc with RGB", "terminfo", "terminfo/xterm-sumie.terminfo",
           replace_once("\tTc,", "\tRGB,"),
           "xterm-sumie: missing or invalid capability Tc\nxterm-sumie: RGB must be query-only")

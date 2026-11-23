@@ -1,4 +1,6 @@
 mod mouse;
+#[path = "shell_integration.rs"]
+mod shell_integration;
 #[path = "terminfo.rs"]
 mod terminfo;
 
@@ -24,13 +26,20 @@ pub(crate) struct LocalPane {
 
 impl LocalPane {
     pub(crate) fn login(size: Size, cell: [u32; 2], colors: &sumie_config::Colors) -> Result<Self> {
-        Self::spawn(
-            Command::LoginShell,
-            &request_environment(),
-            size,
-            cell,
-            colors,
-        )
+        let mut env = request_environment();
+        let shell = sumie_config::load_user_config().unwrap_or_default().shell;
+        let args = if shell.integration() {
+            shell_integration::inject(&mut env)
+        } else {
+            None
+        };
+        let command = args
+            .as_ref()
+            .map_or(Command::LoginShell, |args| Command::Argv {
+                program: &env[std::ffi::OsStr::new("SHELL")],
+                args,
+            });
+        Self::spawn(command, &env, size, cell, colors)
     }
 
     pub(crate) fn spawn(

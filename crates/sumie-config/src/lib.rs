@@ -14,6 +14,9 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::Value;
 use toml::Spanned;
 
+mod shell;
+pub use shell::Shell;
+
 const POINT_TO_PX: f32 = 96.0 / 72.0;
 const MIN_WEIGHT: u16 = 100;
 const MAX_WEIGHT: u16 = 900;
@@ -31,6 +34,8 @@ pub struct Config {
     pub font: Font,
     /// Default terminal colors and selection overrides.
     pub colors: Colors,
+    /// Interactive login shell settings.
+    pub shell: Shell,
     /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
     #[serde(deserialize_with = "deserialize_contrast")]
     #[schemars(
@@ -53,6 +58,7 @@ impl Config {
     fn overlay(&mut self, file: Self) {
         self.font.overlay(file.font);
         self.colors.overlay(&file.colors);
+        self.shell.overlay(&file.shell);
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
     }
 }
@@ -436,7 +442,7 @@ pub fn defaults_toml() -> String {
         "minimum-contrast",
         &properties["minimum-contrast"],
     );
-    for table in ["font", "colors"] {
+    for table in ["font", "colors", "shell"] {
         use std::fmt::Write as _;
         writeln!(text, "\n[{table}]").expect("writing to a String is infallible");
         if let Some(fields) = properties[table]["properties"].as_object() {
