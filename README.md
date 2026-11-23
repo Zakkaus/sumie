@@ -13,7 +13,7 @@ With Git, Python 3.11 or newer, rustfmt, and Clippy available, run `scripts/chec
 ## Font comparison on Linux
 
 Set `SUMIE_FONT` to the font family and `SUMIE_FONT_PX` to the logical pixel size.
-`SUMIE_FONT_HINTING` accepts `off` (default), `light`, or `normal`. Set
+`SUMIE_FONT_HINTING` accepts `off`, `light` (default), or `normal`. Set
 `SUMIE_FONT_WEIGHT` to an integer from 100 through 900 to select the weight of
 both primary and fallback fonts; omit it to use the platform's default match.
 

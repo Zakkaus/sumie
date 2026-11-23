@@ -374,8 +374,8 @@ fn font_at_scale(scale: u32) -> Result<FontSystem> {
     let family = std::env::var("SUMIE_FONT").unwrap_or_else(|_| "JetBrains Mono".into());
     let px = std::env::var("SUMIE_FONT_PX").map_or(Ok(20.0), |px| px.parse::<f32>())?;
     let hinting = match std::env::var("SUMIE_FONT_HINTING").as_deref() {
-        Err(std::env::VarError::NotPresent) | Ok("off") => Hinting::Off,
-        Ok("light") => Hinting::Light,
+        Ok("off") => Hinting::Off,
+        Err(std::env::VarError::NotPresent) | Ok("light") => Hinting::Light,
         Ok("normal") => Hinting::Normal,
         _ => return Err("SUMIE_FONT_HINTING must be off, light, or normal".into()),
     };
