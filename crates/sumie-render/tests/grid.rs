@@ -170,8 +170,8 @@ fn assert_grid(pixels: &[u8], [lightened, darkened]: [u8; 2]) {
         ([1, 1], [0, 0, 0, 0], 0),
         ([2, 1], [245, 220, 115, 255], 1),
         ([9, 16], [245, 220, 115, 255], 1),
-        // 128/255 coverage gives a corrected linear weight of 0.39036 for these colors.
-        ([10, 16], [158, 69, 105, 255], 2),
+        // 128/255 coverage darkens to 0.562 before the luminance correction.
+        ([10, 16], [168, 70, 100, 255], 2),
         ([18, 1], [lightened, lightened, lightened, 255], 1),
         ([33, 16], [darkened, darkened, darkened, 255], 1),
         ([34, 16], [0, 0, 0, 0], 0),

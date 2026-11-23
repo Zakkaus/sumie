@@ -12,6 +12,7 @@ use crate::{Atlas, AtlasGlyph, CellMetrics, Face, FaceId, FontError, GlyphKey, H
 
 pub(crate) struct Rasterizer {
     target: Option<Target>,
+    trial: Vec<u8>,
     instances: HashMap<(FaceId, u32), HintingInstance>,
     outline_memory: Vec<u8>,
     path: Path,
@@ -31,6 +32,7 @@ impl Rasterizer {
         };
         Self {
             target,
+            trial: Vec::new(),
             instances: HashMap::new(),
             outline_memory: Vec::new(),
             path: Path::default(),
@@ -65,12 +67,46 @@ impl Rasterizer {
         if placement.width == 0 || placement.height == 0 {
             return Ok(atlas.insert_blank(key));
         }
+        let offset = if self.target.is_some() {
+            self.fit_horizontally(offset, placement)
+        } else {
+            offset
+        };
         atlas.insert(key, placement, |pixels, pitch| {
             Mask::with_scratch(&self.path.0, &mut self.scratch)
                 .size(placement.width, placement.height)
                 .offset(offset)
                 .render_into(pixels, Some(pitch));
         })
+    }
+
+    /// Light hinting snaps only the y axis, so vertical stems can straddle pixel
+    /// columns. Shift the outline by up to 3/8 px, staying inside its placement, to
+    /// the phase that leaves the most pixels fully covered; ties keep the smaller shift.
+    fn fit_horizontally(&mut self, origin: Vector, placement: Placement) -> Vector {
+        let (width, height) = (placement.width as usize, placement.height as usize);
+        let bounds = self.scratch.bounds(&self.path.0, Fill::NonZero, None);
+        let (left, right) = (bounds.min.x + origin.x, bounds.max.x + origin.x);
+        let limit = u16::try_from(placement.width).map_or(f32::MAX, f32::from);
+        let mut best = (0, origin);
+        for eighths in [0_i8, -1, 1, -2, 2, -3, 3] {
+            let shift = f32::from(eighths) / 8.0;
+            if left + shift < 0.0 || right + shift > limit {
+                continue;
+            }
+            let offset = origin + Vector::new(shift, 0.0);
+            self.trial.clear();
+            self.trial.resize(width * height, 0);
+            Mask::with_scratch(&self.path.0, &mut self.scratch)
+                .size(placement.width, placement.height)
+                .offset(offset)
+                .render_into(&mut self.trial, None);
+            let opaque: usize = self.trial.iter().map(|&a| usize::from(a == u8::MAX)).sum();
+            if opaque > best.0 {
+                best = (opaque, offset);
+            }
+        }
+        best.1
     }
 
     pub fn prepare(

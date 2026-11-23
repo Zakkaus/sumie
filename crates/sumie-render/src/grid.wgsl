@@ -89,6 +89,8 @@ fn fragment(in: VertexOut) -> @location(0) vec4<f32> {
         return in.color;
     }
     var alpha = textureLoad(coverage_atlas, vec2<i32>(in.atlas_position), 0).r;
+    // Mild stem darkening: lifts partial edge pixels, leaves empty and full ones.
+    alpha += 0.24 * alpha * (1.0 - alpha);
     let fg_luma = in.luminances.x;
     let bg_luma = in.luminances.y;
     let delta = fg_luma - bg_luma;

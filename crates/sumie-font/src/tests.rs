@@ -81,9 +81,9 @@ mod linux {
     }
 
     #[test]
-    fn normal_hinting_saturates_the_stem() {
+    fn light_hinting_fits_vertical_stems() {
         let mut saturated = [0; 2];
-        for (count, hinting) in saturated.iter_mut().zip([Hinting::Off, Hinting::Normal]) {
+        for (count, hinting) in saturated.iter_mut().zip([Hinting::Off, Hinting::Light]) {
             let options = FontOptions {
                 hinting,
                 ..FontOptions::default()
@@ -91,7 +91,7 @@ mod linux {
             let Some(mut fonts) = jetbrains_at(18.33, 1.0, options) else {
                 return;
             };
-            let key = fonts.shape("l", &[1]).unwrap().glyphs[0].key;
+            let key = fonts.shape("1", &[1]).unwrap().glyphs[0].key;
             let rect = fonts.rasterize(key).unwrap().rect;
             let atlas = fonts.atlas();
             let stride = atlas.dimensions()[0] as usize;
@@ -106,9 +106,8 @@ mod linux {
                 .filter(|&&pixel| pixel == 255)
                 .count();
         }
-        let [off, normal] = saturated;
-        println!("opaque pixels: Off={off}, Normal={normal}");
-        assert!(normal > off, "opaque pixels: Off={off}, Normal={normal}");
+        let [off, light] = saturated;
+        assert!(light > off, "opaque pixels: Off={off}, Light={light}");
     }
 
     #[test]
