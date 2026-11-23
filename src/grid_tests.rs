@@ -161,7 +161,7 @@ fn assert_image(renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
     // Red, green, blue, white. Keep the native size and put it in the second row.
     terminal.write(b"\x1b[2;2H\x1b_Ga=T,f=32,s=2,v=2,i=1,C=1;/wAA/wD/AP8AAP///////w==\x1b\\");
     let snapshot = terminal.render_snapshot().unwrap();
-    view.build(&snapshot, None, None, true);
+    view.build(&snapshot, None, &[], None, true);
     renderer.upload_atlas(&view.atlas());
     let target = renderer.create_offscreen(DEVICE);
     renderer.draw(&view.draw_list(true), &target);

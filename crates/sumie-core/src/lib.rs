@@ -10,8 +10,8 @@
 //! use sumie_core::wgpu;
 //! ```
 
-mod link;
 pub mod graphics;
+mod link;
 pub mod mouse;
 mod selection;
 mod tabs;
