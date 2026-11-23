@@ -1,6 +1,7 @@
 use std::fmt::Write as _;
 
 use sumie_vt::{GridAnchor, Search, SearchMatch, Terminal};
+use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
 use super::{PaneState, View, highlights::visible_spans};
 use crate::{Result, input::SearchAction};
@@ -39,7 +40,7 @@ struct Selected {
 
 pub(super) struct Bar {
     query: String,
-    // None selects the entire query; otherwise this is a UTF-8 byte boundary.
+    // None selects the entire query; otherwise this is a grapheme boundary in bytes.
     caret: Option<usize>,
     scan: Option<Scan>,
     complete: bool,
@@ -77,12 +78,12 @@ impl Bar {
             SearchAction::SelectAll => bar.caret = None,
             SearchAction::Home => bar.caret = Some(0),
             SearchAction::End => bar.caret = Some(bar.query.len()),
-            SearchAction::Insert(mut text) => {
-                text.retain(|ch| !ch.is_control());
+            SearchAction::Insert(text) => {
+                let text = single_line(text);
                 if !text.is_empty() {
                     if let Some(caret) = bar.caret {
                         bar.query.insert_str(caret, &text);
-                        bar.caret = Some(caret + text.len());
+                        bar.caret = Some(caret_after_edit(&bar.query, caret + text.len()));
                     } else {
                         bar.caret = Some(text.len());
                         bar.query = text;
@@ -94,15 +95,12 @@ impl Bar {
                 let end = bar.caret.unwrap_or(bar.query.len());
                 let start = match bar.caret {
                     None => 0,
-                    Some(_) if word => previous_word(&bar.query[..end]),
-                    Some(_) => bar.query[..end]
-                        .char_indices()
-                        .next_back()
-                        .map_or(0, |(i, _)| i),
+                    Some(_) => backspace_start(&bar.query[..end], word),
                 };
                 bar.caret = Some(start);
                 if start != end {
                     bar.query.replace_range(start..end, "");
+                    bar.caret = Some(caret_after_edit(&bar.query, start));
                     bar.edited();
                 }
             }
@@ -230,9 +228,53 @@ impl Bar {
     }
 }
 
-fn previous_word(text: &str) -> usize {
-    let word = text.trim_end_matches(|ch: char| !ch.is_alphanumeric());
-    word.trim_end_matches(char::is_alphanumeric).len()
+fn single_line(mut text: String) -> String {
+    const BREAKS: [char; 7] = [
+        '\r', '\n', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}',
+    ];
+    if !text.contains(BREAKS) {
+        text.retain(|ch| !ch.is_control());
+        return text;
+    }
+    let mut line = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if BREAKS.contains(&ch) {
+            if ch == '\r' {
+                chars.next_if_eq(&'\n');
+            }
+            line.push(' ');
+        } else if !ch.is_control() {
+            line.push(ch);
+        }
+    }
+    line
+}
+
+fn backspace_start(text: &str, word: bool) -> usize {
+    let word_start = if word {
+        text.unicode_word_indices()
+            .next_back()
+            .map_or(0, |(i, _)| i)
+    } else {
+        text.len()
+    };
+    text.grapheme_indices(true)
+        .rfind(|&(i, _)| i <= word_start)
+        .map_or(0, |(i, _)| i)
+}
+
+fn caret_after_edit(text: &str, offset: usize) -> usize {
+    // Inserting or deleting between two clusters can join them across the edit.
+    let mut cursor = GraphemeCursor::new(offset, text.len(), true);
+    if cursor.is_boundary(text, 0).expect("complete query") {
+        offset
+    } else {
+        cursor
+            .next_boundary(text, 0)
+            .expect("complete query")
+            .expect("cluster end")
+    }
 }
 
 impl PaneState {
@@ -341,7 +383,7 @@ mod tests {
     fn closing_search_keeps_the_match_in_view() {
         let mut vt = Terminal::new(40, 5).unwrap();
         vt.write(b"needle\r\n");
-        for _ in 0..20 {
+        for _ in 0..6 {
             vt.write(b"filler\r\n");
         }
         let mut search = None;
@@ -364,6 +406,12 @@ mod tests {
         assert_eq!(vt.viewport_top().unwrap(), 0);
         vt.write(b"more output\r\n");
         assert_eq!(vt.viewport_top().unwrap(), 0);
+
+        vt.resize(40, 9).unwrap();
+        assert!(vt.at_bottom().unwrap());
+        vt.write(b"tail 1\r\ntail 2\r\ntail 3\r\n");
+        assert!(vt.viewport_top().unwrap() > 0);
+        assert!(vt.at_bottom().unwrap());
     }
 
     #[test]
@@ -375,6 +423,18 @@ mod tests {
             ctrl: true,
             ..Default::default()
         };
+        let shifted = Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let caps_ctrl = Modifiers {
+            caps_lock: true,
+            ..ctrl
+        };
+        let shift_ctrl = Modifiers {
+            ctrl: true,
+            ..shifted
+        };
         let chord = |physical, symbol| key_event(physical, symbol, Press, ctrl);
         let plain = |physical, symbol| key_event(physical, symbol, Press, Modifiers::default());
         let commit = |text: &str| Event::ImeCommit {
@@ -383,29 +443,45 @@ mod tests {
         };
         for (event, expected) in [
             (commit("replace-me"), "replace-me"),
-            (chord(30, key::a), "replace-me"),
+            (key_event(30, key::A, Press, caps_ctrl), "replace-me"),
             (plain(19, key::r), "r"),
             (plain(102, key::Home), "r"),
-            (commit("水"), "水r"),
-            (plain(107, key::End), "水r"),
-            (commit(" word"), "水r word"),
-            (chord(14, key::BackSpace), "水r "),
-            (chord(30, key::a), "水r "),
+            (commit("木\u{e0100}"), "木\u{e0100}r"),
+            (plain(14, key::BackSpace), "r"),
+            (plain(107, key::End), "r"),
+            (commit(" \u{600}1"), "r \u{600}1"),
+            (chord(14, key::BackSpace), "r "),
+            (key_event(30, key::A, Press, shift_ctrl), "r "),
             (plain(14, key::BackSpace), ""),
-            (chord(47, key::v), "pasted"),
+            (key_event(47, key::V, Press, caps_ctrl), "a b c d e f g h i"),
+            (chord(30, key::a), "a b c d e f g h i"),
+            (plain(14, key::BackSpace), ""),
+            (
+                key_event(110, key::Insert, Press, shifted),
+                "a b c d e f g h i",
+            ),
+            (plain(47, key::v), "a b c d e f g h iv"),
+            (
+                key_event(47, key::v, sumie_core::KeyAction::Repeat, ctrl),
+                "a b c d e f g h iv",
+            ),
         ] {
             let mut route =
                 |event| input::route((0, 0), &mut pane, &mut routing, true, event, false).unwrap();
-            let input::Effect::Search(action) = (match route(event) {
+            let effect = match route(event) {
                 input::Effect::ReadClipboard => route(Event::ClipboardText {
-                    text: "pasted".into(),
+                    text: "a\rb\nc\r\nd\u{2028}e\u{2029}f\u{85}g\u{b}h\u{c}\u{1}i".into(),
                     generation: 0,
                 }),
                 effect => effect,
-            }) else {
-                panic!("search did not consume the edit");
             };
-            Bar::apply(&mut search, action, &mut pane.terminal).unwrap();
+            match effect {
+                input::Effect::Search(action) => {
+                    Bar::apply(&mut search, action, &mut pane.terminal).unwrap();
+                }
+                input::Effect::None => (),
+                effect => panic!("unexpected search edit: {effect:?}"),
+            }
             assert_eq!(search.as_ref().unwrap().query, expected);
             assert!(pane.pty.input_fd().is_none());
         }

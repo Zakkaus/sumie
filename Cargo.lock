@@ -1803,6 +1803,7 @@ dependencies = [
  "sumie-wayland",
  "tracing",
  "tracing-subscriber",
+ "unicode-segmentation",
  "xkeysym",
 ]
 

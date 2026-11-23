@@ -7,8 +7,9 @@ sumie is a GPU terminal emulator written in Rust with libghostty-vt and wgpu. On
 On Wayland, hold Ctrl over an OSC 8 link or a detected URL to underline it, including across soft wraps. Ctrl+click opens the link on release without changing the selection; Ctrl+drag selects text instead. Both gestures work even when the terminal program tracks the mouse. Sumie passes the URI directly to `xdg-open` and rejects bare paths, remote `file:` URLs, unrecognized schemes, and URIs containing control characters or bidirectional formatting marks.
 
 Press Ctrl+Shift+F to search the screen and scrollback. Search treats wrapped rows as one line and ignores case unless the query contains an uppercase letter. Matches are numbered from oldest to newest. Enter or F3 selects an older match; hold Shift to select a newer one. Escape closes search without moving the viewport.
+New output stays visible when the viewport is at the bottom. Typing in the terminal returns to the bottom.
 
-In the search field, Ctrl+A selects the query. Typing or pasting replaces the selection; Backspace deletes it. Home and End move to the start or end of the query. Ctrl+Backspace deletes the previous word, and Ctrl+V pastes from the clipboard.
+In the search field, Ctrl+A selects the query. Typing or pasting replaces the selection; Backspace deletes it or removes one grapheme. Home and End move to the start or end of the query. Ctrl+Backspace deletes the previous word. Ctrl+V or Shift+Insert pastes from the clipboard, replacing each line break with a space.
 
 On Wayland, Ctrl+Shift+T opens a tab. Ctrl+Shift+E splits the focused pane to the right; Ctrl+Shift+O splits it down. Each new shell starts in the focused pane's last reported local directory (OSC 7), or in `$HOME` if none is available. New windows start in `$HOME`.
 

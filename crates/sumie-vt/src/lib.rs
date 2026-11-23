@@ -285,6 +285,7 @@ impl Terminal {
     ///
     /// # Errors
     /// Returns an error for zero dimensions or a native allocation failure.
+    /// Also returns an error if Ghostty cannot read or update the viewport.
     pub fn resize(&mut self, cols: u16, rows: u16) -> Result<(), Error> {
         self.resize_pixels(cols, rows, [0, 0])
     }
@@ -293,6 +294,7 @@ impl Terminal {
     ///
     /// # Errors
     /// Returns an error for zero grid dimensions or a native allocation failure.
+    /// Also returns an error if Ghostty cannot read or update the viewport.
     pub fn resize_pixels(
         &mut self,
         cols: u16,
@@ -300,7 +302,12 @@ impl Terminal {
         [width, height]: [u32; 2],
     ) -> Result<(), Error> {
         // SAFETY: The terminal is live and exclusive.
-        check(unsafe { ffi::ghostty_terminal_resize(self.raw, cols, rows, width, height) })
+        check(unsafe { ffi::ghostty_terminal_resize(self.raw, cols, rows, width, height) })?;
+        // Ghostty can retain a history anchor when the larger grid fits all rows.
+        if self.at_bottom()? {
+            self.scroll_bottom()?;
+        }
+        Ok(())
     }
 
     /// Copy the visible grid, with one entry per column, top to bottom.

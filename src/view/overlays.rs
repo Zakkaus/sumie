@@ -283,9 +283,10 @@ impl PanePainter<'_> {
         let available = count_column - left - u32::from(count_width != 0) - 1;
         let (preedit, preedit_width) = visible_suffix(self.preedit, available);
         let Range { start, end } = self.search_selection;
-        let (before, before_width) = visible_suffix(&query[..end], available - preedit_width);
+        let prefix = if self.preedit.is_empty() { end } else { start };
+        let (before, before_width) = visible_suffix(&query[..prefix], available - preedit_width);
         let caret = left + before_width + preedit_width;
-        if start != end {
+        if start != prefix {
             let (_, selected) = visible_suffix(&query[start..end], before_width);
             let highlight = rgba(mix(field, ink, 2));
             for row in panel.top..panel.top + panel.height {

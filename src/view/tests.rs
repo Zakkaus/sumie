@@ -54,7 +54,8 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     let [left, divider, right] = panes(&view);
     let bg = snapshot(&view, left);
     let fg = snapshot(&view, right);
-    view.search_bar = Some(String::from("query\t0/0"));
+    view.search_bar = Some(String::from("Search: query\t0/0"));
+    view.search_selection = 8..13;
     view.preedit = String::from("a");
     view.begin_frame([divider], fg.background);
     view.build_pane(left, &bg, None, &[], None, focus(1, false));
@@ -78,7 +79,11 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     assert!(view.search_hit(pos, left).is_none());
     assert!(view.ime_rectangle(None, left).is_none());
     let caret = view.ime_rectangle(None, right).unwrap();
-    assert!(caret.x >= (right.x * 4 / 5).cast_signed());
+    // One inset cell, "Search: ", and one preedit cell. No space for the selected query.
+    assert_eq!(
+        caret.x,
+        (search.origin[0] + (10 * view.cell[0]).cast_signed()) * 4 / 5
+    );
 
     let gutter = logical(left.width.cast_signed() - 1, left.y.cast_signed());
     let gutter = (gutter.0 + 0.4, gutter.1 + 0.4);

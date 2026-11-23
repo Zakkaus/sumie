@@ -67,6 +67,7 @@ sumie-ui = { path = "crates/sumie-ui" }
 sumie-vt = { path = "crates/sumie-vt" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+unicode-segmentation = "1.13.3"
 xkeysym = "0.2.1"
 sumie-wayland.workspace = true
 

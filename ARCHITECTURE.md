@@ -68,6 +68,7 @@ The Wayland pointer adapter forwards seat events, press timestamps, and modifier
 On Linux the worker starts `/proc/self/exe --internal-link-opener URI` with null stdio. Before starting threads, that process revalidates the URI, closes its own descriptors above 2 using `/proc/self/fd`, and calls `execv` on `xdg-open`. A concurrent PTY creation in the original process cannot change the helper's descriptor table. On macOS, `posix_spawn` uses `POSIX_SPAWN_CLOEXEC_DEFAULT` and explicit file actions for stdio. Neither path requires a Rust `pre_exec` hook in a safe crate.
 
 Viewport scrolling clears the selection and its drag anchor. Key presses and repeats that produce PTY input return the viewport to the bottom. A key release leaves the viewport and selection unchanged.
+After a resize puts the viewport at the bottom, the VT returns to the active area so new output stays visible.
 
 `app::search` drives the query in bounded slices on the terminal owner thread. In-place redraws mark changed active rows without rewinding a scan. After reaching the tail, the matcher repairs changed rows up to the next boundary where neither the old nor the new scan carries a partial match or pending spaces. Scrolling output keeps the unchanged history prefix. A width change can reflow history and requires a fresh scan. The VT `anchor` module owns Ghostty tracked references, not text. Search uses separate anchors for the history boundary and the selected match. A trimmed anchor has no position. Closing search leaves the viewport in place.
 

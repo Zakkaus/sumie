@@ -129,15 +129,17 @@ impl Routing {
                 self.shortcuts.capture(physical);
                 match shortcut {
                     Some(Shortcut::Paste) => Effect::ReadClipboard,
-                    Some(_) => Effect::None,
                     None => {
+                        if let Some(effect) = search_shortcut(keysym, modifiers) {
+                            return effect;
+                        }
                         let effect = search_key(keysym, modifiers, text);
-                        if matches!(&effect, Effect::Search(action) if !matches!(action, SearchAction::SelectAll))
-                        {
+                        if matches!(&effect, Effect::Search(_)) {
                             self.repeating_search_key = Some(physical);
                         }
                         effect
                     }
+                    Some(_) => Effect::None,
                 }
             }
             KeyAction::Repeat if self.repeating_search_key == Some(physical) => {
@@ -264,13 +266,24 @@ fn send_input(
     }
 }
 
+fn search_shortcut(keysym: u32, mods: KeyModifiers) -> Option<Effect> {
+    use xkeysym::key;
+    if mods.alt || mods.super_key {
+        return None;
+    }
+    match keysym {
+        key::a | key::A if mods.control => Some(Effect::Search(SearchAction::SelectAll)),
+        key::v | key::V if mods.control => Some(Effect::ReadClipboard),
+        key::Insert | key::KP_Insert if mods.shift && !mods.control => Some(Effect::ReadClipboard),
+        _ => None,
+    }
+}
+
 fn search_key(keysym: u32, modifiers: KeyModifiers, text: Option<String>) -> Effect {
     use xkeysym::key;
     let ctrl = modifiers.control && !modifiers.alt && !modifiers.super_key;
     let action = match keysym {
         key::Escape => SearchAction::Close,
-        key::a if ctrl && !modifiers.shift => SearchAction::SelectAll,
-        key::v if ctrl && !modifiers.shift => return Effect::ReadClipboard,
         key::Home | key::KP_Home => SearchAction::Home,
         key::End | key::KP_End => SearchAction::End,
         key::BackSpace => SearchAction::Backspace { word: ctrl },
