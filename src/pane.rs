@@ -27,7 +27,10 @@ pub(crate) struct LocalPane {
 impl LocalPane {
     pub(crate) fn login(size: Size, cell: [u32; 2], colors: &sumie_config::Colors) -> Result<Self> {
         let mut env = request_environment();
-        let shell = sumie_config::load_user_config().unwrap_or_default().shell;
+        let shell = sumie_config::user_config_path()
+            .and_then(|path| sumie_config::load(&path).ok())
+            .unwrap_or_default()
+            .shell;
         let args = if shell.integration() {
             shell_integration::inject(&mut env)
         } else {
