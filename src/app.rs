@@ -1,10 +1,13 @@
 use std::time::{Duration, Instant};
 
-use sumie_core::{Pane, PaneCommand, Selection, Shortcuts};
+use sumie_core::{
+    Pane, PaneCommand, PaneEffect, Selection, Shortcuts,
+    mouse::{MouseEvent, SelectStep},
+};
 use sumie_render::{SurfaceError, SurfaceFrame};
 use sumie_vt::Event as TerminalEvent;
 use sumie_vt::Snapshot;
-use sumie_wayland::{Event, PointerPhase, SourceHandle};
+use sumie_wayland::{Event, SourceHandle};
 
 use crate::{
     Result, capture,
@@ -182,13 +185,21 @@ impl Session {
             phase,
             position,
             serial,
+            modifiers,
         } = event
         {
-            self.update_snapshot()?;
-            if !self.pointer(phase, position) {
-                return Ok(());
+            let (cell, pixel) = self.view.pointer_position(position);
+            let mouse = MouseEvent {
+                phase: input::mouse_phase(phase),
+                cell,
+                pixel,
+                modifiers: input::key_modifiers(modifiers),
+            };
+            match input::send(&mut self.pane, PaneCommand::Mouse(mouse))? {
+                PaneEffect::ViewportChanged => input::Effect::ViewportChanged,
+                PaneEffect::Select(step) if self.select(step, cell)? => input::Effect::Copy(serial),
+                _ => return Ok(()),
             }
-            input::Effect::Copy(serial)
         } else {
             input::route(&mut self.pane, &mut self.shortcuts, event)?
         };
@@ -196,10 +207,15 @@ impl Session {
             input::Effect::Copy(serial) => {
                 self.update_snapshot()?;
                 if let Some(range) = self.selection.range()
-                    && let Some(text) = self.pane.command(PaneCommand::Copy(range))?
+                    && let PaneEffect::Copied(text) = self.pane.command(PaneCommand::Copy(range))?
                 {
                     gpu.write_clipboard(serial, text);
                 }
+            }
+            input::Effect::ViewportChanged => {
+                self.frame_dirty |= self.selection.range().is_some();
+                self.selection = Selection::default();
+                self.snapshot_dirty = true;
             }
             input::Effect::ReadClipboard => gpu.read_clipboard(),
             input::Effect::Preedit(text) if text != self.view.preedit => {
@@ -212,18 +228,18 @@ impl Session {
     }
 
     /// Returns true only for the release that completes a drag.
-    fn pointer(&mut self, phase: PointerPhase, position: (f64, f64)) -> bool {
-        let hit = self.view.hit_test(position);
+    fn select(&mut self, step: SelectStep, hit: sumie_core::CellPosition) -> Result<bool> {
+        self.update_snapshot()?;
         let snapshot = self.snapshot.as_ref().expect("current pointer snapshot");
         let width = snapshot.rows[usize::from(hit.row)][usize::from(hit.column)].width;
         let old = self.selection.range();
-        match phase {
-            PointerPhase::Press => self.selection.press(hit, width),
-            PointerPhase::Motion | PointerPhase::Release => self.selection.drag(hit, width),
-            PointerPhase::Cancel => self.selection = Selection::default(),
+        match step {
+            SelectStep::Begin => self.selection.press(hit, width),
+            SelectStep::Drag | SelectStep::Finish => self.selection.drag(hit, width),
+            SelectStep::Clear => self.selection = Selection::default(),
         }
         self.frame_dirty |= old != self.selection.range();
-        matches!(phase, PointerPhase::Release) && self.selection.release().is_some()
+        Ok(step == SelectStep::Finish && self.selection.release().is_some())
     }
 
     fn service_pty(&mut self, gpu: &mut Gpu) -> Result<bool> {

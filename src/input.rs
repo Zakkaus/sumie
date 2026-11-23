@@ -1,4 +1,4 @@
-use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, Shortcut, Shortcuts};
+use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect, Shortcut, Shortcuts};
 use sumie_wayland::Event;
 
 use crate::{Error, Result};
@@ -8,6 +8,7 @@ pub(crate) enum Effect {
     Preedit(String),
     ReadClipboard,
     Copy(u32),
+    ViewportChanged,
 }
 
 pub(crate) fn route(
@@ -28,14 +29,7 @@ pub(crate) fn route(
             pressed,
             repeat,
         } => {
-            let modifiers = KeyModifiers {
-                shift: modifiers.shift,
-                control: modifiers.ctrl,
-                alt: modifiers.alt,
-                super_key: modifiers.logo,
-                caps_lock: modifiers.caps_lock,
-                num_lock: modifiers.num_lock,
-            };
+            let modifiers = key_modifiers(modifiers);
             let action = if repeat {
                 KeyAction::Repeat
             } else if pressed {
@@ -63,22 +57,61 @@ pub(crate) fn route(
         }
         _ => return Ok(Effect::None),
     };
+    match send(pane, command)? {
+        PaneEffect::ViewportChanged => Ok(Effect::ViewportChanged),
+        _ => Ok(Effect::None),
+    }
+}
+
+pub(crate) fn send(
+    pane: &mut impl Pane<Error = Error>,
+    command: PaneCommand<'_>,
+) -> Result<PaneEffect> {
     let paste_len = match &command {
         PaneCommand::Paste(text) => Some(text.len()),
         _ => None,
     };
-    if let Err(error) = pane.command(command) {
-        if error
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock)
+    match pane.command(command) {
+        Ok(effect) => Ok(effect),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::WouldBlock) =>
         {
             tracing::warn!(
                 paste_bytes = paste_len,
                 "terminal input queue is full; dropped input"
             );
-        } else {
-            return Err(error);
+            Ok(PaneEffect::None)
         }
+        Err(error) => Err(error),
     }
-    Ok(Effect::None)
+}
+
+pub(crate) fn key_modifiers(modifiers: sumie_wayland::Modifiers) -> KeyModifiers {
+    KeyModifiers {
+        shift: modifiers.shift,
+        control: modifiers.ctrl,
+        alt: modifiers.alt,
+        super_key: modifiers.logo,
+        caps_lock: modifiers.caps_lock,
+        num_lock: modifiers.num_lock,
+    }
+}
+
+pub(crate) fn mouse_phase(phase: sumie_wayland::PointerPhase) -> sumie_core::mouse::MousePhase {
+    use sumie_core::mouse::{Button, MousePhase};
+    use sumie_wayland::{PointerButton, PointerPhase};
+    let button = |b| match b {
+        PointerButton::Left => Button::Left,
+        PointerButton::Middle => Button::Middle,
+        PointerButton::Right => Button::Right,
+    };
+    match phase {
+        PointerPhase::Press(b) => MousePhase::Press(button(b)),
+        PointerPhase::Release(b) => MousePhase::Release(button(b)),
+        PointerPhase::Motion => MousePhase::Motion,
+        PointerPhase::Wheel(delta) => MousePhase::Wheel(delta),
+        PointerPhase::Cancel => MousePhase::Cancel,
+    }
 }

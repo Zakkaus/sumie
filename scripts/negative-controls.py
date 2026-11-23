@@ -168,6 +168,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("selection splits a wide glyph", "test", "crates/sumie-core/src/selection.rs",
           replace_once("end.column += 1;", "end.column += 0;"),
           "test selection::tests::drag_selects_whole_cell_groups ... FAILED")
+    probe("alternate scroll on primary screen", "test", "crates/sumie-core/src/mouse.rs",
+          replace_once("modes.alternate && modes.alternate_scroll", "modes.alternate_scroll"),
+          "test mouse::tests::routes_mouse_by_mode_and_gesture ... FAILED")
     if sys.platform.startswith("linux"):
         probe("sprite shifted off cell origin", "test", "crates/sumie-font/src/sprite.rs",
               replace_once("top: 0,", "top: 1,"),

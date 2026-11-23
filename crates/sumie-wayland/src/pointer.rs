@@ -3,53 +3,99 @@ use smithay_client_toolkit::{
         Connection, Proxy, QueueHandle,
         protocol::{wl_pointer::WlPointer, wl_seat::WlSeat},
     },
-    seat::pointer::{BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler},
+    seat::pointer::{
+        AxisScroll, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, PointerEvent, PointerEventKind, PointerHandler,
+    },
 };
 
-use crate::{Event, PointerPhase, platform::State};
+use crate::{Event, Modifiers, PointerButton, PointerPhase, keyboard::Keyboard, platform::State};
+
+const VALUE120_PER_NOTCH: f64 = 120.0;
+const LOGICAL_UNITS_PER_NOTCH: f64 = 10.0;
 
 pub(crate) struct Pointer {
     proxy: WlPointer,
-    drag_position: Option<(f64, f64)>,
+    position: Option<(f64, f64)>,
 }
 
 impl Pointer {
-    fn track(&mut self, event: &PointerEvent) -> Option<Event> {
+    fn track(
+        &mut self,
+        event: &PointerEvent,
+        modifiers: Modifiers,
+        wheel: &mut Option<f64>,
+    ) -> Option<Event> {
         let (phase, serial) = match event.kind {
-            PointerEventKind::Press {
-                button: BTN_LEFT,
-                serial,
-                ..
-            } if self.drag_position.is_none() => {
-                self.drag_position = Some(event.position);
-                (PointerPhase::Press, serial)
+            PointerEventKind::Enter { .. } => {
+                self.position = Some(event.position);
+                return None;
             }
-            PointerEventKind::Motion { .. } if self.drag_position.is_some() => {
-                self.drag_position = Some(event.position);
-                (PointerPhase::Motion, 0)
+            PointerEventKind::Leave { .. } => return self.cancel(modifiers),
+            PointerEventKind::Motion { .. } => (PointerPhase::Motion, 0),
+            PointerEventKind::Press { button, serial, .. } => {
+                (PointerPhase::Press(pointer_button(button)?), serial)
             }
-            PointerEventKind::Release {
-                button: BTN_LEFT,
-                serial,
-                ..
-            } if self.drag_position.take().is_some() => (PointerPhase::Release, serial),
-            PointerEventKind::Leave { .. } => return self.cancel(),
-            _ => return None,
+            PointerEventKind::Release { button, serial, .. } => {
+                (PointerPhase::Release(pointer_button(button)?), serial)
+            }
+            PointerEventKind::Axis { ref vertical, .. } if has_vertical_delta(vertical) => {
+                (PointerPhase::Wheel(wheel.take()?), 0)
+            }
+            PointerEventKind::Axis { .. } => return None,
         };
+        self.position = Some(event.position);
         Some(Event::Pointer {
             phase,
             position: event.position,
             serial,
+            modifiers,
         })
     }
 
-    fn cancel(&mut self) -> Option<Event> {
+    fn cancel(&mut self, modifiers: Modifiers) -> Option<Event> {
         Some(Event::Pointer {
             phase: PointerPhase::Cancel,
-            position: self.drag_position.take()?,
+            position: self.position.take()?,
             serial: 0,
+            modifiers,
         })
     }
+}
+
+fn pointer_button(button: u32) -> Option<PointerButton> {
+    match button {
+        BTN_LEFT => Some(PointerButton::Left),
+        BTN_MIDDLE => Some(PointerButton::Middle),
+        BTN_RIGHT => Some(PointerButton::Right),
+        _ => None,
+    }
+}
+
+fn has_vertical_delta(axis: &AxisScroll) -> bool {
+    axis.value120 != 0 || axis.discrete != 0 || axis.absolute != 0.0
+}
+
+fn wheel_delta<'a>(events: impl Iterator<Item = &'a PointerEvent>) -> Option<f64> {
+    // SCTK only merges adjacent axis events. The discrete and absolute forms
+    // can be separated by another event in the same frame.
+    let mut value120 = None;
+    let mut discrete = None;
+    let mut absolute = 0.0;
+    for event in events {
+        if let PointerEventKind::Axis { ref vertical, .. } = event.kind {
+            if vertical.value120 != 0 {
+                *value120.get_or_insert(0.0) += f64::from(vertical.value120);
+            }
+            if vertical.discrete != 0 {
+                *discrete.get_or_insert(0.0) += f64::from(vertical.discrete);
+            }
+            absolute += vertical.absolute;
+        }
+    }
+    let delta = value120
+        .or_else(|| discrete.map(|steps| steps * VALUE120_PER_NOTCH))
+        .unwrap_or(absolute * (VALUE120_PER_NOTCH / LOGICAL_UNITS_PER_NOTCH));
+    (delta != 0.0).then_some(delta)
 }
 
 impl Drop for Pointer {
@@ -66,7 +112,7 @@ impl State {
             Ok(proxy) => {
                 self.pointer = Some(Pointer {
                     proxy,
-                    drag_position: None,
+                    position: None,
                 });
             }
             Err(error) => tracing::warn!(%error, "could not bind pointer"),
@@ -75,8 +121,15 @@ impl State {
 
     pub(crate) fn stop_pointer(&mut self) {
         if let Some(mut pointer) = self.pointer.take() {
-            self.events.extend(pointer.cancel());
+            let modifiers = self.pointer_modifiers();
+            self.events.extend(pointer.cancel(modifiers));
         }
+    }
+
+    fn pointer_modifiers(&self) -> Modifiers {
+        self.keyboard
+            .as_ref()
+            .map_or_else(Modifiers::default, Keyboard::modifiers)
     }
 }
 
@@ -89,6 +142,7 @@ impl PointerHandler for State {
         events: &[PointerEvent],
     ) {
         let surface = self.window.wl_surface();
+        let modifiers = self.pointer_modifiers();
         let Some(pointer) = self
             .pointer
             .as_mut()
@@ -96,7 +150,9 @@ impl PointerHandler for State {
         else {
             return;
         };
-        for event in events.iter().filter(|event| &event.surface == surface) {
+        let events = events.iter().filter(|event| &event.surface == surface);
+        let mut wheel = wheel_delta(events.clone());
+        for event in events {
             if let PointerEventKind::Press { serial, .. } | PointerEventKind::Release { serial, .. } =
                 event.kind
                 && let Some(keyboard) = &mut self.keyboard
@@ -104,7 +160,8 @@ impl PointerHandler for State {
             {
                 keyboard.selection_serial = Some(serial);
             }
-            self.events.extend(pointer.track(event));
+            self.events
+                .extend(pointer.track(event, modifiers, &mut wheel));
         }
     }
 }

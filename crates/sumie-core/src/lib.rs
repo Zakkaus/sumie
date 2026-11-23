@@ -10,6 +10,7 @@
 //! use sumie_core::wgpu;
 //! ```
 
+pub mod mouse;
 mod selection;
 
 pub use selection::{CellPosition, CellRange, Selection};
@@ -101,6 +102,7 @@ pub enum PaneCommand<'a> {
         text: &'a str,
         unshifted: Option<char>,
     },
+    Mouse(mouse::MouseEvent),
     Text(&'a [u8]),
     Paste(String),
     Copy(CellRange),
@@ -114,6 +116,14 @@ pub enum PaneCommand<'a> {
     Close,
 }
 
+#[derive(Debug)]
+pub enum PaneEffect {
+    None,
+    Copied(String),
+    Select(mouse::SelectStep),
+    ViewportChanged,
+}
+
 /// Call from the owner thread. Neither operation waits for I/O or child exit.
 pub trait Pane {
     type Snapshot;
@@ -123,7 +133,7 @@ pub trait Pane {
     ///
     /// # Errors
     /// Returns an error if encoding, queuing, resizing or initiating close fails.
-    fn command(&mut self, command: PaneCommand<'_>) -> Result<Option<String>, Self::Error>;
+    fn command(&mut self, command: PaneCommand<'_>) -> Result<PaneEffect, Self::Error>;
 
     /// Return an owned snapshot for the consumer to draw without borrowing the pane.
     ///

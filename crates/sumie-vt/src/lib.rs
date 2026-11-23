@@ -5,10 +5,12 @@ mod effects;
 mod ffi;
 mod identity;
 mod key;
+mod mouse;
 mod selection;
 
 pub use effects::Event;
 pub use key::{KeyAction, KeyEncoder, KeyEvent};
+pub use mouse::{MouseAction, MouseButton, MouseEncoder, MouseReport};
 
 use effects::Effects;
 use std::ffi::{c_int, c_void};

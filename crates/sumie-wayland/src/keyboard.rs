@@ -21,6 +21,12 @@ pub(crate) struct Keyboard {
     pub(crate) data_device: Option<DataDevice>,
 }
 
+impl Keyboard {
+    pub(crate) fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+}
+
 impl Drop for Keyboard {
     fn drop(&mut self) {
         if self.proxy.version() >= 3 {

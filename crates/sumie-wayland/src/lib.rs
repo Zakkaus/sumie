@@ -42,13 +42,14 @@ pub enum Event {
         /// Wayland key serial, or zero for a client-generated repeat.
         serial: u32,
     },
-    /// Activity of the active seat's left button; hover is not reported.
+    /// Pointer input from the active seat on the window surface.
     Pointer {
         phase: PointerPhase,
         /// Position in surface-local logical coordinates.
         position: (f64, f64),
-        /// Wayland button serial on press and release; zero on motion or cancellation.
+        /// Wayland button serial on press and release; zero otherwise.
         serial: u32,
+        modifiers: Modifiers,
     },
     /// Replace the composition overlay. An empty string clears it.
     ImePreedit {
@@ -61,10 +62,19 @@ pub enum Event {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PointerPhase {
-    Press,
+    Press(PointerButton),
+    Release(PointerButton),
     Motion,
-    Release,
     Cancel,
+    /// Signed vertical scroll, down positive, in units of 1/120 of a wheel notch.
+    Wheel(f64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerButton {
+    Left,
+    Middle,
+    Right,
 }

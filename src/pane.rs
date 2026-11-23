@@ -1,12 +1,12 @@
+mod mouse;
 #[path = "terminfo.rs"]
 mod terminfo;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io;
 use std::sync::mpsc::TryRecvError;
 
-use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand};
+use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect};
 use sumie_pty::{Command, Pty, Size, SpawnOptions};
 use sumie_vt::{KeyEncoder, KeyEvent, Rgb, Snapshot, Terminal};
 
@@ -38,6 +38,7 @@ const PALETTE: [Rgb; 16] = [
 pub(crate) struct LocalPane {
     pub(crate) terminal: Terminal,
     encoder: KeyEncoder,
+    mouse: mouse::Mouse,
     pub(crate) pty: Pty,
 }
 
@@ -55,17 +56,20 @@ impl LocalPane {
         let mut terminal = Terminal::new(size.cols, size.rows)?;
         let term = env.get(std::ffi::OsStr::new("TERM"));
         terminal.set_identity(XTVERSION, term.map_or(&[], |term| term.as_encoded_bytes()))?;
+        terminal.set_scrollback_bytes(10_000_000)?;
         terminal.set_colors(FOREGROUND, BACKGROUND, &PALETTE)?;
         terminal.resize_pixels(size.cols, size.rows, cell)?;
+        let mouse = mouse::Mouse::new(&terminal, [size.cols, size.rows], cell)?;
         Ok(Self {
             terminal,
             encoder: KeyEncoder::new()?,
+            mouse,
             pty: Pty::spawn(SpawnOptions::new(command, env, size))?,
         })
     }
 
     /// Returns whether the snapshot needs refreshing and whether output reached EOF.
-    pub(crate) fn drain_output(&mut self) -> io::Result<(bool, bool)> {
+    pub(crate) fn drain_output(&mut self) -> Result<(bool, bool)> {
         self.pty.clear_output_wake()?;
         let mut dirty = false;
         loop {
@@ -77,6 +81,9 @@ impl LocalPane {
                     }
                 }
                 Err(end) => {
+                    if dirty {
+                        self.mouse.sync(&self.terminal)?;
+                    }
                     self.drain_replies();
                     return Ok((dirty, end == TryRecvError::Disconnected));
                 }
@@ -91,13 +98,22 @@ impl LocalPane {
             }
         });
     }
+
+    fn follow_input(&mut self) -> Result<PaneEffect> {
+        if self.terminal.at_bottom()? {
+            return Ok(PaneEffect::None);
+        }
+        self.terminal.scroll_bottom()?;
+        self.mouse.state.cancel_selection();
+        Ok(PaneEffect::ViewportChanged)
+    }
 }
 
 impl Pane for LocalPane {
     type Snapshot = Snapshot;
     type Error = crate::Error;
 
-    fn command(&mut self, command: PaneCommand<'_>) -> Result<Option<String>> {
+    fn command(&mut self, command: PaneCommand<'_>) -> Result<PaneEffect> {
         match command {
             PaneCommand::Key {
                 physical,
@@ -121,15 +137,22 @@ impl Pane for LocalPane {
                 let bytes = self.encoder.encode(&self.terminal, &event)?;
                 if !bytes.is_empty() {
                     self.pty.enqueue_input(bytes)?;
+                    return self.follow_input();
                 }
             }
-            PaneCommand::Text(bytes) => self.pty.enqueue_input(bytes)?,
+            PaneCommand::Mouse(event) => return self.pointer(event),
+            PaneCommand::Text(bytes) if !bytes.is_empty() => {
+                self.pty.enqueue_input(bytes)?;
+                return self.follow_input();
+            }
+            PaneCommand::Text(_) => (),
             PaneCommand::Paste(text) => {
                 self.pty.enqueue_input(&self.terminal.encode_paste(text)?)?;
+                return self.follow_input();
             }
             PaneCommand::Copy(range) => {
                 let point = |p: sumie_core::CellPosition| [p.column, p.row];
-                return Ok(Some(
+                return Ok(PaneEffect::Copied(
                     self.terminal
                         .selection_text(point(range.start), point(range.end))?,
                 ));
@@ -141,6 +164,7 @@ impl Pane for LocalPane {
                 cell_px,
             } => {
                 self.terminal.resize_pixels(cols, rows, cell_px)?;
+                self.mouse.resize([cols, rows], cell_px);
                 self.pty.resize(Size {
                     cols,
                     rows,
@@ -151,7 +175,7 @@ impl Pane for LocalPane {
             }
             PaneCommand::Close => self.pty.close()?,
         }
-        Ok(None)
+        Ok(PaneEffect::None)
     }
 
     fn snapshot(&mut self) -> Result<Snapshot> {

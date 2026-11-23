@@ -111,20 +111,32 @@ impl View {
         }
     }
 
-    pub(crate) fn hit_test(&self, (x, y): (f64, f64)) -> CellPosition {
-        let cell = |pos: f64, axis: usize| {
-            // Viewporter stretches the rounded device buffer to the exact logical size.
-            let index = pos * f64::from(self.device[axis])
-                / (f64::from(self.logical[axis]) * f64::from(self.cell[axis]));
-            // Clamped grid dimensions fit u16. Truncation selects the containing cell.
+    pub(crate) fn pointer_position(&self, (x, y): (f64, f64)) -> (CellPosition, [f32; 2]) {
+        // Viewporter stretches the rounded buffer to the exact logical size.
+        let pixel = std::array::from_fn(|axis| {
+            let pos = [x, y][axis] * f64::from(self.device[axis]) / f64::from(self.logical[axis]);
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "native mouse coordinates are f32"
+            )]
+            {
+                pos as f32
+            }
+        });
+        let cell = |axis: usize| {
+            let index = f64::from(pixel[axis]) / f64::from(self.cell[axis]);
             #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let index = index.clamp(0.0, f64::from(self.grid[axis] - 1)) as u16;
-            index
+            {
+                index.clamp(0.0, f64::from(self.grid[axis] - 1)) as u16
+            }
         };
-        CellPosition {
-            row: cell(y, 1),
-            column: cell(x, 0),
-        }
+        (
+            CellPosition {
+                row: cell(1),
+                column: cell(0),
+            },
+            pixel,
+        )
     }
 
     pub(crate) fn build(&mut self, snapshot: &Snapshot, selection: Option<CellRange>) {
