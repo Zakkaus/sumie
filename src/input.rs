@@ -26,7 +26,10 @@ pub(crate) enum Effect {
 pub(crate) enum SearchAction {
     Open,
     Close,
-    Backspace,
+    SelectAll,
+    Home,
+    End,
+    Backspace { word: bool },
     Insert(String),
     Navigate { newer: bool },
 }
@@ -129,7 +132,8 @@ impl Routing {
                     Some(_) => Effect::None,
                     None => {
                         let effect = search_key(keysym, modifiers, text);
-                        if matches!(effect, Effect::Search(_)) {
+                        if matches!(&effect, Effect::Search(action) if !matches!(action, SearchAction::SelectAll))
+                        {
                             self.repeating_search_key = Some(physical);
                         }
                         effect
@@ -262,9 +266,14 @@ fn send_input(
 
 fn search_key(keysym: u32, modifiers: KeyModifiers, text: Option<String>) -> Effect {
     use xkeysym::key;
+    let ctrl = modifiers.control && !modifiers.alt && !modifiers.super_key;
     let action = match keysym {
         key::Escape => SearchAction::Close,
-        key::BackSpace => SearchAction::Backspace,
+        key::a if ctrl && !modifiers.shift => SearchAction::SelectAll,
+        key::v if ctrl && !modifiers.shift => return Effect::ReadClipboard,
+        key::Home | key::KP_Home => SearchAction::Home,
+        key::End | key::KP_End => SearchAction::End,
+        key::BackSpace => SearchAction::Backspace { word: ctrl },
         key::Return | key::KP_Enter | key::F3 => SearchAction::Navigate {
             newer: modifiers.shift,
         },

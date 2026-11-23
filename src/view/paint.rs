@@ -75,6 +75,7 @@ pub(super) struct PanePainter<'a> {
     pub(super) selection_foreground: Option<Rgb>,
     pub(super) selection_background: Option<Rgb>,
     pub(super) search_bar: Option<&'a str>,
+    pub(super) search_selection: std::ops::Range<usize>,
     pub(super) search_highlights: &'a [(u16, u16, u16, bool)],
     pub(super) preedit: &'a str,
 }

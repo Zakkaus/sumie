@@ -241,7 +241,7 @@ impl PanePainter<'_> {
             }
         }
         let first = self.pane.glyphs.quads.len();
-        self.draw_query(panel, rail, readable(ink, field));
+        self.draw_query(panel, rail, field, readable(ink, field));
         let control_ink = rgba(readable(ink, controls));
         for (cols, label, _) in panel.buttons() {
             self.line.clear();
@@ -264,7 +264,7 @@ impl PanePainter<'_> {
         }
     }
 
-    fn draw_query(&mut self, panel: SearchBox, rail: u32, ink: Rgb) {
+    fn draw_query(&mut self, panel: SearchBox, rail: u32, field: Rgb, ink: Rgb) {
         let label = self.search_bar.expect("search bar is open");
         let (query, count) = label.rsplit_once('\t').unwrap_or((label, ""));
         let left = panel.left + u32::from(panel.width >= 12);
@@ -282,14 +282,23 @@ impl PanePainter<'_> {
         );
         let available = count_column - left - u32::from(count_width != 0) - 1;
         let (preedit, preedit_width) = visible_suffix(self.preedit, available);
-        let (query, query_width) = if preedit.len() == self.preedit.len() {
-            visible_suffix(query, available - preedit_width)
-        } else {
-            ("", 0)
-        };
+        let Range { start, end } = self.search_selection;
+        let (before, before_width) = visible_suffix(&query[..end], available - preedit_width);
+        let caret = left + before_width + preedit_width;
+        if start != end {
+            let (_, selected) = visible_suffix(&query[start..end], before_width);
+            let highlight = rgba(mix(field, ink, 2));
+            for row in panel.top..panel.top + panel.height {
+                let end = (row * self.pane.grid[0] + left + before_width) as usize;
+                self.pane.backgrounds[end - selected as usize..end].fill(highlight);
+            }
+        }
         self.line.clear();
-        self.line.append_overlay_text(query);
-        self.line.append_overlay_text(preedit);
+        let chars = before
+            .chars()
+            .chain(preedit.chars())
+            .chain(query[end..].chars());
+        self.line.append_overlay_text(chars, available);
         self.line.draw(
             self.font,
             self.font_errors,
@@ -300,7 +309,7 @@ impl PanePainter<'_> {
         );
         self.pane.cursor = Some(Cursor {
             rect: PixelRect {
-                origin: self.origin([left + query_width + preedit_width, panel.top]),
+                origin: self.origin([caret, panel.top]),
                 size: [self.cell[0].min(2), self.cell[1]],
             },
             color,
@@ -404,9 +413,13 @@ fn readable(ink: Rgb, surface: Rgb) -> Rgb {
 }
 
 impl Line {
-    fn append_overlay_text(&mut self, text: &str) {
-        for ch in text.chars().map(display_char) {
+    fn append_overlay_text(&mut self, text: impl Iterator<Item = char>, mut columns: u32) {
+        for ch in text.map(display_char) {
             let width = codepoint_width(ch);
+            if u32::from(width) > columns {
+                break;
+            }
+            columns -= u32::from(width);
             if width != 0 || !self.text.is_empty() {
                 self.text.push(ch);
                 self.widths.push(width);

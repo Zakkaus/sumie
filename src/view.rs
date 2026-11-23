@@ -53,6 +53,8 @@ pub(crate) struct View {
     pub(crate) preedit: String,
     /// Formatted query and tab-separated count, without IME preedit.
     pub(crate) search_bar: Option<String>,
+    /// Byte range in the formatted query. An empty range is the insertion point.
+    pub(crate) search_selection: std::ops::Range<usize>,
     /// Viewport row, inclusive first/last columns, and whether this is the current match.
     pub(crate) search_highlights: Vec<(u16, u16, u16, bool)>,
     presented_search: Option<PresentedSearch>,
@@ -118,6 +120,7 @@ impl View {
             cell,
             preedit: String::new(),
             search_bar: None,
+            search_selection: 0..0,
             search_highlights: Vec::new(),
             presented_search: None,
             panes: Vec::new(),
@@ -345,6 +348,7 @@ impl View {
             selection_foreground: self.selection_foreground,
             selection_background: self.selection_background,
             search_bar: self.search_bar.as_deref().filter(|_| focus.active),
+            search_selection: self.search_selection.clone(),
             search_highlights: if focus.active {
                 &self.search_highlights
             } else {

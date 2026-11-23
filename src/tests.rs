@@ -338,7 +338,12 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
     }
 }
 
-fn key_event(physical: u32, keysym: u32, action: KeyAction, modifiers: Modifiers) -> Event {
+pub(crate) fn key_event(
+    physical: u32,
+    keysym: u32,
+    action: KeyAction,
+    modifiers: Modifiers,
+) -> Event {
     let pressed = !matches!(action, KeyAction::Release);
     Event::Key {
         serial: 1,
@@ -531,7 +536,10 @@ fn switching_tabs_finishes_a_reported_drag() {
     crate::sources::reap(&mut pane.pty).unwrap();
 }
 
-fn ready_pane(script: &str, env: &std::collections::BTreeMap<OsString, OsString>) -> LocalPane {
+pub(crate) fn ready_pane(
+    script: &str,
+    env: &std::collections::BTreeMap<OsString, OsString>,
+) -> LocalPane {
     let args = ["-c", script].map(OsString::from);
     let command = Command::Argv {
         program: OsStr::new("/bin/sh"),
