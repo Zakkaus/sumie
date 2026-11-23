@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the native TabList's tokens from `astryx docs` (not needed to build)."""
+"""Export Astryx tokens for native chrome and overlays (not needed to build)."""
 
 import json
 import re
@@ -55,13 +55,15 @@ def main():
              "RAIL_GAP": "spacing-1", "RULE": "border-width", "INDICATOR": "spacing-0-5"}
     for key, token in sizes.items():
         lines.append(f"pub(super) const {key}: u32 = {pixels(scalar(token))};")
+    lines.append(f"pub const IMAGE_VIEWER_MARGIN: u32 = {pixels(scalar('spacing-4'))};")
     lines += [f"pub const LABEL_PX: u16 = {pixels(scalar('text-label-size'))};",
               f"pub const LABEL_WEIGHT: u16 = {int(scalar('text-label-weight'))};"]
     # FontSystem shapes on a fixed grid; use the code stack's native generic family.
     family = scalar("font-family-code").rsplit(",", 1)[-1].strip()
     lines.append(f"pub const LABEL_FAMILY: &str = {json.dumps(family)};")
     colors = {"surface": "background-body", "label": "text-secondary", "selected": "text-primary",
-              "accent": "accent", "rule": "border", "inactive_pane": "background-muted"}
+              "accent": "accent", "rule": "border", "inactive_pane": "background-muted",
+              "overlay": "overlay"}
     for i, mode in enumerate(("LIGHT", "DARK")):
         lines += ["", f"pub(super) const {mode}: Palette = Palette {{"]
         for field, token in colors.items():

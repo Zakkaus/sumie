@@ -5,6 +5,7 @@ mod pane_input;
 mod pane_layout;
 mod search;
 mod tabs;
+mod viewer;
 
 use std::time::{Duration, Instant};
 
@@ -96,6 +97,7 @@ struct PaneState {
     exited: bool,
     paste_recipient: Option<u64>,
     search: Option<search::Bar>,
+    viewer: Option<sumie_core::graphics::Placement>,
     selection: Selection,
     selected_text: String,
     pane: LocalPane,
@@ -218,6 +220,11 @@ impl App {
                 }
             }
             for tab in session.all_panes_mut() {
+                if changes.thumbnail_rows {
+                    tab.pane
+                        .terminal
+                        .set_thumbnail_rows(next.images.thumbnail_rows());
+                }
                 if changes.terminal_colors {
                     set_colors(&mut tab.pane.terminal, &next.colors)?;
                     tab.snapshot_dirty = true;
@@ -438,6 +445,7 @@ impl Session {
         let tab = self.active();
         let cursor = tab.snapshot.as_ref().and_then(|snapshot| snapshot.cursor);
         let enabled = eligible
+            && tab.viewer.is_none()
             && tab.search.is_none()
             && self.view.preedit.is_empty()
             && cursor.is_some_and(|cursor| {
@@ -461,6 +469,7 @@ impl Session {
                 dirty: pane.frame_dirty,
                 active: id == active.id,
                 window_focused: focused,
+                viewer: pane.viewer.as_ref(),
             };
             self.view.build_pane(
                 rect,
@@ -524,6 +533,7 @@ impl Session {
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
                 self.view.frame_presented();
+                self.view.images_presented(gpu.presented_thumbnails());
                 self.pane_pointer.present_layout(tab);
                 for pane in &mut tab.panes {
                     pane.frame_dirty = false;

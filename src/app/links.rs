@@ -3,14 +3,14 @@ use sumie_core::{
     mouse::{Button, MousePhase},
 };
 use sumie_vt::Terminal;
-use sumie_wayland::{Event, PointerPhase};
+use sumie_wayland::{Event, Modifiers, PointerPhase};
 
 use super::{Gpu, PaneState, Result, Session};
 
 #[derive(Default)]
 pub(super) struct Pointer {
     position: Option<(f64, f64)>,
-    control: bool,
+    modifiers: Modifiers,
 }
 
 impl Pointer {
@@ -30,15 +30,11 @@ impl Pointer {
                 ..
             } => {
                 self.position = Some(position);
-                self.control = modifiers.ctrl;
+                self.modifiers = modifiers;
             }
-            Event::ModifiersChanged(modifiers) => self.control = modifiers.ctrl,
+            Event::ModifiersChanged(modifiers) => self.modifiers = modifiers,
             _ => (),
         }
-    }
-
-    fn position(&self) -> Option<(f64, f64)> {
-        self.position.filter(|_| self.control)
     }
 }
 
@@ -143,26 +139,35 @@ impl Session {
     pub(super) fn update_link_hover(&mut self, gpu: &mut Gpu, banner: bool) -> Result<()> {
         let target = self
             .link_pointer
-            .position()
+            .position
             .and_then(|position| self.pane_under_pointer(position).map(|id| (id, position)));
         let tab = self.tabs.active_mut().expect("live window");
         let focused = tab.tree.focused();
-        let mut link = false;
+        let modifiers = self.link_pointer.modifiers;
+        let mut hand = false;
         for pane in &mut tab.panes {
             let active = pane.id == focused;
             let hit = target
-                .filter(|(id, _)| *id == pane.id && !(active && pane.search.is_some()))
+                .filter(|(id, _)| {
+                    *id == pane.id
+                        && modifiers.ctrl
+                        && pane.viewer.is_none()
+                        && !(active && pane.search.is_some())
+                })
                 .and_then(|(_, position)| {
                     self.view.link_cell(position, pane.rect, banner && active)
                 });
             if hit.is_none() || !pane.snapshot_dirty {
                 pane.probe_link(hit, &self.host)?;
             }
-            link |= hit.is_some_and(|hit| {
+            hand |= hit.is_some_and(|hit| {
                 pane.hover.uri().is_some() && pane.hover.checked.is_some_and(|(pos, _)| pos == hit)
             });
+            if let Some((_, position)) = target.filter(|(id, _)| *id == pane.id) {
+                hand |= pane.thumbnail_at(&self.view, position, modifiers).is_some();
+            }
         }
-        gpu.set_link_cursor(link);
+        gpu.set_link_cursor(hand);
         Ok(())
     }
 }

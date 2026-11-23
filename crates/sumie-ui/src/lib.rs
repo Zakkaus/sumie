@@ -7,4 +7,4 @@ mod tabs;
 mod tokens;
 
 pub use tabs::{Palette, TabLayout, tab_bar_height};
-pub use tokens::{LABEL_FAMILY, LABEL_PX, LABEL_WEIGHT};
+pub use tokens::{IMAGE_VIEWER_MARGIN, LABEL_FAMILY, LABEL_PX, LABEL_WEIGHT};

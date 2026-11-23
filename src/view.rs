@@ -20,8 +20,11 @@ use sumie_wayland::CursorRect;
 
 use crate::Result;
 use attributes::glyph_quad;
+pub(crate) use paint::PaneFocus;
 use paint::{PanePaint, PanePainter};
 
+mod images;
+use images::{PresentedImages, ViewerPaint};
 mod overlays;
 use overlays::{Glyphs, PresentedSearch};
 mod paint;
@@ -31,14 +34,6 @@ mod tabs;
 mod tests;
 pub(crate) use settings::FontSettings;
 use tabs::Tabs;
-
-#[derive(Clone, Copy)]
-pub(crate) struct PaneFocus {
-    pub(crate) active: bool,
-    pub(crate) window_focused: bool,
-    pub(crate) id: u64,
-    pub(crate) dirty: bool,
-}
 
 pub(crate) struct View {
     font: FontSystem,
@@ -58,6 +53,7 @@ pub(crate) struct View {
     /// Viewport row, inclusive first/last columns, and whether this is the current match.
     pub(crate) search_highlights: Vec<(u16, u16, u16, bool)>,
     presented_search: Option<PresentedSearch>,
+    presented_images: PresentedImages,
     panes: Vec<PanePaint>,
     pane_count: usize,
     active_pane: Option<usize>,
@@ -123,6 +119,7 @@ impl View {
             search_selection: 0..0,
             search_highlights: Vec::new(),
             presented_search: None,
+            presented_images: PresentedImages::default(),
             panes: Vec::new(),
             pane_count: 0,
             active_pane: None,
@@ -152,6 +149,7 @@ impl View {
         self.device = device;
         self.resize_strip();
         self.reset_hits();
+        self.presented_images.clear();
         Ok(())
     }
 
@@ -180,6 +178,7 @@ impl View {
 
     fn replace_font(&mut self, font: FontSystem) {
         self.reset_hits();
+        self.presented_images.clear();
         self.invalidate_paint();
         self.cell = [font.metrics().width, font.metrics().height];
         self.font = font;
@@ -309,7 +308,7 @@ impl View {
         selection: Option<CellRange>,
         hovered_link: &[CellRange],
         banner: Option<&str>,
-        focus: PaneFocus,
+        focus: PaneFocus<'_>,
     ) {
         let index = self.pane_count;
         self.pane_count += 1;
@@ -338,6 +337,9 @@ impl View {
         pane.rect = rect;
         pane.active = focus.active;
         pane.focused = focused;
+        pane.viewer = focus
+            .viewer
+            .and_then(|p| ViewerPaint::new(p, rect, self.scale));
         PanePainter {
             pane,
             font: &mut self.font,
@@ -369,6 +371,7 @@ impl View {
         for pane in &mut self.panes[self.pane_count..] {
             pane.id = None;
             pane.images = None;
+            pane.viewer = None;
         }
         collect_dirty(&self.font, &mut self.atlas_dirty);
     }
@@ -377,6 +380,7 @@ impl View {
         &self,
         cursor_hidden: bool,
     ) -> FrameDraw<'_, impl Clone + Iterator<Item = PaneDraw<'_>>> {
+        let backdrop = self.palette.overlay;
         FrameDraw {
             background: self.frame_background,
             panes: self.panes[..self.pane_count]
@@ -384,6 +388,7 @@ impl View {
                 .map(move |pane| PaneDraw {
                     rect: pane.rect,
                     draw: pane.draw_list(self.cell, cursor_hidden),
+                    viewer: pane.viewer.as_ref().map(|viewer| viewer.draw(backdrop)),
                 }),
             fills: &self.fills,
             chrome: self.tabs.layer(),
@@ -411,6 +416,7 @@ impl View {
                 window_focused: focused,
                 id: 0,
                 dirty: true,
+                viewer: None,
             },
         );
         self.end_frame();

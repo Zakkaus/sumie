@@ -58,6 +58,7 @@ impl LocalPane {
         let term = options.env.get(std::ffi::OsStr::new("TERM"));
         terminal.set_identity(XTVERSION, term.map_or(&[], |term| term.as_encoded_bytes()))?;
         terminal.set_scrollback_bytes(config.scrollback_limit())?;
+        terminal.set_thumbnail_rows(config.images.thumbnail_rows());
         set_colors(&mut terminal, &config.colors)?;
         set_cursor_defaults(&mut terminal, config.cursor)?;
         terminal.resize_pixels(size.cols, size.rows, cell)?;

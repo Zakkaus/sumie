@@ -126,12 +126,24 @@ pub struct DrawList<'a> {
     pub chrome: Option<ChromeLayer<'a>>,
 }
 
+/// A cropped image composited above a pane's terminal content and dim backdrop.
+#[derive(Clone, Copy)]
+pub struct ImageViewer<'a> {
+    /// Samples this placement's source crop, ignoring its terminal destination.
+    pub placement: &'a Placement,
+    /// Window-relative device pixels, clipped to the enclosing pane.
+    pub dest: PixelRect,
+    /// Color blended over the full pane before the viewer image.
+    pub backdrop: Rgba,
+}
+
 /// One leaf of a split frame. Its bounds include any space left over by whole cells.
 #[derive(Clone, Copy)]
 pub struct PaneDraw<'a> {
     pub rect: Rect,
     /// Window-relative geometry, with cell ownership relative to this grid. The frame owns chrome.
     pub draw: DrawList<'a>,
+    pub viewer: Option<ImageViewer<'a>>,
 }
 
 /// A window's terminal grids and overlays. Panes must be disjoint and the iterator repeatable.

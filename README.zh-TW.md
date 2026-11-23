@@ -27,6 +27,8 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 在 Linux 上，程式可透過 Kitty 圖形協定顯示 PNG、RGB 與 RGBA 圖片，也可透過 SSH 直接傳送圖片資料。本機檔案傳輸（`t=f`、`t=t`）只接受 `/tmp` 或 `/dev/shm` 下位於 tmpfs、ramfs 或 devtmpfs 的一般檔案，每個檔案上限為 320 MiB。路徑必須是絕對路徑，不能經過符號連結，檔案也不能有多個硬連結。使用 `t=t` 時，sumie 只在路徑包含 `tty-graphics-protocol` 且仍指向開啟的檔案時嘗試刪檔。若圖片在其他位置，或 `/tmp` 位於磁碟上，請直接傳送圖片資料。目前不支援動畫與影片播放。
 
+若程式未指定圖片的列數或欄數，高度超過三列的圖片會顯示為縮圖。點選縮圖即可在窗格內放大檢視；若程式正在追蹤滑鼠，請按住 Shift 再點選。按 Esc 或再點一次即可關閉。在 `[images]` 中設定 `thumbnail-rows` 可調整新圖片的高度上限；設為 `0` 則保留原始大小。
+
 ## 建置與檢查
 
 建置骨架需要 Rust 1.96 以上版本。接入 libghostty-vt 後，建置該函式庫還需要 Zig 0.17。在儲存庫根目錄執行 `cargo build --workspace --locked` 建置骨架。

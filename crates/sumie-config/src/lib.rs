@@ -48,6 +48,8 @@ pub struct Config {
     pub cursor: Cursor,
     /// Default terminal colors and selection overrides.
     pub colors: Colors,
+    /// Kitty image placement settings.
+    pub images: Images,
     /// Interactive login shell settings.
     pub shell: Shell,
     /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
@@ -83,6 +85,7 @@ impl Config {
         self.font.overlay(file.font);
         self.colors.overlay(&file.colors);
         self.cursor.overlay(file.cursor);
+        self.images.thumbnail_rows = file.images.thumbnail_rows.or(self.images.thumbnail_rows);
         self.shell.overlay(&file.shell);
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
         self.scrollback_limit = file.scrollback_limit.or(self.scrollback_limit);
@@ -105,6 +108,25 @@ fn deserialize_contrast<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f6
         Err(de::Error::custom(
             "minimum contrast must be between 1.0 and 21.0",
         ))
+    }
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Images {
+    /// Maximum height of new natural-size placements, in rows. Set to 0 to disable thumbnails.
+    #[schemars(with = "u16", default = "default_thumbnail_rows")]
+    thumbnail_rows: Option<u16>,
+}
+
+const fn default_thumbnail_rows() -> u16 {
+    3
+}
+
+impl Images {
+    #[must_use]
+    pub fn thumbnail_rows(&self) -> u16 {
+        self.thumbnail_rows.unwrap_or_else(default_thumbnail_rows)
     }
 }
 
@@ -548,7 +570,7 @@ pub fn defaults_toml() -> String {
         "scrollback-limit",
         &properties["scrollback-limit"],
     );
-    for table in ["font", "colors", "cursor", "shell"] {
+    for table in ["font", "colors", "cursor", "shell", "images"] {
         use std::fmt::Write as _;
         writeln!(text, "\n[{table}]").expect("writing to a String is infallible");
         if let Some(fields) = properties[table]["properties"].as_object() {

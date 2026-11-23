@@ -53,6 +53,7 @@ pub(super) struct Pointer {
     held: [bool; 3],
     presented: Option<LayoutKey>,
     pressed_layout: Option<LayoutKey>,
+    image_click: super::viewer::Click,
 }
 
 impl Pointer {
@@ -67,6 +68,7 @@ impl Pointer {
     pub(super) fn reset(&mut self) {
         // A focus change ends the drag but does not transfer held buttons to a new pane.
         self.target = None;
+        self.image_click = super::viewer::Click::default();
     }
 
     fn cancel_stale_pane(&mut self, layout: LayoutKey) -> Option<u64> {
@@ -132,11 +134,11 @@ impl Pointer {
 }
 
 #[derive(Clone, Copy)]
-struct PointerEvent {
-    phase: Phase,
-    position: (f64, f64),
+pub(super) struct PointerEvent {
+    pub(super) phase: Phase,
+    pub(super) position: (f64, f64),
     serial: u32,
-    modifiers: Modifiers,
+    pub(super) modifiers: Modifiers,
 }
 
 impl Session {
@@ -178,8 +180,12 @@ impl Session {
         let slot = tab.index(id);
         let pane = &mut tab.panes[slot];
         if let Event::ModifiersChanged(modifiers) = event {
+            self.pane_pointer.image_click = super::viewer::Click::default();
             pane.pane
                 .pointer_modifiers_changed(input::key_modifiers(modifiers));
+            return Ok(None);
+        }
+        if pane.viewer_input(&event, &mut self.view, &mut self.routing, gpu)? {
             return Ok(None);
         }
         if matches!(
@@ -243,6 +249,15 @@ impl Session {
                 let focused = tab.tree.focused() == id;
                 let pane = tab.get_mut(id);
                 let searching = focused && pane.search.is_some();
+                if self.pane_pointer.image_click.handle(
+                    pane,
+                    &mut self.view,
+                    &mut self.routing,
+                    gpu,
+                    event,
+                )? {
+                    return Ok(());
+                }
                 let effect = pointer_effect(
                     pane,
                     &self.view,

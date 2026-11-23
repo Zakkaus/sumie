@@ -78,6 +78,10 @@ impl Mouse {
 }
 
 impl LocalPane {
+    pub(crate) fn mouse_tracking(&self) -> bool {
+        self.mouse.modes.tracking
+    }
+
     pub(crate) fn set_click_interval(&mut self, millis: u32) {
         self.mouse.state.set_click_interval(millis);
     }

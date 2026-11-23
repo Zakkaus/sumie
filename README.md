@@ -31,6 +31,8 @@ The wheel scrolls three history lines per notch. If the program tracks the mouse
 
 On Linux, programs can display PNG, RGB and RGBA images with the Kitty graphics protocol. Direct transfers work over SSH. Local file transfers (`t=f` and `t=t`) accept regular files up to 320 MiB on tmpfs, ramfs or devtmpfs under `/tmp` or `/dev/shm`. Paths must be absolute, with no symlinks or hard links. With `t=t`, sumie checks that the path contains `tty-graphics-protocol` and still names the opened file before removing it. Use a direct transfer for images elsewhere, including on a disk-backed `/tmp`. Animation and video playback are not supported.
 
+Images taller than three rows appear as thumbnails unless the program specifies a row or column count. Click a thumbnail to fit it to the pane; if the program tracks the mouse, hold Shift while clicking. Press Esc or click the viewer to close it. Set `thumbnail-rows` in `[images]` to change the height limit for new placements, or set it to `0` to keep their natural size.
+
 ## Build and checks
 
 Build the workspace from the repository root with `cargo build --workspace --locked`. The VT crate needs Rust 1.96 or later, Zig 0.17 (on `PATH` or set `ZIG`), and `curl`, `tar`, and `shasum` to fetch, verify, and unpack Ghostty on the first build.

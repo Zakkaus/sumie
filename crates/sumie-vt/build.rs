@@ -34,6 +34,8 @@ fn main() {
     install_search_bridge(&source);
     install_selection_bridge(&source);
     install_graphics_policy(&source);
+    install_thumbnail_policy(&source);
+    expose_thumbnail_flag(&source.join("src/terminal"));
     let prefix = out.join("ghostty-install");
     let mut build = Command::new(zig);
     build
@@ -160,6 +162,95 @@ fn install_graphics_policy(source: &Path) {
         text.replace_range(start..end, replacement);
         fs::write(path, text).expect("confine Ghostty file transports");
     }
+}
+
+fn install_thumbnail_policy(source: &Path) {
+    let terminal = source.join("src/terminal");
+    insert_once(
+        &terminal.join("Terminal.zig"),
+        "height_px: u32 = 0,\n",
+        "\n/// Row cap for new natural Kitty placements, or zero to leave them unchanged.\nsumie_thumbnail_rows: u16 = 0,\n",
+    );
+    insert_once(
+        &terminal.join("c/terminal.zig"),
+        "pub const Terminal = ?*TerminalWrapper;\n",
+        r"
+pub fn sumie_set_thumbnail_rows(terminal: Terminal, rows: u16) callconv(lib.calling_conv) void {
+    const wrapper = terminal orelse return;
+    wrapper.terminal.sumie_thumbnail_rows = rows;
+}
+",
+    );
+    insert_once(
+        &source.join("src/lib_vt.zig"),
+        "        @export(&c.terminal_set, .{ .name = \"ghostty_terminal_set\" });\n",
+        "        @export(&@import(\"terminal/c/terminal.zig\").sumie_set_thumbnail_rows, .{ .name = \"sumie_set_thumbnail_rows\" });\n",
+    );
+    insert_once(
+        &terminal.join("kitty/graphics_exec.zig"),
+        "        if (terminal.height_px / terminal.rows > 0) p.y_offset = cell_offset.y;\n",
+        r"
+        // Use row-only sizing before adding the placement or moving the cursor.
+        // Virtual placements take their footprint from application-written cells.
+        const rows = terminal.sumie_thumbnail_rows;
+        const cell_height = terminal.height_px / terminal.rows;
+        if (!d.virtual_placement and rows > 0 and cell_height > 0 and p.columns == 0 and p.rows == 0) {
+            const source = p.sourceRect(img);
+            const max_height = cell_height *| @as(u32, rows) - cell_offset.y;
+            if (source.width > 0 and source.height > max_height) {
+                p.rows = rows;
+                p.sumie_thumbnail = true;
+            }
+        }
+",
+    );
+    insert_once(
+        &terminal.join("kitty/graphics_storage.zig"),
+        "        z: i32 = 0,\n",
+        "\n        sumie_thumbnail: bool = false,\n",
+    );
+    insert_once(
+        &terminal.join("kitty/graphics_storage.zig"),
+        "                const calc_width = scaleDimension(calc_height, width, height);\n",
+        r"
+                // A cell-size increase must not upscale a thumbnail beyond its source.
+                if (self.sumie_thumbnail and width > 0 and height > 0 and calc_height > 0) {
+                    return .{
+                        .width = @max(1, @min(width, calc_width)),
+                        .height = @min(height, calc_height),
+                    };
+                }
+",
+    );
+    insert_once(
+        &terminal.join("render.zig"),
+        "    pub const Placement = struct {\n        kind: Kind,\n",
+        "        sumie_thumbnail: bool = false,\n",
+    );
+}
+
+fn expose_thumbnail_flag(terminal: &Path) {
+    insert_once(
+        &terminal.join("render.zig"),
+        "                .kind = kind,\n",
+        "                .sumie_thumbnail = p.sumie_thumbnail,\n",
+    );
+    let render = terminal.join("c/render.zig");
+    insert_once(
+        &render,
+        "    kitty_kind = 19,\n",
+        "    sumie_thumbnail = 20,\n",
+    );
+    insert_once(
+        &render,
+        "            .kitty_kind => KittyPlacementKind,\n",
+        "            .sumie_thumbnail => bool,\n",
+    );
+    insert_once(
+        &render,
+        "            .kitty => |kitty| out.* = kitty.kind,\n        },\n",
+        "        .sumie_thumbnail => switch (p.protocol) {\n            .kitty => |kitty| out.* = kitty.sumie_thumbnail,\n        },\n",
+    );
 }
 
 fn insert_once(path: &Path, anchor: &str, addition: &str) {

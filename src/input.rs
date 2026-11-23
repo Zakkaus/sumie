@@ -44,6 +44,7 @@ pub(crate) enum SearchTarget {
 
 struct HeldKey {
     physical: u32,
+    unshifted: Option<char>,
     pane: u64,
     generation: u64,
     reported: bool,
@@ -90,6 +91,30 @@ impl Routing {
 
     pub(crate) fn forget_pane(&mut self, id: u64) {
         self.terminal_presses.retain(|p| p.pane != id);
+    }
+
+    /// End reported presses before giving the keyboard exclusively to the image viewer.
+    pub(crate) fn release_pane_keys(
+        &mut self,
+        id: u64,
+        pane: &mut LocalPane,
+        modifiers: KeyModifiers,
+    ) -> Result<()> {
+        for key in self.terminal_presses.extract_if(.., |key| key.pane == id) {
+            if key.reported {
+                send(
+                    pane,
+                    PaneCommand::Key {
+                        physical: key.physical,
+                        unshifted: key.unshifted,
+                        action: KeyAction::Release,
+                        modifiers,
+                        text: "",
+                    },
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn terminal_key(&mut self, physical: u32, id: u64, action: KeyAction) -> bool {
@@ -243,15 +268,17 @@ fn send_input(
     let press = match command {
         PaneCommand::Key {
             physical,
+            unshifted,
             action: KeyAction::Press,
             ..
-        } => Some(physical),
+        } => Some((physical, unshifted)),
         _ => None,
     };
     let effect = send(pane, command)?;
-    if let Some(physical) = press {
+    if let Some((physical, unshifted)) = press {
         routing.terminal_presses.push(HeldKey {
             physical,
+            unshifted,
             pane: id,
             generation: routing.generation,
             reported: matches!(effect, PaneEffect::ReportedPress { .. }),

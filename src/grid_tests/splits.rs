@@ -5,8 +5,8 @@ use sumie_core::{
     splits::Rect,
 };
 use sumie_render::{
-    AtlasUpload, ChromeLayer, DrawList, Fill, FrameDraw, GlyphQuad, PaneDraw, PixelRect, Renderer,
-    Rgba, backends, wgpu,
+    AtlasUpload, ChromeLayer, DrawList, Fill, FrameDraw, GlyphQuad, ImageViewer, OffscreenTarget,
+    PaneDraw, PixelRect, Renderer, Rgba, backends, wgpu,
 };
 
 use super::{FULL, HEIGHT, WIDTH, assert_pixel, gpu_device, readback, upload_atlas};
@@ -54,6 +54,7 @@ fn check(backend: wgpu::Backends) {
             width: 16,
             height: 25,
         },
+        viewer: None,
         draw: DrawList {
             image_exclusions: [None, Some(rect([22, 10], [2, 3]))],
             glyphs: &[GlyphQuad {
@@ -72,6 +73,7 @@ fn check(backend: wgpu::Backends) {
             width: 14,
             height: 25,
         },
+        viewer: None,
         draw: DrawList {
             image_exclusions: [Some(rect([5, 10], [2, 3])), None],
             glyphs: &[GlyphQuad {
@@ -109,6 +111,36 @@ fn check(backend: wgpu::Backends) {
         );
         assert_split(&readback(&device, &queue, target.texture()));
     }
+    assert_viewer(&mut renderer, &device, &queue, &target, &mut [right, left]);
+}
+
+fn assert_viewer(
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    target: &OffscreenTarget,
+    panes: &mut [PaneDraw<'_>; 2],
+) {
+    panes[1].viewer = Some(ImageViewer {
+        placement: &panes[1].draw.images[0],
+        dest: rect([12, 24], [8, 8]),
+        backdrop: [0, 0, 0, 128],
+    });
+    renderer.draw_frame(
+        &FrameDraw {
+            background: CLEAR,
+            panes: panes.iter().copied(),
+            fills: &[],
+            chrome: None,
+        },
+        target,
+    );
+    let pixels = readback(device, queue, target.texture());
+    assert_pixel(&pixels, 4, 8, [187, 0, 0, 255], 1);
+    assert_pixel(&pixels, 15, 29, RED, 0); // Cropped source covers the glyph in the pane gutter.
+    assert_pixel(&pixels, 16, 29, CLEAR, 0);
+    assert_pixel(&pixels, 21, 8, BLUE, 0);
+    assert_pixel(&pixels, 15, 30, CLEAR, 0);
 }
 
 fn assert_split(pixels: &[u8]) {
@@ -161,8 +193,8 @@ fn image(generation: u64, color: Rgba, offset: [u32; 2], size: [u32; 2], z: i32)
     Placement {
         image: Arc::new(Image {
             generation,
-            size: [1, 1],
-            rgba: color.to_vec(),
+            size: [3, 1],
+            rgba: [YELLOW, color, CYAN].into_iter().flatten().collect(),
         }),
         image_id: 1,
         placement_id: 1,
@@ -170,7 +202,8 @@ fn image(generation: u64, color: Rgba, offset: [u32; 2], size: [u32; 2], z: i32)
         cell: [0, 0],
         offset,
         size,
-        source: [0, 0, 1, 1],
+        source: [1, 0, 1, 1],
+        thumbnail: false,
     }
 }
 

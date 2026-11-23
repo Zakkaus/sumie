@@ -32,6 +32,7 @@ const PLACEMENT_SOURCE_Y: c_int = 15;
 const PLACEMENT_SOURCE_WIDTH: c_int = 16;
 const PLACEMENT_SOURCE_HEIGHT: c_int = 17;
 const PLACEMENT_KITTY_ID: c_int = 18;
+const PLACEMENT_SUMIE_THUMBNAIL: c_int = 20;
 const IMAGE_WIDTH: c_int = 3;
 const IMAGE_HEIGHT: c_int = 4;
 const IMAGE_FORMAT: c_int = 5;
@@ -64,6 +65,7 @@ struct Geometry {
     offset: [u32; 2],
     size: [u32; 2],
     source: [u32; 4],
+    thumbnail: bool,
 }
 
 impl Graphics {
@@ -86,7 +88,7 @@ impl Graphics {
         let [offset_x, offset_y] = &mut geometry.offset;
         let [width, height] = &mut geometry.size;
         let [src_x, src_y, src_w, src_h] = &mut geometry.source;
-        let fields: [(c_int, *mut c_void); 14] = [
+        let fields: [(c_int, *mut c_void); 15] = [
             (PLACEMENT_IMAGE_ID, from_mut(&mut geometry.image_id).cast()),
             (
                 PLACEMENT_IMAGE_GENERATION,
@@ -107,6 +109,10 @@ impl Graphics {
             (PLACEMENT_SOURCE_Y, from_mut(src_y).cast()),
             (PLACEMENT_SOURCE_WIDTH, from_mut(src_w).cast()),
             (PLACEMENT_SOURCE_HEIGHT, from_mut(src_h).cast()),
+            (
+                PLACEMENT_SUMIE_THUMBNAIL,
+                from_mut(&mut geometry.thumbnail).cast(),
+            ),
         ];
         let keys = fields.map(|(key, _)| key);
         let mut outputs = fields.map(|(_, out)| out);
@@ -133,6 +139,12 @@ impl Drop for Graphics {
 }
 
 impl Terminal {
+    /// Cap new natural Kitty placements at this many rows; zero disables the cap.
+    pub fn set_thumbnail_rows(&mut self, rows: u16) {
+        // SAFETY: The terminal is live and exclusively borrowed.
+        unsafe { ffi::sumie_set_thumbnail_rows(self.raw, rows) };
+    }
+
     /// Omit images too large for the target device before allocating snapshot pixels.
     pub fn set_image_dimension_limit(&mut self, limit: u32) {
         if self.graphics.max_dimension != limit {
@@ -216,6 +228,7 @@ impl Terminal {
                 offset: geometry.offset,
                 size: geometry.size,
                 source: geometry.source,
+                thumbnail: geometry.thumbnail,
             });
         }
         Ok(placements)

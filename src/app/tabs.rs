@@ -124,6 +124,7 @@ impl PaneHost {
             exited: false,
             paste_recipient: None,
             search: None,
+            viewer: None,
             selection: Selection::default(),
             selected_text: String::new(),
             pane,

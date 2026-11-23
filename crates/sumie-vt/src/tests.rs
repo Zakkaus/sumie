@@ -118,6 +118,7 @@ fn kitty_commands_query_transmit_place_and_delete() {
         let caret = snapshot.cursor.unwrap();
         assert_eq!([caret.column, caret.row], cursor, "{command}");
         if let Some(p) = snapshot.images.first() {
+            assert!(!p.thumbnail);
             assert_eq!(&p.image.rgba[..4], &[17, 34, 51, 255]);
             if p.image_id == 7 {
                 assert_eq!((p.z, p.cell, p.size), (-1, [0, 0], [16, 32]));
@@ -125,4 +126,57 @@ fn kitty_commands_query_transmit_place_and_delete() {
             }
         }
     }
+}
+
+#[test]
+fn kitty_thumbnails_size_and_advance_before_rendering() {
+    let pixels = "AAAA".repeat(12 * 80);
+    let transmit = format!("\x1b_Ga=t,i=7,f=24,s=12,v=80,q=2;{pixels}\x1b\\");
+    for (rows, args, size, cursor, thumbnail) in [
+        (3, "", [7, 48], [1, 2], true),
+        (0, "", [12, 80], [2, 4], false),
+        (3, ",r=10", [24, 160], [3, 9], false),
+        (2, ",c=2", [16, 107], [2, 6], false),
+        (2, ",c=3,r=5", [24, 80], [3, 4], false),
+        (2, ",h=24", [12, 24], [2, 1], false),
+        (2, ",h=32", [12, 32], [2, 1], false),
+        (1, ",w=1", [1, 16], [1, 0], true),
+        (2, ",C=1", [5, 32], [0, 0], true),
+    ] {
+        let mut vt = Terminal::new(12, 12).unwrap();
+        vt.resize_pixels(12, 12, [8, 16]).unwrap();
+        vt.set_thumbnail_rows(3);
+        vt.write(transmit.as_bytes());
+        vt.set_thumbnail_rows(rows);
+        vt.write(format!("\x1b_Ga=p,i=7,p=2,q=2{args}\x1b\\@").as_bytes());
+        let snapshot = vt.render_snapshot().unwrap();
+        let [col, row] = cursor;
+        assert_eq!(snapshot.rows[row][col].text, "@", "{rows}: {args}");
+        assert_eq!(snapshot.images.len(), 1, "{rows}: {args}");
+        let placement = &snapshot.images[0];
+        assert_eq!(placement.cell, [0, 0], "{rows}: {args}");
+        assert_eq!(placement.size, size, "{rows}: {args}");
+        assert_eq!(placement.thumbnail, thumbnail, "{rows}: {args}");
+        assert_eq!(placement.image.size, [12, 80], "{rows}: {args}");
+    }
+}
+
+#[test]
+fn kitty_thumbnail_keeps_source_crop_and_offsets_after_reload() {
+    let pixels = "AAAA".repeat(12 * 80);
+    let mut vt = Terminal::new(12, 8).unwrap();
+    vt.resize_pixels(12, 8, [8, 16]).unwrap();
+    vt.set_thumbnail_rows(2);
+    let command = "a=T,i=7,p=2,f=24,s=12,v=80,x=4,y=8,w=8,h=48,X=3,Y=4,q=2";
+    vt.write(format!("\x1b_G{command};{pixels}\x1b\\").as_bytes());
+    vt.set_thumbnail_rows(0);
+    let snapshot = vt.render_snapshot().unwrap();
+    let cursor = snapshot.cursor.unwrap();
+    assert_eq!([cursor.column, cursor.row], [1, 1]);
+    let placement = &snapshot.images[0];
+    assert!(placement.thumbnail);
+    assert_eq!(placement.size, [5, 28]);
+    assert_eq!(placement.offset, [3, 4]);
+    assert_eq!(placement.source, [4, 8, 8, 48]);
+    assert_eq!(placement.image.size, [12, 80]);
 }

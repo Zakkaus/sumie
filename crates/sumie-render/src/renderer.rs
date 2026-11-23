@@ -1,4 +1,4 @@
-use std::{num::NonZeroU64, ops::Range};
+use std::num::NonZeroU64;
 
 use sumie_core::splits::Rect;
 use wgpu::util::StagingBelt;
@@ -9,6 +9,7 @@ use crate::{
     AtlasUpload, ChromeLayer, DrawList, Fill, FrameDraw, PaneDraw, PixelRect, Rgba, atlas,
 };
 
+mod panes;
 mod pipeline;
 
 use pipeline::{BoundAtlas, frame_buffer, pipeline};
@@ -36,6 +37,7 @@ struct LayeredFrame {
 struct PaneBatch {
     rect: Rect,
     base: Option<Fill>,
+    backdrop: Option<Fill>,
     start: u32,
     count: u32,
     candidates: Option<Candidates>,
@@ -204,6 +206,7 @@ impl Renderer {
             panes: std::iter::once(PaneDraw {
                 rect: full_rect(size),
                 draw: *list,
+                viewer: None,
             }),
             fills: &[],
             chrome: list.chrome,
@@ -321,40 +324,6 @@ impl Renderer {
         }
     }
 
-    fn draw_layered(
-        &self,
-        pass: &mut wgpu::RenderPass<'_>,
-        pane: &PaneBatch,
-        layers: &LayeredFrame,
-        vertex_offset: u64,
-    ) {
-        let grid = &layers.grid;
-        let images = &layers.images;
-        let vertices = self.frame.slice(vertex_offset..);
-        let start = pane.start;
-        let prefill = u32::from(pane.base.is_some());
-        let base = start + prefill + u32::from(grid.base.is_some());
-        let backgrounds = start + prefill + grid.backgrounds;
-        let text = start + prefill + grid.text;
-        let end = start + pane.count;
-        let draw_grid = |pass: &mut wgpu::RenderPass<'_>, range: Range<u32>| {
-            if !range.is_empty() {
-                self.bind_grid(pass);
-                pass.draw(0..4, range);
-            }
-        };
-        let draw_images = |pass: &mut wgpu::RenderPass<'_>, range| {
-            self.images.draw(pass, layers.exclusion, range, vertices);
-        };
-        draw_grid(pass, start..base);
-        draw_images(pass, images.start..images.below_background);
-        draw_grid(pass, base..backgrounds);
-        draw_images(pass, images.below_background..images.below_text);
-        draw_grid(pass, backgrounds..text);
-        draw_images(pass, images.below_text..images.end);
-        draw_grid(pass, text..end);
-    }
-
     fn prepare<'a>(
         &mut self,
         frame: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
@@ -369,13 +338,14 @@ impl Renderer {
         };
         self.panes.clear();
         self.images.clear();
-        let mut image_panes = 0u32;
+        let mut image_fills = 0u32;
         let dimension_limit = self.device.limits().max_texture_dimension_2d;
         for pane in frame.panes.clone() {
             let rect = clip_rect(pane.rect, full);
             let mut batch = PaneBatch {
                 rect,
                 base: None,
+                backdrop: None,
                 start: batches.grid,
                 count: 0,
                 candidates: None,
@@ -391,14 +361,12 @@ impl Renderer {
                     });
                 }
                 batch.count = pane.draw.grid_instances() + u32::from(batch.base.is_some());
-                if !pane.draw.images.is_empty() {
-                    batch.candidates = self.images.gather(
-                        &pane.draw,
-                        [full.width, full.height],
-                        rect,
-                        dimension_limit,
-                    );
-                    image_panes += u32::from(batch.candidates.is_some());
+                if !pane.draw.images.is_empty() || pane.viewer.is_some() {
+                    batch.candidates =
+                        self.images
+                            .gather(&pane, [full.width, full.height], rect, dimension_limit);
+                    image_fills += u32::from(batch.candidates.is_some())
+                        * (1 + u32::from(pane.viewer.is_some()));
                 }
             }
             batches.grid = batches
@@ -415,53 +383,12 @@ impl Renderer {
         if self.images.begin_frame() {
             let spare = self
                 .frame_limit
-                .saturating_sub(grid_limit.saturating_add(image_panes));
+                .saturating_sub(grid_limit.saturating_add(image_fills));
             let capacity = u32::try_from(u64::from(spare) * INSTANCE_SIZE / IMAGE_INSTANCE_SIZE)
                 .unwrap_or(u32::MAX);
             self.prepare_images(frame.panes.clone(), &mut batches, capacity);
         }
         batches
-    }
-
-    fn prepare_images<'a>(
-        &mut self,
-        panes: impl Iterator<Item = PaneDraw<'a>>,
-        batches: &mut Batches,
-        capacity: u32,
-    ) {
-        batches.grid = 0;
-        for (pane, batch) in panes.zip(&mut self.panes) {
-            if let Some(candidates) = batch.candidates.take()
-                && let Some(images) = self.images.admit(
-                    &self.device,
-                    &self.queue,
-                    &pane.draw,
-                    candidates,
-                    capacity - batches.images,
-                    batches.images,
-                )
-            {
-                batches.images = images.end;
-                let prefill = u32::from(batch.base.is_some());
-                let grid = pane.draw.image_layers(images.base, batch.count - prefill);
-                batch.count = grid.end + prefill;
-                let exclusion = if pane.draw.image_exclusions == [None; 2] {
-                    0
-                } else {
-                    let slot = batches.exclusions;
-                    batches.exclusions += 1;
-                    slot
-                };
-                batch.layered = Some(LayeredFrame {
-                    grid,
-                    images,
-                    exclusion,
-                });
-            }
-            batch.start = batches.grid;
-            batches.grid += batch.count;
-        }
-        self.images.finish_frame(batches.images);
     }
 
     fn prepare_chrome(&mut self, layer: Option<&ChromeLayer<'_>>) -> u32 {
@@ -504,6 +431,11 @@ impl Renderer {
             instances = rest;
             if batch.count == 0 {
                 continue;
+            }
+            if let Some(backdrop) = &batch.backdrop {
+                let (rest, last) = bytes.split_at((batch.count as usize - 1) * stride);
+                write_fills(last, std::slice::from_ref(backdrop));
+                bytes = rest;
             }
             if let Some(base) = &batch.base {
                 let (first, rest) = bytes.split_at(stride);

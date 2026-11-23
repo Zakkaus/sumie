@@ -69,6 +69,12 @@ impl Gpu {
         self.device.limits().max_texture_dimension_2d
     }
 
+    pub(crate) fn presented_thumbnails(
+        &self,
+    ) -> impl Iterator<Item = (usize, usize, sumie_render::PixelRect)> + '_ {
+        self.target.presented_thumbnail_layers()
+    }
+
     pub(crate) fn loop_handle(&self) -> SourceHandle {
         self.window.loop_handle()
     }

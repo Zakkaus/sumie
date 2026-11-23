@@ -187,6 +187,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           replace_once("if len > OUTPUT_LIMIT - self.clipboard_bytes {",
                        "if len > OUTPUT_LIMIT + 1 - self.clipboard_bytes {"),
           "test effects::tests::osc52_queues_only_bounded_standard_writes ... FAILED")
+    probe("VT ignores the Kitty thumbnail row cap", "test", "crates/sumie-vt/src/graphics.rs",
+          replace_once("sumie_set_thumbnail_rows(self.raw, rows)",
+                       "sumie_set_thumbnail_rows(self.raw, rows.min(0))"),
+          "test tests::kitty_thumbnails_size_and_advance_before_rendering ... FAILED")
     probe("missing title event", "test", "crates/sumie-vt/src/effects.rs",
           replace_once(".chain(self.title.take().map(Event::Title))",
                        ".chain(self.title.take().filter(|_| false).map(Event::Title))"),

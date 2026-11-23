@@ -7,6 +7,7 @@ pub(super) const PADDING: u32 = 12;
 pub(super) const RAIL_GAP: u32 = 4;
 pub(super) const RULE: u32 = 1;
 pub(super) const INDICATOR: u32 = 2;
+pub const IMAGE_VIEWER_MARGIN: u32 = 16;
 pub const LABEL_PX: u16 = 14;
 pub const LABEL_WEIGHT: u16 = 500;
 pub const LABEL_FAMILY: &str = "monospace";
@@ -18,6 +19,7 @@ pub(super) const LIGHT: Palette = Palette {
     accent: [0, 100, 224, 255],
     rule: [5, 54, 89, 25],
     inactive_pane: [5, 54, 89, 12],
+    overlay: [1, 18, 40, 102],
 };
 
 pub(super) const DARK: Palette = Palette {
@@ -27,4 +29,5 @@ pub(super) const DARK: Palette = Palette {
     accent: [1, 113, 227, 255],
     rule: [242, 244, 246, 25],
     inactive_pane: [17, 17, 18, 127],
+    overlay: [17, 17, 18, 153],
 };

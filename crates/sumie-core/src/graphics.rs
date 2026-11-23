@@ -39,6 +39,8 @@ pub struct Placement {
     pub size: [u32; 2],
     /// Source x, y, width and height in image pixels.
     pub source: [u32; 4],
+    /// This placement was reduced to the configured thumbnail row limit.
+    pub thumbnail: bool,
 }
 #[cfg(test)]
 mod tests {

@@ -302,6 +302,7 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn ghostty_terminal_vt_write(terminal: Terminal, data: *const u8, len: usize);
     pub fn ghostty_terminal_set(terminal: Terminal, option: c_int, value: *const c_void) -> c_int;
+    pub fn sumie_set_thumbnail_rows(terminal: Terminal, rows: u16);
     pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
     pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
     pub fn ghostty_terminal_point_from_grid_ref(

@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
+use sumie_core::graphics::{Image, Placement};
 use sumie_core::splits::Rect;
+use sumie_render::PixelRect;
 use sumie_vt::{Snapshot, Terminal};
 
 use super::{FontSettings, PaneFocus, View};
@@ -39,12 +43,13 @@ fn panes(view: &View) -> [Rect; 3] {
     [left, divider, right]
 }
 
-fn focus(id: u64, active: bool) -> PaneFocus {
+fn focus(id: u64, active: bool) -> PaneFocus<'static> {
     PaneFocus {
         id,
         active,
         dirty: true,
         window_focused: true,
+        viewer: None,
     }
 }
 
@@ -88,4 +93,63 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     let gutter = logical(left.width.cast_signed() - 1, left.y.cast_signed());
     let gutter = (gutter.0 + 0.4, gutter.1 + 0.4);
     assert!(view.link_cell(gutter, left, false).is_none());
+}
+
+#[test]
+fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
+    let mut view = view();
+    let rect = view.content_rect();
+    let [w, h] = view.cell;
+    let mut snapshot = snapshot(&view, rect);
+    let thumbnail = Placement {
+        image: Arc::new(Image {
+            generation: 1,
+            size: [1, 1],
+            rgba: vec![255; 4],
+        }),
+        image_id: 1,
+        placement_id: 1,
+        z: 0,
+        cell: [1, -1],
+        offset: [0, h - 2],
+        size: [w, h + 2],
+        source: [0, 0, 1, 1],
+        thumbnail: true,
+    };
+    snapshot.images = Arc::new(vec![
+        thumbnail.clone(),
+        Placement {
+            placement_id: 2,
+            cell: [1, 0],
+            offset: [0, 0],
+            size: [w, h / 2],
+            thumbnail: false,
+            ..thumbnail
+        },
+    ]);
+    view.build(&snapshot, None, &[], None, true);
+    // The renderer clips the two pixels above the scrolled viewport.
+    let bounds = PixelRect {
+        origin: [(rect.x + w).cast_signed(), rect.y.cast_signed()],
+        size: [w, h],
+    };
+    let covering = PixelRect {
+        size: [w, h / 2],
+        ..bounds
+    };
+    let logical_y = |y| (f64::from(w) * 0.8 + 0.4, (f64::from(y) + 0.5) * 0.8);
+    let inside = logical_y(rect.y + h - 1);
+    assert!(view.thumbnail_hit(inside, 0).is_none());
+    view.images_presented([(0, 0, bounds), (0, 1, covering)].into_iter());
+    assert_eq!(view.thumbnail_hit(inside, 0), snapshot.images.first());
+    assert!(view.thumbnail_hit(logical_y(rect.y), 0).is_none());
+    assert!(view.thumbnail_hit(logical_y(rect.y + h), 0).is_none());
+    assert!(view.thumbnail_hit(logical_y(rect.y - 1), 0).is_none());
+    assert!(view.thumbnail_hit(inside, 1).is_none());
+
+    snapshot.images = Arc::default();
+    view.build(&snapshot, None, &[], None, true);
+    assert!(view.thumbnail_hit(inside, 0).is_some());
+    view.images_presented(std::iter::empty());
+    assert!(view.thumbnail_hit(inside, 0).is_none());
 }

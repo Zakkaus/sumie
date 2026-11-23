@@ -14,6 +14,7 @@ pub struct Palette {
     pub(crate) accent: Rgba,
     pub rule: Rgba,
     pub inactive_pane: Rgba,
+    pub overlay: Rgba,
 }
 
 impl Palette {

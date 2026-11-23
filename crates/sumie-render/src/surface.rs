@@ -1,7 +1,7 @@
 use thiserror::Error;
 use wgpu::CurrentSurfaceTexture;
 
-use crate::{AtlasUpload, DrawList, FrameDraw, PaneDraw, Renderer};
+use crate::{AtlasUpload, DrawList, FrameDraw, PaneDraw, PixelRect, Renderer};
 
 #[derive(Debug, Error)]
 pub enum SurfaceError {
@@ -185,6 +185,13 @@ impl<'window> SurfaceRenderer<'window> {
         self.renderer.queue.present(frame);
         self.present_count += 1;
         Ok(SurfaceFrame::Presented { suboptimal })
+    }
+
+    /// Hit layers from the last presentation, including non-thumbnail images that can cover
+    /// a thumbnail. Items give the pane index, placement index, and clipped device bounds in
+    /// draw order.
+    pub fn presented_thumbnail_layers(&self) -> impl Iterator<Item = (usize, usize, PixelRect)> {
+        self.renderer.thumbnail_layers()
     }
 
     /// Number of calls to wgpu's present for this surface over its lifetime.

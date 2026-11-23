@@ -11,7 +11,16 @@ use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 
 use super::attributes::{self, Decorations, Ink};
 use super::overlays::{Glyphs, SearchBox};
-use super::{FontErrors, Line, grid_size, rgba};
+use super::{FontErrors, Line, ViewerPaint, grid_size, rgba};
+
+#[derive(Clone, Copy)]
+pub(crate) struct PaneFocus<'a> {
+    pub(crate) active: bool,
+    pub(crate) window_focused: bool,
+    pub(crate) id: u64,
+    pub(crate) dirty: bool,
+    pub(crate) viewer: Option<&'a Placement>,
+}
 
 pub(super) struct PanePaint {
     pub(super) id: Option<u64>,
@@ -23,6 +32,7 @@ pub(super) struct PanePaint {
     pub(super) default_background: Rgba,
     pub(super) default_backgrounds: Vec<bool>,
     pub(super) images: Option<Arc<Vec<Placement>>>,
+    pub(super) viewer: Option<ViewerPaint>,
     pub(super) image_exclusions: [Option<PixelRect>; 2],
     pub(super) glyphs: Glyphs,
     pub(super) cursor: Option<Cursor>,
@@ -41,6 +51,7 @@ impl PanePaint {
             default_background: [0, 0, 0, 255],
             default_backgrounds: Vec::new(),
             images: None,
+            viewer: None,
             image_exclusions: [None; 2],
             glyphs: Glyphs::default(),
             cursor: None,

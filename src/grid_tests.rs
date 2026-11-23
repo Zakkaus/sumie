@@ -224,6 +224,7 @@ fn assert_image_sampling(
         offset: [7, 0],
         size: [8, 8],
         source: [1, 1, 2, 2],
+        thumbnail: false,
     };
     let native = Placement {
         placement_id: 2,
