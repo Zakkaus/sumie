@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use sumie_core::mouse::{Button, MouseEvent, MousePhase};
-use sumie_core::{CellPosition, KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect};
+use sumie_core::{CellPosition, KeyAction, KeyModifiers, Pane, PaneCommand};
 use sumie_pty::{Command, Size};
 use sumie_wayland::{Event, Modifiers};
 
@@ -226,6 +226,7 @@ fn search_key(physical: u32, keysym: u32, action: KeyAction, modifiers: Modifier
 #[test]
 fn search_pointer_only_scrolls_history() {
     use MousePhase::{Cancel, Motion, Press, Release};
+    use input::{Effect, SearchAction};
 
     let mut pane = ready_pane(
         "stty -echo; printf '\\033[?1003;1006h'; seq 1 20; printf 'READY\\n'; \
@@ -243,52 +244,57 @@ fn search_pointer_only_scrolls_history() {
         modifiers: KeyModifiers::default(),
     };
     let right = Button::Right;
-    let scenarios: [&[(bool, MousePhase, bool)]; 2] = [
-        &[
-            (true, Press(right), false),
-            (true, Motion, false),
-            (true, Release(right), false),
-            (true, Cancel, false),
-        ],
-        &[
-            (false, Press(right), true),
-            (true, Motion, false),
-            (false, Release(right), true),
-            (false, Press(right), true),
-            (true, Release(right), true),
-            (true, Press(right), false),
-            (false, Release(right), false),
-        ],
+    let left = Button::Left;
+    let close_hit = |_| Some(SearchAction::Close);
+    let scenarios = [
+        (true, Press(right), false, Effect::None),
+        (true, Motion, false, Effect::None),
+        (true, Release(right), false, Effect::None),
+        (true, Cancel, false, Effect::None),
+        (false, Press(right), true, Effect::None),
+        (true, Motion, false, Effect::None),
+        (false, Release(right), true, Effect::None),
+        (false, Press(right), true, Effect::None),
+        (true, Release(right), true, Effect::None),
+        (true, Press(right), false, Effect::None),
+        (false, Release(right), false, Effect::None),
+        (
+            true,
+            Press(left),
+            false,
+            Effect::Search(SearchAction::Close),
+        ),
+        (false, Release(left), false, Effect::None),
     ];
     let mut searching = false;
-    for (next, phase, reported) in scenarios.into_iter().flatten().copied() {
+    for (next, phase, reported, expected) in scenarios {
         if next != searching {
             pane.reset_pointer_gestures();
             searching = next;
         }
-        assert!(matches!(
-            input::pointer(&mut pane, searching, event(phase)).unwrap(),
-            PaneEffect::None
-        ));
+        assert_eq!(
+            input::pointer(&mut pane, searching, event(phase), close_hit).unwrap(),
+            expected
+        );
         assert_eq!(pane.pty.input_fd().is_some(), reported);
         assert!(pane.pty.flush_input().unwrap());
     }
 
     let wheel = event(MousePhase::Wheel(-120.0));
     assert!(pane.terminal.at_bottom().unwrap());
-    assert!(matches!(
-        input::pointer(&mut pane, true, wheel).unwrap(),
-        PaneEffect::ViewportChanged
-    ));
+    assert_eq!(
+        input::pointer(&mut pane, true, wheel, |_| None).unwrap(),
+        Effect::ViewportChanged
+    );
     assert!(!pane.terminal.at_bottom().unwrap());
     assert!(pane.pty.input_fd().is_none());
 
     pane.command(PaneCommand::Text(b"\n")).unwrap();
     assert!(pane.pty.flush_input().unwrap());
     wait_for_line(&mut pane, "ALT");
-    input::pointer(&mut pane, true, wheel).unwrap();
+    input::pointer(&mut pane, true, wheel, |_| None).unwrap();
     assert!(pane.pty.input_fd().is_none());
-    input::pointer(&mut pane, false, wheel).unwrap();
+    input::pointer(&mut pane, false, wheel, |_| None).unwrap();
     assert!(
         pane.pty.input_fd().is_some(),
         "1007 must encode arrows outside search"

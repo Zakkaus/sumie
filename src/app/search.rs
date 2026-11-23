@@ -191,14 +191,14 @@ impl Session {
                 self.search = Some(Bar::open(&self.pane.terminal)?);
                 self.view.preedit.clear();
                 self.view.search_bar = Some(String::new());
-                self.resize_grid()?;
             }
             SearchAction::Close => {
                 let bar = self.search.take().expect("search bar is open");
                 self.view.search_bar = None;
                 self.view.search_highlights.clear();
                 self.view.preedit.clear();
-                self.resize_grid()?;
+                self.snapshot_dirty = true;
+                self.selection = sumie_core::Selection::default();
                 let vt = &mut self.pane.terminal;
                 if bar.opening_screen == vt.screen_id()? {
                     if let Some(pin) = bar.opening_top {

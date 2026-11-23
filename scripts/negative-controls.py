@@ -227,6 +227,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("self.enabled_at = Some(self.serial.wrapping_add(1));",
                            "self.enabled_at = Some(self.serial);"),
               "test ime::tests::reenable_discards_pending_and_old_serials_across_wrap ... FAILED")
+        probe("search reserves a terminal row", "test", "src/view.rs",
+              replace_once("Size {\n            cols,\n            rows,",
+                           "Size {\n            cols,\n            rows: rows - u16::from(self.search_bar.is_some()),"),
+              "test grid_tests::search_keeps_terminal_dimensions ... FAILED")
         probe("search wheel reaches terminal mouse routing", "test", "src/input.rs",
               replace_once("return pane.search_pointer(event);",
                            "if !matches!(event.phase, sumie_core::mouse::MousePhase::Wheel(_)) {\n"

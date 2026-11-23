@@ -19,6 +19,7 @@ use crate::Result;
 use attributes::{Decorations, Ink, glyph_quad};
 
 mod overlays;
+use overlays::{Glyphs, SearchBox};
 
 pub(crate) struct View {
     font: FontSystem,
@@ -33,11 +34,12 @@ pub(crate) struct View {
     pub(crate) search_bar: Option<String>,
     /// Viewport row, inclusive first/last columns, and whether this is the current match.
     pub(crate) search_highlights: Vec<(u16, u16, u16, bool)>,
+    search_box: Option<SearchBox>,
     grid: [u32; 2],
     backgrounds: Vec<Rgba>,
     selection_foreground: Option<Rgb>,
     selection_background: Option<Rgb>,
-    glyphs: Vec<GlyphQuad>,
+    glyphs: Glyphs,
     atlas_dirty: Vec<AtlasRect>,
     cursor: Option<Cursor>,
     line: Line,
@@ -92,10 +94,11 @@ impl View {
             preedit: String::new(),
             search_bar: None,
             search_highlights: Vec::new(),
+            search_box: None,
             backgrounds: Vec::new(),
             selection_foreground: colors.selection_foreground(),
             selection_background: colors.selection_background(),
-            glyphs: Vec::new(),
+            glyphs: Glyphs::default(),
             atlas_dirty: Vec::new(),
             cursor: None,
             line: Line::default(),
@@ -112,6 +115,7 @@ impl View {
         self.logical = logical;
         self.device = device;
         self.grid = grid_size(device, self.cell)?;
+        self.search_box = None;
         Ok(())
     }
 
@@ -124,6 +128,7 @@ impl View {
         let font = settings.at_scale(self.scale)?;
         let cell = [font.metrics().width, font.metrics().height];
         self.grid = grid_size(self.device, cell)?;
+        self.search_box = None;
         self.cell = cell;
         self.font = font;
         self.font_settings = settings;
@@ -136,13 +141,12 @@ impl View {
     }
 
     pub(crate) fn size(&self) -> Size {
-        let grid = self.terminal_grid();
-        let [cols, rows] = grid.map(|value| u16::try_from(value).expect("validated grid"));
-        let [width_px, height_px] = [
-            self.device[0],
-            self.device[1] - (self.grid[1] - grid[1]) * self.cell[1],
-        ]
-        .map(|value| u16::try_from(value).expect("validated device size"));
+        let [cols, rows] = self
+            .grid
+            .map(|value| u16::try_from(value).expect("validated grid"));
+        let [width_px, height_px] = self
+            .device
+            .map(|value| u16::try_from(value).expect("validated device size"));
         Size {
             cols,
             rows,
@@ -163,12 +167,11 @@ impl View {
                 pos as f32
             }
         });
-        let grid = self.terminal_grid();
         let cell = |axis: usize| {
             let index = f64::from(pixel[axis]) / f64::from(self.cell[axis]);
             #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             {
-                index.clamp(0.0, f64::from(grid[axis] - 1)) as u16
+                index.clamp(0.0, f64::from(self.grid[axis] - 1)) as u16
             }
         };
         (
@@ -188,11 +191,15 @@ impl View {
         focused: bool,
     ) {
         self.backgrounds.clear();
-        self.glyphs.clear();
-        let search_open = self.search_bar.is_some();
-        let rows = (self.grid[1] - u32::from(search_open)) as usize;
-        let banner = banner.filter(|_| rows != 0);
-        let overlay = (!search_open)
+        self.glyphs.quads.clear();
+        self.search_box = self
+            .search_bar
+            .as_ref()
+            .map(|_| SearchBox::place(self.grid, banner.is_some(), &self.search_highlights));
+        self.glyphs.cover = self.search_box.map(|b| b.bounds(self.cell));
+        let overlay = self
+            .search_box
+            .is_none()
             .then(|| self.composition(snapshot))
             .flatten()
             .filter(|&(row, _, _)| row != 0 || banner.is_none());
@@ -203,7 +210,7 @@ impl View {
             snapshot,
             selection,
             overlay,
-            usize::from(banner.is_some())..rows,
+            usize::from(banner.is_some())..self.grid[1] as usize,
         );
         if let Some((row, column, _)) = overlay {
             self.composition.draw(
@@ -215,8 +222,9 @@ impl View {
                 FontStyle::default(),
             );
         }
-        if search_open {
-            self.draw_search(snapshot, banner.is_some());
+        if let Some(search_box) = self.search_box {
+            self.glyphs.cover = None;
+            self.draw_search(snapshot, search_box, banner.is_some());
         } else {
             self.set_cursor(snapshot, overlay, banner.is_some(), focused);
         }
@@ -377,7 +385,7 @@ impl View {
             cell_size: self.cell,
             origin: [0, 0],
             backgrounds: &self.backgrounds,
-            glyphs: &self.glyphs,
+            glyphs: &self.glyphs.quads,
             cursor: self.cursor.filter(|_| !cursor_hidden),
         }
     }
@@ -450,7 +458,7 @@ impl Line {
         &mut self,
         font: &mut FontSystem,
         errors: &mut FontErrors,
-        glyphs: &mut Vec<GlyphQuad>,
+        glyphs: &mut Glyphs,
         [col, row]: [u32; 2],
         foreground: Rgba,
         face: FontStyle,

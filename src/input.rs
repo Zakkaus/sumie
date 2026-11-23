@@ -1,4 +1,4 @@
-use sumie_core::mouse::MouseEvent;
+use sumie_core::mouse::{Button, MouseEvent, MousePhase, SelectStep};
 use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect, Shortcut, Shortcuts};
 use sumie_wayland::Event;
 
@@ -10,6 +10,7 @@ pub(crate) enum Effect {
     Preedit(String),
     ReadClipboard,
     Copy(u32),
+    Select(SelectStep),
     ViewportChanged,
     Search(SearchAction),
 }
@@ -170,7 +171,23 @@ pub(crate) fn pointer(
     pane: &mut LocalPane,
     searching: bool,
     event: MouseEvent,
-) -> Result<PaneEffect> {
+    hit: impl FnOnce([f32; 2]) -> Option<SearchAction>,
+) -> Result<Effect> {
+    if searching
+        && matches!(event.phase, MousePhase::Press(Button::Left))
+        && let Some(action) = hit(event.pixel)
+    {
+        // The pane ignores the release because it never received this press.
+        return Ok(Effect::Search(action));
+    }
+    Ok(match send_pointer(pane, searching, event)? {
+        PaneEffect::ViewportChanged => Effect::ViewportChanged,
+        PaneEffect::Select(step) => Effect::Select(step),
+        _ => Effect::None,
+    })
+}
+
+fn send_pointer(pane: &mut LocalPane, searching: bool, event: MouseEvent) -> Result<PaneEffect> {
     if searching {
         return pane.search_pointer(event);
     }
@@ -211,7 +228,6 @@ pub(crate) fn key_modifiers(modifiers: sumie_wayland::Modifiers) -> KeyModifiers
 }
 
 pub(crate) fn mouse_phase(phase: sumie_wayland::PointerPhase) -> sumie_core::mouse::MousePhase {
-    use sumie_core::mouse::{Button, MousePhase};
     use sumie_wayland::{PointerButton, PointerPhase};
     let button = |b| match b {
         PointerButton::Left => Button::Left,

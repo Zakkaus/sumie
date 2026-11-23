@@ -325,10 +325,12 @@ impl Session {
                 pixel,
                 modifiers: input::key_modifiers(modifiers),
             };
-            match input::pointer(&mut self.pane, searching, mouse)? {
-                PaneEffect::ViewportChanged => input::Effect::ViewportChanged,
-                PaneEffect::Select(step) if self.select(step, cell)? => input::Effect::Copy(serial),
-                _ => return Ok(()),
+            let hit = |pixel| self.view.search_hit(pixel);
+            match input::pointer(&mut self.pane, searching, mouse, hit)? {
+                input::Effect::Select(step) if self.select(step, cell)? => {
+                    input::Effect::Copy(serial)
+                }
+                effect => effect,
             }
         } else {
             input::route(&mut self.pane, &mut self.routing, searching, event)?

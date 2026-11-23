@@ -10,6 +10,25 @@ use sumie_render::{
 #[cfg(target_os = "linux")]
 mod attributes;
 
+#[cfg(target_os = "linux")]
+#[test]
+fn search_keeps_terminal_dimensions() {
+    use crate::view::{FontSettings, View};
+
+    let config = sumie_config::Config::default();
+    let font = FontSettings::from_config(config.font).unwrap();
+    let mut view = View::new(150, [640, 320], [800, 400], font, &config.colors).unwrap();
+    let dimensions = |view: &View| {
+        let size = view.size();
+        [size.cols, size.rows, size.width_px, size.height_px]
+    };
+    let original = dimensions(&view);
+    for bar in [Some(String::new()), None] {
+        view.search_bar = bar;
+        assert_eq!(dimensions(&view), original);
+    }
+}
+
 const WIDTH: u32 = 36;
 const HEIGHT: u32 = 34;
 const CELL: [u32; 2] = [8, 16];
