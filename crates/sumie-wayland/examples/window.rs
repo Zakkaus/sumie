@@ -42,7 +42,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(target_os = "linux")]
 fn log_event(event: &Event) {
-    tracing::info!(event = ?EventMetadata(event));
+    if !matches!(event, Event::FrameReady | Event::Presentation(_)) {
+        tracing::info!(event = ?EventMetadata(event));
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -77,6 +79,7 @@ impl fmt::Debug for EventMetadata<'_> {
                 .field("scale", scale)
                 .finish(),
             Event::FrameReady => f.write_str("FrameReady"),
+            Event::Presentation(feedback) => fmt::Debug::fmt(feedback, f),
             Event::CloseRequested => f.write_str("CloseRequested"),
             Event::ClipboardText(text) => write!(f, "ClipboardText {{ bytes: {} }}", text.len()),
             Event::Key {

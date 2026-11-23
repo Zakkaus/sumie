@@ -112,6 +112,7 @@ impl App {
     fn handle_event(&mut self, event: Event, handle: &SourceHandle) -> Result<bool> {
         match event {
             Event::CloseRequested => return Ok(true),
+            Event::Presentation(feedback) => tracing::trace!(?feedback, "presentation feedback"),
             Event::Resized {
                 device: (width, height),
                 scale,
@@ -337,7 +338,7 @@ impl Session {
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
                 self.frame_dirty = false;
-                tracing::debug!(count = gpu.present_count(), "presented terminal frame");
+                tracing::debug!(count = gpu.present_count(), "submitted terminal frame");
                 if suboptimal {
                     gpu.resize(self.view.device);
                 }

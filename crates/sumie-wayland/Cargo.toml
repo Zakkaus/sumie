@@ -7,7 +7,7 @@ license.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, features = ["time"] }
 smithay-client-toolkit.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

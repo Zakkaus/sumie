@@ -5,6 +5,8 @@ use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WaylandWindowHandle,
     WindowHandle,
 };
+#[cfg(debug_assertions)]
+use smithay_client_toolkit::reexports::csd_frame::WindowState;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     data_device_manager::DataDeviceManagerState,
@@ -37,8 +39,11 @@ use smithay_client_toolkit::{
 use wayland_backend::client::Backend;
 use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3;
 
+#[cfg(debug_assertions)]
+use crate::presentation::PresentLog;
 use crate::{
-    CursorRect, Event, clipboard::Clipboard, keyboard::Keyboard, pointer::Pointer, scale::Scale,
+    CursorRect, Event, clipboard::Clipboard, keyboard::Keyboard, pointer::Pointer,
+    presentation::Presentation, scale::Scale,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +59,9 @@ pub enum ConnectError {
     },
     #[error("set up Wayland event loop: {0}")]
     Register(#[from] calloop::Error),
+    #[cfg(debug_assertions)]
+    #[error("open presentation log: {0}")]
+    PresentLog(#[source] std::io::Error),
 }
 
 #[derive(Clone, Debug)]
@@ -228,7 +236,7 @@ impl Platform {
         self.state.can_present()
     }
 
-    /// Arm the next frame callback and stage buffer geometry for presentation.
+    /// Arm the frame callback and optional presentation feedback, and stage buffer geometry.
     /// Call only when a buffer is ready, immediately before presenting it. A successful
     /// call must be followed by a buffer commit before dispatching or changing IME state.
     #[must_use]
@@ -276,6 +284,9 @@ impl Platform {
 // SCTK's handler traits return proxies. Keep their implementor out of the public API.
 pub(crate) struct State {
     scale: Scale,
+    pub(crate) presentation: Option<Presentation>,
+    #[cfg(debug_assertions)]
+    pub(crate) present_log: Option<PresentLog>,
     pub(crate) window: Arc<WindowOwner>,
     pub(crate) qh: QueueHandle<Self>,
     pub(crate) loop_handle: LoopHandle<'static, Self>,
@@ -323,6 +334,10 @@ impl State {
         window.set_app_id("sumie");
         window.commit();
 
+        let presentation = Presentation::bind(&globals, &qh);
+        #[cfg(debug_assertions)]
+        let present_log =
+            PresentLog::open(presentation.is_some()).map_err(ConnectError::PresentLog)?;
         let text_input_manager = globals.bind(&qh, 1..=2, ()).ok();
         if text_input_manager.is_none() {
             tracing::info!("text-input-v3 unavailable; keyboard input only");
@@ -336,6 +351,9 @@ impl State {
             .map_err(|err| err.error)?;
         Ok(Self {
             scale,
+            presentation,
+            #[cfg(debug_assertions)]
+            present_log,
             window,
             registry: RegistryState::new(&globals),
             output: OutputState::new(&globals, &qh),
@@ -383,8 +401,11 @@ impl State {
             self.scale.apply(self.wl_surface(), self.logical);
             self.geometry_dirty = false;
         }
-        let surface = self.wl_surface();
+        let surface = self.window.wl_surface();
         surface.frame(&self.qh, FrameCallbackData(surface.clone()));
+        if let Some(presentation) = &mut self.presentation {
+            presentation.request(surface);
+        }
         self.frame_pending = true;
     }
 
@@ -448,6 +469,10 @@ impl WindowHandler for State {
             tracing::info!(
                 "server-side decorations unavailable; P0 window has no client-side decorations"
             );
+        }
+        #[cfg(debug_assertions)]
+        if let Some(log) = &mut self.present_log {
+            log.visibility(configure.state.contains(WindowState::SUSPENDED));
         }
         self.events.push_back(Event::Configured {
             logical,

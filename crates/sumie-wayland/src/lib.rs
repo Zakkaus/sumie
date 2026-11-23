@@ -7,10 +7,12 @@ mod ime;
 mod keyboard;
 mod platform;
 mod pointer;
+mod presentation;
 mod scale;
 
 pub use ime::CursorRect;
 pub use platform::{ConnectError, Platform, ShmPresentError, SourceHandle, WindowOwner};
+pub use presentation::PresentationFeedback;
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 /// Events in dispatch order. Text input is sensitive; do not log its contents.
@@ -29,6 +31,7 @@ pub enum Event {
         scale: u32,
     },
     FrameReady,
+    Presentation(PresentationFeedback),
     CloseRequested,
     ClipboardText(String),
     Key {

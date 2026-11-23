@@ -8,14 +8,16 @@ baseline records those metrics for manual comparison; it is not a merge gate.
 
 ### Reproduce
 
-On the baseline host, run from the repository root. The harness requires the
-[private KWin runner](scripts/nested/README.md), libwayland 1.26 timestamp format,
-Ghostty at `/scratch/ssd/sumie-p0/run-ghostty.sh`, and an existing artifact
-directory outside the checkout. Build before starting the benchmark so the build
-cannot affect the measurements.
+On the baseline host, run from the repository root. The harness uses virtual
+KWin at scale 1.25 in a private runtime without a D-Bus session. It requires
+`/scratch/ram`, KWin, `kscreen-doctor`, Python 3.11+, GNU `timeout`, libwayland
+1.26 timestamp format, Ghostty at `/scratch/ssd/sumie-p0/run-ghostty.sh`, and an
+existing artifact directory outside the checkout. Build before the benchmark so
+the build cannot affect the measurements.
 
 ```sh
-CARGO_TARGET_DIR=/scratch/ssd/sumie-target-baseline cargo build --release --locked
+export CARGO_TARGET_DIR=/scratch/ssd/sumie-target-baseline
+cargo build --release --locked
 scripts/perf/baseline.sh /absolute/path/to/artifacts
 ```
 
@@ -26,6 +28,9 @@ same private KWin instance without clearing caches. Each client uses the
 comparison font and palette, prints one line, and sleeps. Ghostty sets
 `cursor-style-blink=false` and disables shell integration; the workload selects
 a steady block cursor in both terminals. sumie does not implement cursor blink.
+
+Pass `--startup-only` after the artifact directory to repeat the ten startup
+samples without collecting idle or memory results.
 
 ### Measurement
 
@@ -51,7 +56,7 @@ baseline update when enforced. Idle is an exact zero-count requirement, not a
 statistical band. The virtual refresh period is not the resolution of the
 protocol timestamps.
 
-### Recorded run
+### Original commit-based run
 
 - Date: 2026-11-23. sumie commit: `797f9581467a24da98fecfbedd2bf0f41ac03738`.
 - Host: AMD Ryzen 9 9950X3D; NVIDIA GeForce RTX 4080 SUPER, driver `620.73.04`;
@@ -81,3 +86,51 @@ The idle count measures submissions, not visible changes.
 The startup difference is within the reference band. Both sumie memory means
 are below the lower edge. All ten sumie idle counts were zero; Ghostty recorded
 99–100 commits per run.
+
+### Presentation-based startup run
+
+On 2026-11-23, both clients received `presented` on the terminal surface in
+all ten measured launches. The run used the same host and virtual output as
+above, with sumie built in release mode with debug assertions and no debug
+presentation log. The one-minute host load average at sample end was
+31.54–33.76. This run measured startup only.
+
+| Metric | Ghostty mean | sumie mean | Ghostty sample SD | Two-sided tolerance |
+| --- | ---: | ---: | ---: | ---: |
+| Startup to first presented (ms) | 171.363 | 163.374 | 11.495 | ±22.990 |
+
+## Presentation stall watchdog
+
+From the repository root, build an optimized binary with debug assertions and
+run the check in the same private KWin setup as the startup baseline:
+
+```sh
+export CARGO_TARGET_DIR=/scratch/ssd/sumie-target-present
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo build --release --locked
+SUMIE_BIN="$CARGO_TARGET_DIR/release/sumie" scripts/perf/stall.sh /absolute/path/to/artifacts
+```
+
+The check defaults to 60 seconds. It launches one sumie window with a pane that
+prints a changing line every 10 ms. The independent watchdog starts before sumie
+launches, includes the wait for the first visible `presented` and the tail at
+test end, and fails if any visible gap exceeds 100 ms. It counts `discarded`
+feedback without resetting the clock. It reports intervals that xdg-shell marks
+as suspended separately and excludes them from the gap. It treats the isolated
+window as visible before its first frame unless the compositor marks it suspended.
+
+`SUMIE_PRESENT_LOG` appends feedback receipt and visibility transitions with
+`CLOCK_MONOTONIC` timestamps in nanoseconds. The log is available only in
+builds with debug assertions. The watchdog keeps it, the client log, and the
+virtual output mode under the supplied artifact directory.
+
+The full gate is four hours (`14400` seconds) with 20 panes producing output.
+Pass `14400` as the second argument to extend the single-pane check to four
+hours; that run does not cover the full gate's 20-pane workload.
+
+### Recorded 60-second check
+
+On 2026-11-23, virtual KWin 6.8.3 at 60 Hz and scale 1.25 reported 3,586
+`presented`, zero `discarded`, and no suspended intervals. The one-minute host
+load average at launch was 31.54. The check **failed**: launch to first
+`presented` took 194.098 ms, the maximum visible gap. After the first
+`presented`, the maximum was 52.826 ms. This run did not cover the four-hour gate.

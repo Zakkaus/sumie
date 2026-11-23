@@ -1,8 +1,7 @@
 use std::collections::VecDeque;
 
 use smithay_client_toolkit::reexports::client::{
-    Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
-    protocol::{wl_seat::WlSeat, wl_surface::WlSurface},
+    Connection, Dispatch, Proxy, QueueHandle, delegate_noop, protocol::wl_seat::WlSeat,
 };
 use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3::ZwpTextInputManagerV3,
@@ -103,22 +102,20 @@ impl TextInput {
         }
     }
 
-    fn commit(&mut self, surface: &WlSurface) {
+    fn commit(&mut self) -> bool {
         self.proxy.commit();
         self.state.serial = self.state.serial.wrapping_add(1);
-        if self.proxy.version() >= 2 {
-            surface.commit();
-        }
+        self.proxy.version() >= 2
     }
 
-    fn enter(&mut self, surface: &WlSurface, desired: Option<CursorRect>) {
+    fn enter(&mut self, desired: Option<CursorRect>) -> bool {
         self.entered = true;
         self.state.enable();
         self.proxy.enable();
         self.proxy
             .set_content_type(ContentHint::None, ContentPurpose::Terminal);
         self.send_cursor(desired);
-        self.commit(surface);
+        self.commit()
     }
 
     fn leave(&mut self, events: &mut VecDeque<Event>) {
@@ -136,10 +133,8 @@ impl TextInput {
         true
     }
 
-    fn update_cursor(&mut self, surface: &WlSurface, desired: Option<CursorRect>) {
-        if self.send_cursor(desired) {
-            self.commit(surface);
-        }
+    fn update_cursor(&mut self, desired: Option<CursorRect>) -> bool {
+        self.send_cursor(desired) && self.commit()
     }
 }
 
@@ -156,8 +151,19 @@ impl State {
             .keyboard
             .as_mut()
             .and_then(|keyboard| keyboard.ime.as_mut())
+            && ime.update_cursor(Some(rect))
         {
-            ime.update_cursor(self.window.wl_surface(), Some(rect));
+            self.commit_ime_surface();
+        }
+    }
+
+    fn commit_ime_surface(&mut self) {
+        if self
+            .presentation
+            .as_mut()
+            .is_none_or(|presentation| !presentation.defer_surface_commit())
+        {
+            self.wl_surface().commit();
         }
     }
 
@@ -170,8 +176,11 @@ impl State {
         {
             // If text-input leave arrives first, the compositor already disabled the object.
             ime.proxy.disable();
-            ime.commit(self.window.wl_surface());
+            let commit_surface = ime.commit();
             ime.state.disable(&mut self.events);
+            if commit_surface {
+                self.commit_ime_surface();
+            }
         }
     }
 
@@ -206,12 +215,13 @@ impl Dispatch<ZwpTextInputV3, ()> for State {
             return;
         }
         let surface = state.window.wl_surface();
-        match event {
+        let commit_surface = match event {
             zwp_text_input_v3::Event::Enter { surface: entered } if &entered == surface => {
-                ime.enter(surface, state.cursor_rect);
+                ime.enter(state.cursor_rect)
             }
             zwp_text_input_v3::Event::Leave { surface: left } if &left == surface => {
                 ime.leave(&mut state.events);
+                false
             }
             zwp_text_input_v3::Event::PreeditString {
                 text,
@@ -222,18 +232,24 @@ impl Dispatch<ZwpTextInputV3, ()> for State {
                 ime.state.pending.cursor = u32::try_from(cursor_begin)
                     .ok()
                     .zip(u32::try_from(cursor_end).ok());
+                false
             }
             zwp_text_input_v3::Event::CommitString { text } if ime.entered => {
                 ime.state.pending.commit = text;
+                false
             }
             zwp_text_input_v3::Event::Done { serial } if ime.entered => {
                 ime.state.done(serial, &mut state.events);
-                ime.update_cursor(surface, state.cursor_rect);
+                ime.update_cursor(state.cursor_rect)
             }
             zwp_text_input_v3::Event::DeleteSurroundingText { .. } => {
                 tracing::debug!("ignoring IME request to delete surrounding text");
+                false
             }
-            _ => {}
+            _ => false,
+        };
+        if commit_surface {
+            state.commit_ime_surface();
         }
     }
 }
