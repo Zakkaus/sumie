@@ -1,8 +1,10 @@
+use sumie_core::mouse::MouseEvent;
 use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect, Shortcut, Shortcuts};
 use sumie_wayland::Event;
 
-use crate::{Error, Result};
+use crate::{Error, Result, pane::LocalPane};
 
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub(crate) enum Effect {
     None,
     Preedit(String),
@@ -12,6 +14,7 @@ pub(crate) enum Effect {
     Search(SearchAction),
 }
 
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub(crate) enum SearchAction {
     Open,
     Close,
@@ -20,20 +23,79 @@ pub(crate) enum SearchAction {
     Navigate { newer: bool },
 }
 
+#[derive(Default)]
+pub(crate) struct Routing {
+    shortcuts: Shortcuts,
+    generation: u64,
+    repeating_search_key: Option<u32>,
+}
+
+impl Routing {
+    pub(crate) fn change_recipient(&mut self) -> u64 {
+        self.generation = self.generation.wrapping_add(1);
+        self.repeating_search_key = None;
+        self.generation
+    }
+
+    fn search_key(
+        &mut self,
+        physical: u32,
+        keysym: u32,
+        modifiers: KeyModifiers,
+        text: Option<String>,
+        action: KeyAction,
+        shortcut: Option<Shortcut>,
+    ) -> Effect {
+        match action {
+            KeyAction::Press => {
+                self.shortcuts.capture(physical);
+                match shortcut {
+                    Some(Shortcut::Paste) => Effect::ReadClipboard,
+                    Some(_) => Effect::None,
+                    None => {
+                        let effect = search_key(keysym, modifiers, text);
+                        if matches!(effect, Effect::Search(_)) {
+                            self.repeating_search_key = Some(physical);
+                        }
+                        effect
+                    }
+                }
+            }
+            KeyAction::Repeat if self.repeating_search_key == Some(physical) => {
+                search_key(keysym, modifiers, text)
+            }
+            KeyAction::Release if self.repeating_search_key == Some(physical) => {
+                self.repeating_search_key = None;
+                Effect::None
+            }
+            _ => Effect::None,
+        }
+    }
+}
+
 pub(crate) fn route(
     pane: &mut impl Pane<Error = Error>,
-    shortcuts: &mut Shortcuts,
+    routing: &mut Routing,
     searching: bool,
     event: Event,
 ) -> Result<Effect> {
+    if matches!(
+        &event,
+        Event::ImePreedit { generation, .. }
+            | Event::ImeCommit { generation, .. }
+            | Event::ClipboardText { generation, .. }
+            if *generation != routing.generation
+    ) {
+        return Ok(Effect::None);
+    }
     let key_text;
     let command = match event {
         Event::ImePreedit { text, .. } => return Ok(Effect::Preedit(text)),
-        Event::ImeCommit { text } | Event::ClipboardText(text) if searching => {
+        Event::ImeCommit { text, .. } | Event::ClipboardText { text, .. } if searching => {
             return Ok(Effect::Search(SearchAction::Insert(text)));
         }
-        Event::ImeCommit { ref text } => PaneCommand::Text(text.as_bytes()),
-        Event::ClipboardText(text) => PaneCommand::Paste(text),
+        Event::ImeCommit { ref text, .. } => PaneCommand::Text(text.as_bytes()),
+        Event::ClipboardText { text, .. } => PaneCommand::Paste(text),
         Event::Key {
             serial,
             physical,
@@ -52,13 +114,11 @@ pub(crate) fn route(
                 KeyAction::Release
             };
             let symbol = xkeysym::Keysym::new(keysym).key_char();
-            let shortcut = shortcuts.match_key(physical, symbol, modifiers, action);
+            let shortcut = routing
+                .shortcuts
+                .match_key(physical, symbol, modifiers, action);
             if searching {
-                if !pressed && !repeat {
-                    return Ok(Effect::None);
-                }
-                shortcuts.capture(physical);
-                return Ok(search_key(keysym, modifiers, utf8));
+                return Ok(routing.search_key(physical, keysym, modifiers, utf8, action, shortcut));
             }
             match shortcut {
                 Some(Shortcut::Copy) => return Ok(Effect::Copy(serial)),
@@ -106,10 +166,18 @@ fn search_key(keysym: u32, modifiers: KeyModifiers, text: Option<String>) -> Eff
     Effect::Search(action)
 }
 
-pub(crate) fn send(
-    pane: &mut impl Pane<Error = Error>,
-    command: PaneCommand<'_>,
+pub(crate) fn pointer(
+    pane: &mut LocalPane,
+    searching: bool,
+    event: MouseEvent,
 ) -> Result<PaneEffect> {
+    if searching {
+        return pane.search_pointer(event);
+    }
+    send(pane, PaneCommand::Mouse(event))
+}
+
+fn send(pane: &mut impl Pane<Error = Error>, command: PaneCommand<'_>) -> Result<PaneEffect> {
     let paste_len = match &command {
         PaneCommand::Paste(text) => Some(text.len()),
         _ => None,

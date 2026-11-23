@@ -30,7 +30,7 @@ struct Batch {
 struct ImeState {
     serial: u32,
     wait_for_match: bool,
-    enabled: bool,
+    enabled_at: Option<u32>,
     sent_rect: Option<CursorRect>,
     pending: Batch,
     has_preedit: bool,
@@ -38,46 +38,58 @@ struct ImeState {
 
 impl ImeState {
     fn enable(&mut self) {
-        self.enabled = true;
+        self.enabled_at = Some(self.serial.wrapping_add(1));
         self.wait_for_match = false;
         self.sent_rect = None;
+        self.pending = Batch::default();
+        self.has_preedit = false;
     }
 
-    fn disable(&mut self, events: &mut VecDeque<Event>) {
-        self.enabled = false;
+    fn disable(&mut self, generation: u64, events: &mut VecDeque<Event>) {
+        self.enabled_at = None;
+        self.pending = Batch::default();
         if std::mem::take(&mut self.has_preedit) {
             events.push_back(Event::ImePreedit {
                 text: String::new(),
                 cursor: None,
+                generation,
             });
         }
     }
 
     fn next_cursor(&mut self, desired: Option<CursorRect>) -> Option<CursorRect> {
         let rect = desired?;
-        if !self.enabled || self.wait_for_match || self.sent_rect == Some(rect) {
+        if self.enabled_at.is_none() || self.wait_for_match || self.sent_rect == Some(rect) {
             return None;
         }
         self.sent_rect = Some(rect);
         Some(rect)
     }
 
-    fn done(&mut self, serial: u32, events: &mut VecDeque<Event>) {
-        // A stale serial defers outgoing state, never incoming text.
-        self.wait_for_match = serial != self.serial;
+    fn done(&mut self, serial: u32, generation: u64, events: &mut VecDeque<Event>) {
         let Batch {
             commit,
             preedit,
             cursor,
         } = std::mem::take(&mut self.pending);
-        if let Some(text) = commit {
-            events.push_back(Event::ImeCommit { text });
+        let Some(enabled_at) = self.enabled_at else {
+            return;
+        };
+        // Only a serial from this recipient may apply text. A mismatch within
+        // that interval still applies the batch, but defers outgoing state.
+        if self.serial.wrapping_sub(serial) > self.serial.wrapping_sub(enabled_at) {
+            return;
         }
-        let has_preedit = self.enabled && !preedit.is_empty();
+        self.wait_for_match = serial != self.serial;
+        if let Some(text) = commit {
+            events.push_back(Event::ImeCommit { text, generation });
+        }
+        let has_preedit = !preedit.is_empty();
         if std::mem::replace(&mut self.has_preedit, has_preedit) || has_preedit {
             events.push_back(Event::ImePreedit {
                 text: preedit,
                 cursor,
+                generation,
             });
         }
     }
@@ -86,7 +98,6 @@ impl ImeState {
 pub(crate) struct TextInput {
     proxy: ZwpTextInputV3,
     state: ImeState,
-    entered: bool,
 }
 
 impl TextInput {
@@ -98,7 +109,6 @@ impl TextInput {
         Self {
             proxy: manager.get_text_input(seat, qh, ()),
             state: ImeState::default(),
-            entered: false,
         }
     }
 
@@ -108,8 +118,7 @@ impl TextInput {
         self.proxy.version() >= 2
     }
 
-    fn enter(&mut self, desired: Option<CursorRect>) -> bool {
-        self.entered = true;
+    fn enable(&mut self, desired: Option<CursorRect>) -> bool {
         self.state.enable();
         self.proxy.enable();
         self.proxy
@@ -118,10 +127,9 @@ impl TextInput {
         self.commit()
     }
 
-    fn leave(&mut self, events: &mut VecDeque<Event>) {
-        self.entered = false;
-        self.state.pending = Batch::default();
-        self.state.disable(events);
+    fn disable(&mut self) -> bool {
+        self.proxy.disable();
+        self.commit()
     }
 
     fn send_cursor(&mut self, desired: Option<CursorRect>) -> bool {
@@ -145,6 +153,25 @@ impl Drop for TextInput {
 }
 
 impl State {
+    pub(crate) fn set_input_generation(&mut self, generation: u64) {
+        if self.input_generation == generation {
+            return;
+        }
+        self.input_generation = generation;
+        self.cursor_rect = None;
+        if let Some(ime) = self
+            .keyboard
+            .as_mut()
+            .and_then(|keyboard| keyboard.ime.as_mut())
+            && ime.state.enabled_at.is_some()
+        {
+            ime.disable();
+            if ime.enable(None) {
+                self.commit_ime_surface();
+            }
+        }
+    }
+
     pub(crate) fn set_cursor_rectangle(&mut self, rect: CursorRect) {
         self.cursor_rect = Some(rect);
         if let Some(ime) = self
@@ -172,13 +199,11 @@ impl State {
             .keyboard
             .as_mut()
             .and_then(|keyboard| keyboard.ime.as_mut())
-            && ime.state.enabled
+            && ime.state.enabled_at.is_some()
         {
             // If text-input leave arrives first, the compositor already disabled the object.
-            ime.proxy.disable();
-            let commit_surface = ime.commit();
-            ime.state.disable(&mut self.events);
-            if commit_surface {
+            ime.state.disable(self.input_generation, &mut self.events);
+            if ime.disable() {
                 self.commit_ime_surface();
             }
         }
@@ -190,7 +215,7 @@ impl State {
             .as_mut()
             .and_then(|keyboard| keyboard.ime.as_mut())
         {
-            ime.leave(&mut self.events);
+            ime.state.disable(self.input_generation, &mut self.events);
         }
     }
 }
@@ -217,29 +242,30 @@ impl Dispatch<ZwpTextInputV3, ()> for State {
         let surface = state.window.wl_surface();
         let commit_surface = match event {
             zwp_text_input_v3::Event::Enter { surface: entered } if &entered == surface => {
-                ime.enter(state.cursor_rect)
+                ime.enable(state.cursor_rect)
             }
             zwp_text_input_v3::Event::Leave { surface: left } if &left == surface => {
-                ime.leave(&mut state.events);
+                ime.state.disable(state.input_generation, &mut state.events);
                 false
             }
             zwp_text_input_v3::Event::PreeditString {
                 text,
                 cursor_begin,
                 cursor_end,
-            } if ime.entered => {
+            } if ime.state.enabled_at.is_some() => {
                 ime.state.pending.preedit = text.unwrap_or_default();
                 ime.state.pending.cursor = u32::try_from(cursor_begin)
                     .ok()
                     .zip(u32::try_from(cursor_end).ok());
                 false
             }
-            zwp_text_input_v3::Event::CommitString { text } if ime.entered => {
+            zwp_text_input_v3::Event::CommitString { text } if ime.state.enabled_at.is_some() => {
                 ime.state.pending.commit = text;
                 false
             }
-            zwp_text_input_v3::Event::Done { serial } if ime.entered => {
-                ime.state.done(serial, &mut state.events);
+            zwp_text_input_v3::Event::Done { serial } => {
+                ime.state
+                    .done(serial, state.input_generation, &mut state.events);
                 ime.update_cursor(state.cursor_rect)
             }
             zwp_text_input_v3::Event::DeleteSurroundingText { .. } => {
@@ -281,9 +307,9 @@ mod tests {
             (true, NEXT, true),
             (true, NEXT, false),
         ] {
-            match (ime.enabled, focused) {
+            match (ime.enabled_at.is_some(), focused) {
                 (false, true) => ime.enable(),
-                (true, false) => ime.disable(&mut events),
+                (true, false) => ime.disable(0, &mut events),
                 _ => {}
             }
             assert_eq!(ime.next_cursor(Some(rect)), sent.then_some(rect));
@@ -292,11 +318,9 @@ mod tests {
 
     #[test]
     fn done_applies_text_even_when_serial_defers_outgoing_state() {
-        let mut ime = ImeState {
-            serial: 2,
-            ..ImeState::default()
-        };
+        let mut ime = ImeState::default();
         ime.enable();
+        ime.serial = 2;
         let mut events = VecDeque::new();
         for (serial, commit, preedit, sync) in [(1, Some("字"), "ㄅ", false), (2, None, "", true)]
         {
@@ -305,18 +329,45 @@ mod tests {
                 preedit: preedit.to_owned(),
                 cursor: (!preedit.is_empty()).then_some((0, 3)),
             };
-            ime.done(serial, &mut events);
+            ime.done(serial, 0, &mut events);
             if let Some(commit) = commit {
                 assert!(
-                    matches!(events.pop_front(), Some(Event::ImeCommit { text }) if text == commit)
+                    matches!(events.pop_front(), Some(Event::ImeCommit { text, .. }) if text == commit)
                 );
             }
             assert!(
-                matches!(events.pop_front(), Some(Event::ImePreedit { text, cursor })
+                matches!(events.pop_front(), Some(Event::ImePreedit { text, cursor, .. })
                 if text == preedit && cursor == (!preedit.is_empty()).then_some((0, 3)))
             );
             assert!(events.is_empty());
             assert_eq!(ime.next_cursor(Some(NEXT)), sync.then_some(NEXT));
+        }
+    }
+
+    #[test]
+    fn reenable_discards_pending_and_old_serials_across_wrap() {
+        let mut ime = ImeState::default();
+        let mut events = VecDeque::new();
+        for (generation, previous, enabled) in [(1, u32::MAX - 1, 0), (2, 0, 2)] {
+            let disabled = previous.wrapping_add(1);
+            ime.serial = disabled;
+            ime.pending.commit = Some("partial".into());
+            ime.enable();
+            ime.serial = enabled;
+            ime.done(enabled, generation, &mut events);
+            assert!(events.is_empty());
+
+            for serial in [previous, disabled, enabled] {
+                ime.pending.commit = Some("水".into());
+                ime.done(serial, generation, &mut events);
+                if serial == enabled {
+                    assert!(matches!(
+                        events.pop_front(),
+                        Some(Event::ImeCommit { text, generation: g }) if g == generation && text == "水"
+                    ));
+                }
+                assert!(events.is_empty());
+            }
         }
     }
 }

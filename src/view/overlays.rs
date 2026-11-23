@@ -1,6 +1,6 @@
 //! Draw the configuration banner, search bar, and match tints without touching terminal state.
 
-use super::{CellRange, Cursor, Line, PixelRect, Snapshot, View, codepoint_width, rgba};
+use super::{Cursor, Line, PixelRect, Snapshot, View, codepoint_width, rgba};
 
 impl View {
     pub(super) fn terminal_grid(&self) -> [u32; 2] {
@@ -26,13 +26,8 @@ impl View {
         );
     }
 
-    pub(super) fn draw_search(
-        &mut self,
-        snapshot: &Snapshot,
-        selection: Option<CellRange>,
-        banner: bool,
-    ) {
-        self.tint_matches(snapshot, selection, banner);
+    pub(super) fn draw_search(&mut self, snapshot: &Snapshot, banner: bool) {
+        self.tint_matches(snapshot, banner);
         let [columns, rows] = self.grid;
         let row = rows - 1;
         self.backgrounds.extend(std::iter::repeat_n(
@@ -78,45 +73,26 @@ impl View {
         });
     }
 
-    fn tint_matches(&mut self, snapshot: &Snapshot, selection: Option<CellRange>, banner: bool) {
+    fn tint_matches(&mut self, snapshot: &Snapshot, banner: bool) {
         let columns = self.grid[0] as usize;
-        // Blend from the untinted cell and paint the current match last so overlapping hits
-        // neither accumulate color nor dim the current match.
-        let spans = self.search_highlights.iter();
-        let ordered = spans
-            .clone()
-            .filter(|span| !span.3)
-            .chain(spans.filter(|span| span.3));
-        for &(row, first, last, current) in ordered {
-            if banner && row == 0 {
+        for &(row, first, last, current) in &self.search_highlights {
+            if (banner && row == 0) || u32::from(row) + 1 >= self.grid[1] {
                 continue;
             }
-            let row_start = usize::from(row) * columns;
-            let range = usize::from(first)..(usize::from(last) + 1).min(columns);
-            let Some(backgrounds) = self
-                .backgrounds
-                .get_mut(row_start + range.start..row_start + range.end)
-                .filter(|cells| !cells.is_empty())
-            else {
-                continue;
-            };
-            let cells = &snapshot.rows[usize::from(row)][range];
-            let selected = selection.and_then(|range| range.columns(u32::from(row)));
+            let offset = usize::from(row) * columns;
+            let cells = &snapshot.rows[usize::from(row)][usize::from(first)..=usize::from(last)];
+            let backgrounds =
+                &mut self.backgrounds[offset + usize::from(first)..=offset + usize::from(last)];
             let weight = if current { 4 } else { 2 };
             let accent = [255, 183, 71].map(|channel| channel * weight);
-            for (col, (background, cell)) in
-                (u32::from(first)..).zip(backgrounds.iter_mut().zip(cells))
-            {
-                let base = if selected.as_ref().is_some_and(|cols| cols.contains(&col)) {
-                    self.selection_background.unwrap_or(cell.foreground)
-                } else {
-                    cell.background
-                };
-                *background = rgba(std::array::from_fn(|i| {
-                    ((u16::from(base[i]) * (8 - weight) + accent[i]) / 8)
-                        .try_into()
-                        .expect("weighted average fits into u8")
-                }));
+            for (background, cell) in backgrounds.iter_mut().zip(cells) {
+                if !cell.wide_wrap_spacer {
+                    *background = rgba(std::array::from_fn(|i| {
+                        ((u16::from(background[i]) * (8 - weight) + accent[i]) / 8)
+                            .try_into()
+                            .expect("weighted average fits into u8")
+                    }));
+                }
             }
         }
     }

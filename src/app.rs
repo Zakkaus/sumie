@@ -1,9 +1,10 @@
+mod highlights;
 mod search;
 
 use std::time::{Duration, Instant};
 
 use sumie_core::{
-    Pane, PaneCommand, PaneEffect, Selection, Shortcuts,
+    Pane, PaneCommand, PaneEffect, Selection,
     mouse::{MouseEvent, SelectStep},
 };
 use sumie_render::{SurfaceError, SurfaceFrame};
@@ -62,7 +63,7 @@ struct App {
 }
 
 struct Session {
-    shortcuts: Shortcuts,
+    routing: input::Routing,
     search: Option<search::Bar>,
     selection: Selection,
     pane: LocalPane,
@@ -257,7 +258,7 @@ impl Session {
         let pane = LocalPane::login(view.size(), view.cell, config)?;
         let sources = Sources::new(handle, &pane.pty)?;
         Ok(Self {
-            shortcuts: Shortcuts::default(),
+            routing: input::Routing::default(),
             search: None,
             selection: Selection::default(),
             pane,
@@ -286,7 +287,7 @@ impl Session {
             cell_px: self.view.cell,
         })?;
         if let Some(bar) = &mut self.search {
-            bar.restart();
+            bar.resized();
         }
         self.snapshot_dirty = true;
         self.frame_dirty = true;
@@ -300,6 +301,7 @@ impl Session {
         ) {
             self.sources.as_ref().unwrap().reset_blink();
         }
+        let searching = self.search.is_some();
         let effect = if let Event::Pointer {
             phase,
             position,
@@ -314,21 +316,25 @@ impl Session {
                 pixel,
                 modifiers: input::key_modifiers(modifiers),
             };
-            match input::send(&mut self.pane, PaneCommand::Mouse(mouse))? {
+            match input::pointer(&mut self.pane, searching, mouse)? {
                 PaneEffect::ViewportChanged => input::Effect::ViewportChanged,
                 PaneEffect::Select(step) if self.select(step, cell)? => input::Effect::Copy(serial),
                 _ => return Ok(()),
             }
         } else {
-            input::route(
-                &mut self.pane,
-                &mut self.shortcuts,
-                self.search.is_some(),
-                event,
-            )?
+            input::route(&mut self.pane, &mut self.routing, searching, event)?
         };
         match effect {
-            input::Effect::Search(action) => self.search_action(action)?,
+            input::Effect::Search(action) => {
+                if matches!(
+                    action,
+                    input::SearchAction::Open | input::SearchAction::Close
+                ) {
+                    self.pane.reset_pointer();
+                    gpu.set_input_generation(self.routing.change_recipient());
+                }
+                self.search_action(action)?;
+            }
             input::Effect::Copy(serial) => {
                 self.update_snapshot()?;
                 if let Some(range) = self.selection.range()
@@ -338,11 +344,7 @@ impl Session {
                 }
             }
             input::Effect::ViewportChanged => {
-                if let Some(bar) = &mut self.search {
-                    bar.restore_top = Some(self.pane.terminal.viewport_top()?);
-                    self.frame_dirty = true;
-                }
-                self.frame_dirty |= self.selection.range().is_some();
+                self.frame_dirty |= searching || self.selection.range().is_some();
                 self.selection = Selection::default();
                 self.snapshot_dirty = true;
             }
@@ -387,7 +389,7 @@ impl Session {
                 sources.reset_blink();
             }
             if dirty && let Some(bar) = &mut self.search {
-                bar.restart();
+                bar.output(&self.pane.terminal)?;
                 self.frame_dirty = true;
             }
             for event in self.pane.terminal.drain_events() {

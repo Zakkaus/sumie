@@ -16,6 +16,7 @@ pub use presentation::PresentationFeedback;
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 /// Events in dispatch order. Text input is sensitive; do not log its contents.
+/// Clipboard and IME text carry the generation of the recipient that requested them.
 pub enum Event {
     Configured {
         logical: (u32, u32),
@@ -34,7 +35,10 @@ pub enum Event {
     FrameReady,
     Presentation(PresentationFeedback),
     CloseRequested,
-    ClipboardText(String),
+    ClipboardText {
+        text: String,
+        generation: u64,
+    },
     Key {
         /// Wayland/evdev code, without the XKB offset of 8.
         physical: u32,
@@ -60,9 +64,11 @@ pub enum Event {
         text: String,
         /// UTF-8 byte offsets; `None` hides the preedit cursor.
         cursor: Option<(u32, u32)>,
+        generation: u64,
     },
     ImeCommit {
         text: String,
+        generation: u64,
     },
 }
 

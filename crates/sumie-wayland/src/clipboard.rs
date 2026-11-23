@@ -56,9 +56,14 @@ enum Paste<T> {
     Ready(Option<String>),
 }
 
+struct PasteSlot<T> {
+    generation: u64,
+    state: Paste<T>,
+}
+
 struct PasteQueue<T> {
     first: usize,
-    slots: VecDeque<Paste<T>>,
+    slots: VecDeque<PasteSlot<T>>,
 }
 
 impl<T> Default for PasteQueue<T> {
@@ -75,19 +80,31 @@ impl<T> PasteQueue<T> {
         self.first.wrapping_add(self.slots.len())
     }
 
-    fn push(&mut self, transfer: T) {
-        self.slots.push_back(Paste::Pending(transfer));
+    fn push(&mut self, generation: u64, transfer: T) {
+        self.slots.push_back(PasteSlot {
+            generation,
+            state: Paste::Pending(transfer),
+        });
     }
 
     fn finish(&mut self, sequence: usize, text: Option<String>, events: &mut VecDeque<Event>) -> T {
         let index = sequence.wrapping_sub(self.first);
-        let Paste::Pending(transfer) = mem::replace(&mut self.slots[index], Paste::Ready(text))
+        let Paste::Pending(transfer) =
+            mem::replace(&mut self.slots[index].state, Paste::Ready(text))
         else {
             unreachable!("clipboard read completes once");
         };
-        while matches!(self.slots.front(), Some(Paste::Ready(_))) {
-            if let Some(Paste::Ready(Some(text))) = self.slots.pop_front() {
-                events.push_back(Event::ClipboardText(text));
+        while self
+            .slots
+            .front()
+            .is_some_and(|slot| matches!(slot.state, Paste::Ready(_)))
+        {
+            if let Some(PasteSlot {
+                generation,
+                state: Paste::Ready(Some(text)),
+            }) = self.slots.pop_front()
+            {
+                events.push_back(Event::ClipboardText { text, generation });
             }
             self.first = self.first.wrapping_add(1);
         }
@@ -125,7 +142,7 @@ impl State {
     pub(crate) fn close_clipboard(&mut self) {
         self.cancel_clipboard_writes();
         for paste in self.clipboard.reads.slots.drain(..) {
-            if let Paste::Pending(transfer) = paste {
+            if let Paste::Pending(transfer) = paste.state {
                 self.loop_handle.remove(transfer.pipe);
                 self.loop_handle.remove(transfer.timer);
             }
@@ -265,7 +282,7 @@ impl State {
                 .reads
                 .finish(sequence, None, &mut state.events);
         })?;
-        self.clipboard.reads.push(transfer);
+        self.clipboard.reads.push(self.input_generation, transfer);
         receive_to_fd(offer.inner(), mime.to_owned(), writer);
         Ok(())
     }
@@ -381,19 +398,25 @@ mod tests {
     fn paste_results_keep_request_order_after_failure() {
         let mut queue = PasteQueue::default();
         let mut events = VecDeque::new();
-        let [first, failed, last] = std::array::from_fn(|_| {
+        let [first, failed, last] = [0, 1, 2].map(|generation| {
             let sequence = queue.next_sequence();
-            queue.push(());
+            queue.push(generation, ());
             sequence
         });
 
         queue.finish(last, Some("last".into()), &mut events);
         assert!(events.is_empty());
         queue.finish(first, Some("first".into()), &mut events);
-        assert!(matches!(events.pop_front(), Some(Event::ClipboardText(text)) if text == "first"));
+        assert!(matches!(
+            events.pop_front(),
+            Some(Event::ClipboardText { text, generation: 0 }) if text == "first"
+        ));
         assert!(events.is_empty());
         queue.finish(failed, None, &mut events);
-        assert!(matches!(events.pop_front(), Some(Event::ClipboardText(text)) if text == "last"));
+        assert!(matches!(
+            events.pop_front(),
+            Some(Event::ClipboardText { text, generation: 2 }) if text == "last"
+        ));
         assert!(events.is_empty());
     }
 }

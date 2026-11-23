@@ -211,7 +211,7 @@ impl View {
             );
         }
         if search_open {
-            self.draw_search(snapshot, selection, banner.is_some());
+            self.draw_search(snapshot, banner.is_some());
         } else {
             self.set_cursor(snapshot, overlay, banner.is_some(), focused);
         }

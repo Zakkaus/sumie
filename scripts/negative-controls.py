@@ -211,9 +211,22 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "Some(Shortcut::Copy) => (),"),
               "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
         probe("search commit leaks to PTY", "test", "src/input.rs",
-              replace_once("Event::ImeCommit { text } | Event::ClipboardText(text) if searching",
-                           "Event::ClipboardText(text) if searching"),
+              replace_once("Event::ImeCommit { text, .. } | Event::ClipboardText { text, .. } if searching",
+                           "Event::ClipboardText { text, .. } if searching"),
               "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
+        probe("paste reply uses the current recipient", "test", "src/input.rs",
+              replace_once("| Event::ClipboardText { generation, .. }", ""),
+              "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
+        probe("IME accepts the prior recipient's serial", "test", "crates/sumie-wayland/src/ime.rs",
+              replace_once("self.enabled_at = Some(self.serial.wrapping_add(1));",
+                           "self.enabled_at = Some(self.serial);"),
+              "test ime::tests::reenable_discards_pending_and_old_serials_across_wrap ... FAILED")
+        probe("search wheel reaches terminal mouse routing", "test", "src/input.rs",
+              replace_once("return pane.search_pointer(event);",
+                           "if !matches!(event.phase, sumie_core::mouse::MousePhase::Wheel(_)) {\n"
+                           "            return pane.search_pointer(event);\n"
+                           "        }"),
+              "test tests::search_pointer_only_scrolls_history ... FAILED")
     if sys.platform == "darwin":
         probe("Core Text bypasses the fallback cascade", "test", "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),

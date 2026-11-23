@@ -4,10 +4,13 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::{Error, Terminal, check, ffi};
+use crate::{Error, Terminal};
 
-const BUDGET: Duration = Duration::from_millis(4);
-const CLOCK_INTERVAL: usize = 64;
+mod grid;
+
+const BUDGET: Duration = Duration::from_millis(2);
+const ROW_BATCH: u32 = 32;
+const CELL_BATCH: u16 = 256;
 
 type Position = (u32, u16);
 
@@ -18,25 +21,26 @@ pub struct SearchMatch {
     pub end: (u32, u16),
 }
 
-/// An incremental substring search over one unchanged terminal grid.
+/// An incremental substring search over one terminal's active screen and scrollback.
 ///
-/// Start a new search after writes or resizes; scrolling does not invalidate a search.
+/// Refresh after a write and start a new search after a resize. Scrolling does
+/// not invalidate a search.
 pub struct Search {
     pattern: Pattern,
-    grid: Option<GridSize>,
+    grid: Option<grid::Size>,
     row: u32,
     col: u16,
-    wrapped: bool,
-    has_graphemes: bool,
-    blanks: VecDeque<BlankRun>,
-    pending: Option<Glyph>,
+    progress: Progress,
+    checkpoint: Option<u32>,
+    saved_progress: Progress,
+    cells: Vec<grid::Cell>,
     graphemes: Vec<u32>,
     matches: Vec<SearchMatch>,
 }
 
 impl Search {
     /// Create a literal search. A query with uppercase characters is case-sensitive;
-    /// otherwise each Unicode scalar is lowercased. An empty query finds nothing.
+    /// otherwise use Unicode simple case folding. An empty query finds nothing.
     #[must_use]
     pub fn new(query: &str) -> Self {
         Self {
@@ -44,10 +48,10 @@ impl Search {
             grid: None,
             row: 0,
             col: 0,
-            wrapped: false,
-            has_graphemes: false,
-            blanks: VecDeque::new(),
-            pending: None,
+            progress: Progress::default(),
+            checkpoint: None,
+            saved_progress: Progress::default(),
+            cells: Vec::new(),
             graphemes: Vec::new(),
             matches: Vec::new(),
         }
@@ -61,26 +65,69 @@ impl Search {
         if self.pattern.needle.is_empty() {
             return Ok(true);
         }
+        let deadline = Instant::now() + BUDGET;
         let grid = if let Some(grid) = self.grid {
             grid
         } else {
-            let grid = GridSize::read(terminal)?;
+            let grid = grid::Size::read(terminal)?;
             self.grid = Some(grid);
             grid
         };
-        let deadline = Instant::now() + BUDGET;
+        if self.row == grid.rows {
+            return Ok(true);
+        }
+        self.cells.resize(usize::from(grid.cols), grid::Cell(0));
+        let mut rows = grid::Rows::at(terminal, self.row)?;
+        self.save_checkpoint(grid.active);
         while self.row < grid.rows {
-            for _ in 0..CLOCK_INTERVAL {
-                self.step(terminal, grid.cols)?;
-                if self.row == grid.rows {
-                    return Ok(true);
-                }
-            }
-            if Instant::now() >= deadline {
+            let row = rows.read(&mut self.cells, grid.cols)?;
+            if !self.scan_row(&row, deadline)? {
                 return Ok(false);
             }
+            if !row.data.wrapped {
+                self.progress.clear();
+            }
+            self.row += 1;
+            self.col = 0;
+            self.save_checkpoint(grid.active);
+            if self.row.is_multiple_of(ROW_BATCH) && Instant::now() >= deadline {
+                break;
+            }
         }
-        Ok(true)
+        Ok(self.row == grid.rows)
+    }
+
+    /// After a write, preserve search progress before the first possibly changed
+    /// physical row (`dirty_from`, in new coordinates). `trimmed` counts rows
+    /// evicted from the head since the previous scan or refresh.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the grid or it exceeds the coordinate range.
+    pub fn refresh(
+        &mut self,
+        terminal: &Terminal,
+        trimmed: u32,
+        dirty_from: u32,
+    ) -> Result<(), Error> {
+        let Some(old) = self.grid else {
+            return Ok(());
+        };
+        let grid = grid::Size::read(terminal)?;
+        if old.cols == grid.cols {
+            if trimmed != 0 {
+                self.trim(trimmed);
+            }
+            let dirty = dirty_from.min(grid.rows);
+            self.checkpoint = self.checkpoint.filter(|&row| row <= dirty);
+            if self.row > dirty || (self.row == dirty && self.col != 0) {
+                self.restart_at(terminal, dirty)?;
+            }
+        } else {
+            self.checkpoint = None;
+            self.restart_at(terminal, 0)?;
+        }
+        self.grid = Some(grid);
+        Ok(())
     }
 
     /// Return matches found so far, ordered from the oldest row to the newest.
@@ -89,150 +136,210 @@ impl Search {
         &self.matches
     }
 
-    fn step(&mut self, terminal: &Terminal, cols: u16) -> Result<(), Error> {
-        if let Some(glyph) = self.pending {
-            self.feed_pending(glyph)?;
-            return Ok(());
+    fn save_checkpoint(&mut self, active: u32) {
+        // A line can wrap from immutable history into the writable screen.
+        // Save its matcher at the boundary so appends need not rescan that history.
+        if self.row == active && self.col == 0 && self.checkpoint != Some(active) {
+            self.checkpoint = Some(active);
+            self.saved_progress.copy_from(&self.progress);
         }
-        if self.col == cols {
-            if !self.wrapped {
-                self.blanks.clear();
-                self.pattern.positions.clear();
-            }
-            self.row += 1;
-            self.col = 0;
-            return Ok(());
-        }
+    }
 
-        let col = self.col;
-        let reference = grid_ref(terminal, self.row, col)?;
-        if col == 0 {
-            (self.wrapped, self.has_graphemes) = row_flags(&reference)?;
-        }
-        let (cell, width) = cell_width(&reference)?;
-        if matches!(
-            width,
-            ffi::CELL_WIDE_SPACER_HEAD | ffi::CELL_WIDE_SPACER_TAIL
-        ) {
-            self.col += 1;
-            return Ok(());
-        }
-        let end = (col + u16::from(width == ffi::CELL_WIDE_WIDE)).min(cols - 1);
-        let text = if self.has_graphemes {
-            GlyphText::Cluster(self.read_graphemes(&reference)?)
+    fn restart_at(&mut self, terminal: &Terminal, dirty: u32) -> Result<(), Error> {
+        if let Some(checkpoint) = self.checkpoint {
+            self.row = checkpoint;
+            self.progress.copy_from(&self.saved_progress);
         } else {
-            GlyphText::Scalar(cell_codepoint(cell)?)
-        };
-        if matches!(text, GlyphText::Scalar(0) | GlyphText::Cluster(0)) {
-            self.blank(col);
-        } else {
-            self.pending = Some(Glyph { col, end, text });
+            self.row = grid::line_start(terminal, dirty)?;
+            self.progress.clear();
         }
-        self.col = end + 1;
+        self.col = 0;
+        // Pending blanks can produce matches ending before the checkpoint once
+        // later text arrives. Revalidate those matches with the suffix.
+        let cutoff = self
+            .progress
+            .blanks
+            .front()
+            .map_or((self.row, 0), |run| (run.row, run.next));
+        self.matches
+            .truncate(self.matches.partition_point(|m| m.end < cutoff));
         Ok(())
     }
 
-    fn blank(&mut self, col: u16) {
-        if !self.pattern.has_space {
-            self.pattern.positions.clear();
+    fn trim(&mut self, trimmed: u32) {
+        self.matches.retain_mut(|m| {
+            if m.start.0 < trimmed {
+                return false;
+            }
+            m.start.0 -= trimmed;
+            m.end.0 -= trimmed;
+            true
+        });
+        if self.row < trimmed {
+            self.row = 0;
+            self.col = 0;
+            self.progress.clear();
+        } else {
+            self.row -= trimmed;
+            self.progress.trim(&self.pattern, trimmed);
+        }
+        self.checkpoint = self.checkpoint.and_then(|row| row.checked_sub(trimmed));
+        if self.checkpoint.is_some() {
+            self.saved_progress.trim(&self.pattern, trimmed);
+        }
+    }
+
+    fn scan_row(&mut self, row: &grid::Row<'_>, deadline: Instant) -> Result<bool, Error> {
+        while self.col < row.data.len {
+            let limit = self.col.saturating_add(CELL_BATCH).min(row.data.len);
+            while self.col < limit {
+                let col = self.col;
+                let cell = self.cells[usize::from(col)];
+                if cell.is_spacer() {
+                    self.col += 1;
+                    continue;
+                }
+                let end = (col + u16::from(cell.is_wide())).min(row.data.cols - 1);
+                if cell.codepoint() == 0 {
+                    self.progress.blank(&self.pattern, self.row, col);
+                } else {
+                    if !self.flush_blanks(deadline) {
+                        return Ok(false);
+                    }
+                    self.feed_cell(row, cell, end)?;
+                }
+                self.col = end + 1;
+            }
+            if self.col < row.data.len && Instant::now() >= deadline {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn feed_cell(
+        &mut self,
+        row: &grid::Row<'_>,
+        cell: grid::Cell,
+        end_col: u16,
+    ) -> Result<(), Error> {
+        let start = (self.row, self.col);
+        let end = (self.row, end_col);
+        let cp = cell.codepoint();
+        let codepoints = if cell.has_grapheme() {
+            row.graphemes(self.col, &mut self.graphemes)?
+        } else {
+            std::slice::from_ref(&cp)
+        };
+        for &cp in codepoints {
+            self.pattern.feed(
+                cp,
+                start,
+                end,
+                &mut self.progress.positions,
+                &mut self.matches,
+            );
+        }
+        Ok(())
+    }
+
+    fn flush_blanks(&mut self, deadline: Instant) -> bool {
+        let mut count = 0;
+        while let Some(run) = self.progress.blanks.front_mut() {
+            let pos = (run.row, run.next);
+            run.next += 1;
+            if run.next == run.end {
+                self.progress.blanks.pop_front();
+            }
+            self.pattern.feed(
+                u32::from(' '),
+                pos,
+                pos,
+                &mut self.progress.positions,
+                &mut self.matches,
+            );
+            count += 1;
+            if count == CELL_BATCH {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                count = 0;
+            }
+        }
+        true
+    }
+}
+
+#[derive(Default)]
+struct Progress {
+    positions: VecDeque<Position>,
+    blanks: VecDeque<BlankRun>,
+}
+
+impl Progress {
+    fn copy_from(&mut self, other: &Self) {
+        self.positions.clone_from(&other.positions);
+        self.blanks.clone_from(&other.blanks);
+    }
+
+    fn clear(&mut self) {
+        self.positions.clear();
+        self.blanks.clear();
+    }
+
+    fn trim(&mut self, pattern: &Pattern, trimmed: u32) {
+        // Keep the longest matching suffix that doesn't begin in evicted history.
+        let len = self.positions.len();
+        let mut kept = len;
+        while kept > 0 && self.positions[len - kept].0 < trimmed {
+            kept = pattern.needle[kept - 1].1;
+        }
+        self.positions.drain(..len - kept);
+        for pos in &mut self.positions {
+            pos.0 -= trimmed;
+        }
+        self.blanks.retain_mut(|run| {
+            if run.row < trimmed {
+                return false;
+            }
+            run.row -= trimmed;
+            true
+        });
+    }
+
+    fn blank(&mut self, pattern: &Pattern, row: u32, col: u16) {
+        if !pattern.has_space {
+            self.positions.clear();
             return;
         }
-        // Empty cells contribute a space only when there is text later on the
-        // same logical line. Runs keep long spans of padding out of the matcher.
+        // Implicit blanks only contribute spaces once followed by text on the
+        // same logical line. Store runs rather than individual cells.
         if let Some(run) = self.blanks.back_mut()
-            && run.row == self.row
+            && run.row == row
             && run.end == col
         {
             run.end += 1;
         } else {
             self.blanks.push_back(BlankRun {
-                row: self.row,
+                row,
                 next: col,
                 end: col + 1,
             });
         }
     }
-
-    fn feed_pending(&mut self, glyph: Glyph) -> Result<(), Error> {
-        if let Some(run) = self.blanks.front_mut() {
-            let pos = (run.row, run.next);
-            run.next += 1;
-            if run.next == run.end {
-                self.blanks.pop_front();
-            }
-            self.pattern.feed(' ', pos, pos, &mut self.matches);
-            return Ok(());
-        }
-        self.pending = None;
-        let start = (self.row, glyph.col);
-        let end = (self.row, glyph.end);
-        let codepoints = match &glyph.text {
-            GlyphText::Scalar(cp) => std::slice::from_ref(cp),
-            GlyphText::Cluster(len) => &self.graphemes[..*len],
-        };
-        for &cp in codepoints {
-            let ch = char::from_u32(cp).ok_or(Error(ffi::INVALID_VALUE))?;
-            self.pattern.feed(ch, start, end, &mut self.matches);
-        }
-        Ok(())
-    }
-
-    fn read_graphemes(&mut self, reference: &ffi::GridRef) -> Result<usize, Error> {
-        if self.graphemes.is_empty() {
-            self.graphemes.resize(8, 0);
-        }
-        let mut written = 0;
-        // SAFETY: The grid reference is live and the slice describes writable u32 storage.
-        let result = unsafe {
-            ffi::ghostty_grid_ref_graphemes(
-                reference,
-                self.graphemes.as_mut_ptr(),
-                self.graphemes.len(),
-                &raw mut written,
-            )
-        };
-        if result == ffi::OUT_OF_SPACE {
-            self.graphemes.resize(written, 0);
-            // SAFETY: The grid reference remains live, and the buffer has the reported capacity.
-            check(unsafe {
-                ffi::ghostty_grid_ref_graphemes(
-                    reference,
-                    self.graphemes.as_mut_ptr(),
-                    self.graphemes.len(),
-                    &raw mut written,
-                )
-            })?;
-        } else {
-            check(result)?;
-        }
-        Ok(written)
-    }
 }
 
+#[derive(Clone)]
 struct BlankRun {
     row: u32,
     next: u16,
     end: u16,
 }
 
-#[derive(Clone, Copy)]
-struct Glyph {
-    col: u16,
-    end: u16,
-    text: GlyphText,
-}
-
-#[derive(Clone, Copy)]
-enum GlyphText {
-    Scalar(u32),
-    Cluster(usize),
-}
-
 // KMP keeps matching linear even for repeated prefixes and lets a match span
 // arbitrarily many soft-wrapped rows without buffering the line.
 struct Pattern {
-    needle: Vec<(char, usize)>,
-    positions: VecDeque<Position>,
+    needle: Vec<(u32, usize)>,
     exact: bool,
     has_space: bool,
 }
@@ -241,147 +348,59 @@ impl Pattern {
     fn new(query: &str) -> Self {
         let exact = query.chars().any(char::is_uppercase);
         let mut needle = Vec::with_capacity(query.chars().count());
-        for ch in query.chars().flat_map(|ch| folded(ch, exact)) {
-            let fallback = needle.last().map_or(0, |&(_, fallback)| fallback);
-            let next = if needle.is_empty() {
-                0
+        for ch in query.chars() {
+            let cp = if exact {
+                u32::from(ch)
             } else {
-                prefix_len(&needle, fallback, ch)
+                grid::fold(ch.into())
             };
-            needle.push((ch, next));
+            let next = needle
+                .last()
+                .map_or(0, |&(_, fallback)| prefix_len(&needle, fallback, cp));
+            needle.push((cp, next));
         }
         Self {
-            positions: VecDeque::with_capacity(needle.len()),
             needle,
             exact,
             has_space: query.contains(' '),
         }
     }
 
-    fn feed(&mut self, ch: char, start: Position, end: Position, matches: &mut Vec<SearchMatch>) {
-        for ch in folded(ch, self.exact) {
-            let previous = self.positions.len();
-            let next = prefix_len(&self.needle, previous, ch);
-            if next == 0 {
-                self.positions.clear();
-                continue;
-            }
-            if next <= previous {
-                self.positions.drain(..previous - (next - 1));
-            }
-            self.positions.push_back(start);
-            if next == self.needle.len() {
-                matches.push(SearchMatch {
-                    start: self.positions[0],
-                    end,
-                });
-                let fallback = self.needle[next - 1].1;
-                self.positions.drain(..next - fallback);
-            }
+    fn feed(
+        &self,
+        cp: u32,
+        start: Position,
+        end: Position,
+        positions: &mut VecDeque<Position>,
+        matches: &mut Vec<SearchMatch>,
+    ) {
+        let cp = if self.exact { cp } else { grid::fold(cp) };
+        let previous = positions.len();
+        let next = prefix_len(&self.needle, previous, cp);
+        if next == 0 {
+            positions.clear();
+            return;
+        }
+        if next <= previous {
+            positions.drain(..previous - (next - 1));
+        }
+        positions.push_back(start);
+        if next == self.needle.len() {
+            matches.push(SearchMatch {
+                start: positions[0],
+                end,
+            });
+            let fallback = self.needle[next - 1].1;
+            positions.drain(..next - fallback);
         }
     }
 }
 
-fn folded(ch: char, exact: bool) -> impl Iterator<Item = char> {
-    let (scalar, lowercase) = if exact {
-        (Some(ch), None)
-    } else {
-        (None, Some(ch.to_lowercase()))
-    };
-    scalar.into_iter().chain(lowercase.into_iter().flatten())
-}
-
-fn prefix_len(needle: &[(char, usize)], mut len: usize, ch: char) -> usize {
-    while len != 0 && needle[len].0 != ch {
+fn prefix_len(needle: &[(u32, usize)], mut len: usize, cp: u32) -> usize {
+    while len != 0 && needle[len].0 != cp {
         len = needle[len - 1].1;
     }
-    len + usize::from(needle[len].0 == ch)
-}
-
-#[derive(Clone, Copy)]
-struct GridSize {
-    cols: u16,
-    rows: u32,
-}
-
-impl GridSize {
-    fn read(terminal: &Terminal) -> Result<Self, Error> {
-        let mut cols = 0_u16;
-        let mut rows = 0_usize;
-        // SAFETY: The live terminal's data keys write a u16 and a size_t, respectively.
-        unsafe {
-            check(ffi::ghostty_terminal_get(
-                terminal.raw,
-                ffi::TERMINAL_DATA_COLS,
-                (&raw mut cols).cast(),
-            ))?;
-            check(ffi::ghostty_terminal_get(
-                terminal.raw,
-                ffi::TERMINAL_DATA_TOTAL_ROWS,
-                (&raw mut rows).cast(),
-            ))?;
-        }
-        Ok(Self {
-            cols,
-            rows: u32::try_from(rows).map_err(|_| Error(ffi::INVALID_VALUE))?,
-        })
-    }
-}
-
-fn grid_ref(terminal: &Terminal, y: u32, x: u16) -> Result<ffi::GridRef, Error> {
-    let mut reference = ffi::GridRef::default();
-    let point = ffi::Point {
-        tag: ffi::POINT_TAG_SCREEN,
-        value: ffi::PointValue {
-            coordinate: ffi::PointCoordinate { x, y },
-        },
-    };
-    // SAFETY: The screen tag uses the coordinate field and the terminal and output are live.
-    check(unsafe { ffi::ghostty_terminal_grid_ref(terminal.raw, point, &raw mut reference) })?;
-    Ok(reference)
-}
-
-fn row_flags(reference: &ffi::GridRef) -> Result<(bool, bool), Error> {
-    let mut row = 0;
-    let mut wrapped = false;
-    let mut graphemes = false;
-    // SAFETY: The reference is live and both row keys write a bool.
-    unsafe {
-        check(ffi::ghostty_grid_ref_row(reference, &raw mut row))?;
-        check(ffi::ghostty_row_get(
-            row,
-            ffi::ROW_DATA_WRAP,
-            (&raw mut wrapped).cast(),
-        ))?;
-        check(ffi::ghostty_row_get(
-            row,
-            ffi::ROW_DATA_GRAPHEME,
-            (&raw mut graphemes).cast(),
-        ))?;
-    }
-    Ok((wrapped, graphemes))
-}
-
-fn cell_width(reference: &ffi::GridRef) -> Result<(ffi::Cell, std::ffi::c_int), Error> {
-    let mut cell = 0;
-    let mut width = 0;
-    // SAFETY: The reference is live and this cell data key writes a C enum.
-    unsafe {
-        check(ffi::ghostty_grid_ref_cell(reference, &raw mut cell))?;
-        check(ffi::ghostty_cell_get(
-            cell,
-            ffi::CELL_DATA_WIDE,
-            (&raw mut width).cast(),
-        ))?;
-    }
-    Ok((cell, width))
-}
-
-fn cell_codepoint(cell: ffi::Cell) -> Result<u32, Error> {
-    let mut cp = 0;
-    // SAFETY: Cell is a copied native value, and the codepoint key writes one u32.
-    check(unsafe { ffi::ghostty_cell_get(cell, ffi::CELL_DATA_CODEPOINT, (&raw mut cp).cast()) })?;
-    Ok(cp)
+    len + usize::from(needle[len].0 == cp)
 }
 
 #[cfg(test)]
@@ -395,14 +414,23 @@ mod tests {
         let mut terminal = Terminal::new(5, 2).unwrap();
         terminal.write("0abc界e\u{301}Z\r\n0ABC界e\u{301}z\r\nXY".as_bytes());
         assert_eq!(terminal.viewport_top().unwrap(), 3);
-        terminal.reveal_search(0).unwrap();
-        terminal.reveal_search(1).unwrap();
+        terminal.reveal_search(0, 0).unwrap();
+        terminal.reveal_search(1, 1).unwrap();
         assert_eq!(terminal.viewport_top().unwrap(), 0);
+        terminal.write("\r\nAAAAA\r\nx\x1b[3Gz\r\nΟΣ".as_bytes());
         for (query, expected) in [
             ("c界e\u{301}z", &[((0, 3), (1, 3)), ((2, 3), (3, 3))][..]),
             ("C界", &[((2, 3), (3, 1))]),
             ("\u{301}", &[((1, 2), (1, 2)), ((3, 2), (3, 2))]),
             ("z0", &[]),
+            (
+                "aaa",
+                &[((5, 0), (5, 2)), ((5, 1), (5, 3)), ((5, 2), (5, 4))],
+            ),
+            ("x z", &[((6, 0), (6, 2))]),
+            ("z ", &[]),
+            ("ος", &[((7, 0), (7, 1))]),
+            ("Ος", &[]),
         ] {
             let mut search = Search::new(query);
             while !search.advance(&terminal).unwrap() {}
@@ -414,6 +442,65 @@ mod tests {
         }
     }
 
+    #[test]
+    fn refresh_keeps_history_and_rescans_edited_wrap() {
+        let mut terminal = Terminal::new(5, 2).unwrap();
+        terminal.write(b"def\r\nabcdeFghijkdef");
+        assert_eq!(terminal.viewport_top().unwrap(), 2);
+        let mut search = Search::new("def");
+        while !search.advance(&terminal).unwrap() {}
+        let prefix = SearchMatch {
+            start: (0, 0),
+            end: (0, 2),
+        };
+        let wrapped = SearchMatch {
+            start: (1, 3),
+            end: (2, 0),
+        };
+        let suffix = SearchMatch {
+            start: (3, 1),
+            end: (3, 3),
+        };
+        assert_eq!(search.matches(), &[prefix, wrapped, suffix]);
+
+        terminal.write(b"\x1b[1A\rZ");
+        search.refresh(&terminal, 0, 2).unwrap();
+        assert_eq!(search.row, 2);
+        assert_eq!(search.matches(), &[prefix]);
+        while !search.advance(&terminal).unwrap() {}
+        assert_eq!(search.matches(), &[prefix, suffix]);
+
+        terminal.write(b"\rF");
+        search.refresh(&terminal, 0, 2).unwrap();
+        terminal.write(b"\x1b[2;1H\r\ndef");
+        search.refresh(&terminal, 0, 2).unwrap();
+        assert_eq!(search.row, 2);
+        let appended = SearchMatch {
+            start: (4, 0),
+            end: (4, 2),
+        };
+        while !search.advance(&terminal).unwrap() {}
+        assert_eq!(search.matches(), &[prefix, wrapped, suffix, appended]);
+
+        terminal.write(b"\x1b[3J");
+        assert_eq!(terminal.viewport_top().unwrap(), 0);
+        search.refresh(&terminal, 3, 2).unwrap();
+        assert!(search.advance(&terminal).unwrap());
+        assert_eq!(
+            search.matches(),
+            &[
+                SearchMatch {
+                    start: (0, 1),
+                    end: (0, 3),
+                },
+                SearchMatch {
+                    start: (1, 0),
+                    end: (1, 2),
+                },
+            ]
+        );
+    }
+
     fn time_scrollback_search() {
         let mut terminal = Terminal::new(80, 24).unwrap();
         terminal.set_scrollback_bytes(usize::MAX).unwrap();
@@ -423,12 +510,12 @@ mod tests {
         }
         terminal.write(text.as_bytes());
         assert!(terminal.viewport_top().unwrap() > 99_000);
-        for (phase, query) in [
-            ("pass", "9999"),
-            ("keystroke", "9"),
-            ("keystroke", "99"),
-            ("keystroke", "999"),
-            ("keystroke", "9999"),
+        for (phase, query, expected) in [
+            ("pass", "9999", 20),
+            ("keystroke", "9", 50_000),
+            ("keystroke", "99", 4_000),
+            ("keystroke", "999", 300),
+            ("keystroke", "9999", 20),
         ] {
             let start = Instant::now();
             let mut search = Search::new(query);
@@ -448,6 +535,7 @@ mod tests {
                 start.elapsed(),
                 search.matches().len()
             );
+            assert_eq!(search.matches().len(), expected);
         }
     }
 }

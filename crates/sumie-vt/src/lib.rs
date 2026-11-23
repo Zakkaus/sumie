@@ -1,6 +1,7 @@
 //! Owns the safe `libghostty-vt` wrapper. Does not draw, call platform code, or
 //! decide which shortcuts to handle.
 
+mod anchor;
 mod cursor;
 mod effects;
 mod ffi;
@@ -10,6 +11,7 @@ mod mouse;
 mod search;
 mod selection;
 mod shell;
+pub use anchor::GridAnchor;
 pub use cursor::{Cursor, CursorStyle};
 pub use effects::Event;
 pub use key::{KeyAction, KeyEncoder, KeyEvent};
@@ -28,6 +30,8 @@ pub struct Cell {
     pub text: String,
     /// Display columns: 1 for a regular cell, 2 for a wide cell, and 0 for its trailing cell.
     pub width: u8,
+    /// Empty cell at the end of a row where a wide glyph wrapped to the next row.
+    pub wide_wrap_spacer: bool,
     pub foreground: Rgb,
     pub background: Rgb,
 }
@@ -428,6 +432,7 @@ impl Terminal {
         Ok(Cell {
             text,
             width,
+            wide_wrap_spacer: wide == ffi::CELL_WIDE_SPACER_HEAD,
             foreground,
             background,
         })

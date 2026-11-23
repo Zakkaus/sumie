@@ -1,6 +1,8 @@
 use sumie_core::{
     PaneEffect,
-    mouse::{Button, Dispatch, MouseEvent, MouseModes, MouseState, SelectStep, WheelRoute},
+    mouse::{
+        Button, Dispatch, MouseEvent, MouseModes, MousePhase, MouseState, SelectStep, WheelRoute,
+    },
 };
 use sumie_vt::{
     KeyAction, KeyEvent, MouseAction, MouseButton, MouseEncoder, MouseReport, Terminal,
@@ -74,6 +76,27 @@ impl Mouse {
 }
 
 impl LocalPane {
+    pub(crate) fn reset_pointer(&mut self) {
+        self.mouse.state = MouseState::default();
+    }
+
+    pub(crate) fn search_pointer(&mut self, event: MouseEvent) -> Result<PaneEffect> {
+        if !matches!(event.phase, MousePhase::Wheel(_)) {
+            return Ok(PaneEffect::None);
+        }
+        let history_only = MouseModes {
+            tracking: false,
+            alternate: false,
+            alternate_scroll: false,
+        };
+        if let Dispatch::Wheel(WheelRoute::History, steps) =
+            self.mouse.state.dispatch(event, history_only)
+        {
+            return self.scroll_history(steps);
+        }
+        Ok(PaneEffect::None)
+    }
+
     pub(super) fn pointer(&mut self, event: MouseEvent) -> Result<PaneEffect> {
         let (action, button) = match self.mouse.state.dispatch(event, self.mouse.modes) {
             Dispatch::Ignore => return Ok(PaneEffect::None),
@@ -102,11 +125,7 @@ impl LocalPane {
 
     fn wheel(&mut self, event: MouseEvent, route: WheelRoute, steps: i32) -> Result<PaneEffect> {
         let bytes = match route {
-            WheelRoute::History => {
-                self.terminal.scroll_rows(steps)?;
-                self.mouse.state.cancel_selection();
-                return Ok(PaneEffect::ViewportChanged);
-            }
+            WheelRoute::History => return self.scroll_history(steps),
             WheelRoute::Arrows => {
                 let evdev = if steps < 0 { 103 } else { 108 };
                 self.encoder.encode(
@@ -137,6 +156,12 @@ impl LocalPane {
             }
         }
         Ok(PaneEffect::None)
+    }
+
+    fn scroll_history(&mut self, steps: i32) -> Result<PaneEffect> {
+        self.terminal.scroll_rows(steps)?;
+        self.mouse.state.cancel_selection();
+        Ok(PaneEffect::ViewportChanged)
     }
 }
 

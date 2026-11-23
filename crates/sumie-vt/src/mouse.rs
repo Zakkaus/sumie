@@ -7,6 +7,7 @@ use crate::{Error, Terminal, check, ffi};
 const TERMINAL_DATA_ACTIVE_SCREEN: c_int = 6;
 const TERMINAL_DATA_SCROLLBAR: c_int = 9;
 const TERMINAL_DATA_MOUSE_TRACKING: c_int = 11;
+const TERMINAL_DATA_SCROLLBACK_ROWS: c_int = 15;
 const TERMINAL_OPT_SCROLLBACK_MAX_BYTES: c_int = 28;
 const SCREEN_ALTERNATE: c_int = 1;
 const MODE_ALTERNATE_SCROLL: u16 = 1007;
@@ -98,7 +99,6 @@ impl Terminal {
     /// Returns an error if Ghostty cannot read a mode or the active screen.
     pub fn mouse_modes(&self) -> Result<(bool, bool, bool), Error> {
         let mut tracking = false;
-        let mut screen: c_int = 0;
         let mut alternate_scroll = ffi::TerminalModeConfig {
             mode: MODE_ALTERNATE_SCROLL,
             value: false,
@@ -112,16 +112,49 @@ impl Terminal {
             ))?;
             check(ffi::ghostty_terminal_get(
                 self.raw,
-                TERMINAL_DATA_ACTIVE_SCREEN,
-                from_mut(&mut screen).cast(),
-            ))?;
-            check(ffi::ghostty_terminal_get(
-                self.raw,
                 ffi::TERMINAL_DATA_MODE,
                 from_mut(&mut alternate_scroll).cast(),
             ))?;
         }
-        Ok((tracking, screen == SCREEN_ALTERNATE, alternate_scroll.value))
+        Ok((
+            tracking,
+            self.screen_id()? == SCREEN_ALTERNATE,
+            alternate_scroll.value,
+        ))
+    }
+
+    /// Identify the active screen (primary or alternate).
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the active screen.
+    pub fn screen_id(&self) -> Result<c_int, Error> {
+        let mut screen: c_int = 0;
+        // SAFETY: The terminal is live and ACTIVE_SCREEN writes a C enum.
+        check(unsafe {
+            ffi::ghostty_terminal_get(
+                self.raw,
+                TERMINAL_DATA_ACTIVE_SCREEN,
+                from_mut(&mut screen).cast(),
+            )
+        })?;
+        Ok(screen)
+    }
+
+    /// Return the active area's first row in full-screen coordinates.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the history size or it exceeds `u32`.
+    pub fn history_rows(&self) -> Result<u32, Error> {
+        let mut rows: usize = 0;
+        // SAFETY: The terminal is live and SCROLLBACK_ROWS writes a size_t.
+        check(unsafe {
+            ffi::ghostty_terminal_get(
+                self.raw,
+                TERMINAL_DATA_SCROLLBACK_ROWS,
+                from_mut(&mut rows).cast(),
+            )
+        })?;
+        u32::try_from(rows).map_err(|_| Error(ffi::INVALID_VALUE))
     }
 
     /// Move the viewport by rows (positive is down). New output does not unpin scrollback.
@@ -193,19 +226,11 @@ impl Terminal {
         u32::try_from(self.scrollbar()?.offset).map_err(|_| Error(ffi::INVALID_VALUE))
     }
 
-    /// Scroll a search-result row into view if it is not already visible.
+    /// Move the viewport top to an absolute row, clamped to the active area.
     ///
     /// # Errors
-    /// Returns an error if the row is outside the screen or Ghostty rejects the scroll.
-    pub fn reveal_search(&mut self, row: u32) -> Result<(), Error> {
-        let scrollbar = self.scrollbar()?;
-        let target = u64::from(row);
-        if target >= scrollbar.total {
-            return Err(Error(ffi::INVALID_VALUE));
-        }
-        if (scrollbar.offset..scrollbar.offset + scrollbar.len).contains(&target) {
-            return Ok(());
-        }
+    /// Returns an error if Ghostty rejects the scroll request.
+    pub fn restore_viewport(&mut self, row: u32) -> Result<(), Error> {
         let row = usize::try_from(row).map_err(|_| Error(ffi::INVALID_VALUE))?;
         // SAFETY: The terminal is live and the absolute-row tag matches the union field.
         check(unsafe {
@@ -217,6 +242,28 @@ impl Terminal {
                 },
             )
         })
+    }
+
+    /// Reveal the inclusive row range, placing its start at the top if it is too tall.
+    ///
+    /// # Errors
+    /// Returns an error if the range is reversed, outside the screen, or the scroll fails.
+    pub fn reveal_search(&mut self, start: u32, end: u32) -> Result<(), Error> {
+        let scrollbar = self.scrollbar()?;
+        let first = u64::from(start);
+        let last = u64::from(end);
+        if first > last || last >= scrollbar.total {
+            return Err(Error(ffi::INVALID_VALUE));
+        }
+        if last - first >= scrollbar.len || first < scrollbar.offset {
+            self.restore_viewport(start)
+        } else if last >= scrollbar.offset + scrollbar.len {
+            let top = last + 1 - scrollbar.len;
+            let top = u32::try_from(top).map_err(|_| Error(ffi::INVALID_VALUE))?;
+            self.restore_viewport(top)
+        } else {
+            Ok(())
+        }
     }
 
     fn scrollbar(&self) -> Result<Scrollbar, Error> {
@@ -411,4 +458,20 @@ fn screen_dimension(cell: u32, grid: u32, position: f32) -> Result<u32, Error> {
         return Err(invalid);
     }
     Ok(screen)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Terminal;
+
+    #[test]
+    fn reveal_search_keeps_the_whole_match_visible_if_it_fits() {
+        let mut terminal = Terminal::new(5, 3).unwrap();
+        terminal.write(b"0\r\n1\r\n2\r\n3\r\n4\r\n5");
+        terminal.restore_viewport(0).unwrap();
+        for (start, end, top) in [(2, 3, 1), (1, 3, 1), (0, 2, 0), (1, 4, 1)] {
+            terminal.reveal_search(start, end).unwrap();
+            assert_eq!(terminal.viewport_top().unwrap(), top);
+        }
+    }
 }

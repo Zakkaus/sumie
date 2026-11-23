@@ -42,6 +42,7 @@ pub struct Shortcuts {
     consumed: Vec<u32>,
 }
 
+#[derive(Clone, Copy)]
 pub enum Shortcut {
     Copy,
     Paste,

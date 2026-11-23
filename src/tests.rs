@@ -2,9 +2,10 @@ use std::ffi::{OsStr, OsString};
 use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
-use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand};
+use sumie_core::mouse::{Button, MouseEvent, MousePhase};
+use sumie_core::{CellPosition, KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect};
 use sumie_pty::{Command, Size};
-use sumie_wayland::Event;
+use sumie_wayland::{Event, Modifiers};
 
 use crate::{
     input,
@@ -19,11 +20,12 @@ fn local_pane_executes_committed_input_without_preedit() {
     let mut pane = ready_pane("stty -echo; printf 'READY\\n'; exec /bin/sh -i", &env);
     input::route(
         &mut pane,
-        &mut sumie_core::Shortcuts::default(),
+        &mut input::Routing::default(),
         false,
         Event::ImePreedit {
             text: "not-a-command ".into(),
             cursor: None,
+            generation: 0,
         },
     )
     .unwrap();
@@ -76,7 +78,7 @@ fn matched_shortcuts_never_reach_the_pty() {
         "printf '\\033[>11uREADY\\n'; exec cat",
         &request_environment(),
     );
-    let mut shortcuts = sumie_core::Shortcuts::default();
+    let mut routing = input::Routing::default();
     for (physical, shifted, base, text) in [
         (33, xkeysym::key::F, xkeysym::key::f, "F"),
         (
@@ -95,7 +97,7 @@ fn matched_shortcuts_never_reach_the_pty() {
         for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
             let effect = input::route(
                 &mut pane,
-                &mut shortcuts,
+                &mut routing,
                 false,
                 Event::Key {
                     physical,
@@ -112,11 +114,12 @@ fn matched_shortcuts_never_reach_the_pty() {
                 },
             )
             .unwrap();
-            if physical == 33 && pressed && !repeat {
-                assert!(matches!(
-                    effect,
-                    input::Effect::Search(input::SearchAction::Open)
-                ));
+            match (physical, pressed, repeat) {
+                (33, true, false) => {
+                    assert_eq!(effect, input::Effect::Search(input::SearchAction::Open));
+                }
+                (47, true, false) => assert_eq!(effect, input::Effect::ReadClipboard),
+                _ => (),
             }
             assert!(
                 pane.pty.input_fd().is_none(),
@@ -124,42 +127,149 @@ fn matched_shortcuts_never_reach_the_pty() {
             );
         }
     }
-    for symbol in [xkeysym::key::Return, xkeysym::key::F3] {
-        for newer in [false, true] {
-            let event = search_key(28, symbol, true, newer);
-            let effect = input::route(&mut pane, &mut shortcuts, true, event).unwrap();
-            assert!(
-                matches!(effect, input::Effect::Search(input::SearchAction::Navigate { newer: n }) if n == newer)
-            );
-        }
-    }
-    for (event, open) in [
-        (Event::ImeCommit { text: "水".into() }, true),
-        (search_key(30, xkeysym::key::a, true, false), true),
-        (search_key(1, xkeysym::key::Escape, true, false), true),
-        (search_key(1, xkeysym::key::Escape, false, false), false),
-        (search_key(30, xkeysym::key::a, false, false), false),
-    ] {
-        input::route(&mut pane, &mut shortcuts, open, event).unwrap();
-        assert!(pane.pty.input_fd().is_none());
-    }
+    search_modal_routes(&mut pane, &mut routing);
     pane.command(PaneCommand::Close).unwrap();
     crate::sources::reap(&mut pane.pty).unwrap();
 }
 
-fn search_key(physical: u32, keysym: u32, pressed: bool, shift: bool) -> Event {
+fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
+    use KeyAction::{Press, Release, Repeat};
+    use input::{Effect, SearchAction};
+    use xkeysym::key;
+
+    assert_eq!(routing.change_recipient(), 1);
+    for symbol in [key::Return, key::KP_Enter, key::F3] {
+        for newer in [false, true] {
+            let modifiers = Modifiers {
+                shift: newer,
+                ..Default::default()
+            };
+            let event = search_key(28, symbol, Press, modifiers);
+            let effect = input::route(pane, routing, true, event).unwrap();
+            assert_eq!(effect, Effect::Search(SearchAction::Navigate { newer }));
+        }
+    }
+
+    let plain = Modifiers::default();
+    let ctrl_shift = Modifiers {
+        ctrl: true,
+        shift: true,
+        ..plain
+    };
+    let commit = |generation| Event::ImeCommit {
+        text: "水".into(),
+        generation,
+    };
+    let preedit = |generation| Event::ImePreedit {
+        text: "ㄅ".into(),
+        cursor: None,
+        generation,
+    };
+    let paste = |generation| Event::ClipboardText {
+        text: "paste".into(),
+        generation,
+    };
+    let escape = |action| search_key(1, key::Escape, action, plain);
+    let typed = |action| search_key(30, key::a, action, plain);
+    let paste_key = |action, modifiers| search_key(47, key::v, action, modifiers);
+    let insert = |text: &str| Effect::Search(SearchAction::Insert(text.into()));
+    let mut searching = true;
+    for (event, expected) in [
+        (paste(0), Effect::None),
+        (preedit(0), Effect::None),
+        (commit(1), insert("水")),
+        (preedit(1), Effect::Preedit("ㄅ".into())),
+        (paste_key(Press, ctrl_shift), Effect::ReadClipboard),
+        (paste_key(Repeat, plain), Effect::None),
+        (paste_key(Release, plain), Effect::None),
+        (paste(1), insert("paste")),
+        (typed(Press), insert("a")),
+        (typed(Repeat), insert("a")),
+        (escape(Press), Effect::Search(SearchAction::Close)),
+        (escape(Repeat), Effect::None),
+        (escape(Release), Effect::None),
+        (typed(Release), Effect::None),
+        (commit(1), Effect::None),
+        (paste(1), Effect::None),
+        (
+            search_key(33, key::F, Press, ctrl_shift),
+            Effect::Search(SearchAction::Open),
+        ),
+        (preedit(1), Effect::None),
+        (commit(1), Effect::None),
+        (paste(1), Effect::None),
+        (commit(3), insert("水")),
+    ] {
+        let effect = input::route(pane, routing, searching, event).unwrap();
+        assert!(pane.pty.input_fd().is_none());
+        assert_eq!(effect, expected);
+        if let Effect::Search(SearchAction::Open | SearchAction::Close) = effect {
+            searching = !searching;
+            routing.change_recipient();
+        }
+    }
+}
+
+fn search_key(physical: u32, keysym: u32, action: KeyAction, modifiers: Modifiers) -> Event {
+    let pressed = !matches!(action, KeyAction::Release);
     Event::Key {
         serial: 1,
         physical,
         keysym,
         utf8: pressed.then(|| "a".into()),
-        modifiers: sumie_wayland::Modifiers {
-            shift,
-            ..Default::default()
-        },
+        modifiers,
         pressed,
-        repeat: false,
+        repeat: matches!(action, KeyAction::Repeat),
     }
+}
+
+#[test]
+fn search_pointer_only_scrolls_history() {
+    let mut pane = ready_pane(
+        "stty -echo; printf '\\033[?1003;1006h'; seq 1 20; printf 'READY\\n'; \
+         IFS= read -r go; printf '\\033[?1003l\\033[?1049;1007hALT\\n'; exec cat",
+        &request_environment(),
+    );
+    let event = |phase| MouseEvent {
+        phase,
+        cell: CellPosition { column: 0, row: 0 },
+        pixel: [0.0; 2],
+        modifiers: KeyModifiers::default(),
+    };
+    for phase in [
+        MousePhase::Press(Button::Right),
+        MousePhase::Motion,
+        MousePhase::Release(Button::Right),
+        MousePhase::Cancel,
+    ] {
+        assert!(matches!(
+            input::pointer(&mut pane, true, event(phase)).unwrap(),
+            PaneEffect::None
+        ));
+        assert!(pane.pty.input_fd().is_none());
+    }
+
+    let wheel = event(MousePhase::Wheel(-120.0));
+    assert!(pane.terminal.at_bottom().unwrap());
+    assert!(matches!(
+        input::pointer(&mut pane, true, wheel).unwrap(),
+        PaneEffect::ViewportChanged
+    ));
+    assert!(!pane.terminal.at_bottom().unwrap());
+    assert!(pane.pty.input_fd().is_none());
+
+    pane.command(PaneCommand::Text(b"alt\n")).unwrap();
+    assert!(pane.pty.flush_input().unwrap());
+    wait_for_line(&mut pane, "ALT");
+    input::pointer(&mut pane, true, wheel).unwrap();
+    assert!(pane.pty.input_fd().is_none());
+    input::pointer(&mut pane, false, wheel).unwrap();
+    assert!(
+        pane.pty.input_fd().is_some(),
+        "1007 must encode arrows outside search"
+    );
+    pane.command(PaneCommand::Close).unwrap();
+    crate::sources::reap(&mut pane.pty).unwrap();
 }
 
 fn ready_pane(script: &str, env: &std::collections::BTreeMap<OsString, OsString>) -> LocalPane {

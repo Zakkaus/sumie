@@ -9,6 +9,7 @@ const GHOSTTY_ARCHIVE_SHA256: &str =
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=src/search/grid.zig");
     for var in [
         "ZIG",
         "PATH",
@@ -28,6 +29,7 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     let source = source(&out);
     resolve_cursor_default_at_snapshot(&source);
+    install_search_bridge(&source);
     let prefix = out.join("ghostty-install");
     let mut build = Command::new(zig);
     build
@@ -74,6 +76,30 @@ fn resolve_cursor_default_at_snapshot(source: &Path) {
             "Ghostty patch anchor"
         );
         fs::write(path, text.replacen(VISUAL_STYLE, FIXED, 1)).expect("patch Ghostty cursor shape");
+    }
+}
+
+fn install_search_bridge(source: &Path) {
+    let bridge = source.join("src/sumie_search.zig");
+    fs::write(bridge, include_str!("src/search/grid.zig")).expect("write Zig search bridge");
+    insert_once(
+        &source.join("src/lib_vt.zig"),
+        "const terminal = @import(\"terminal/main.zig\");\n",
+        "comptime { @import(\"sumie_search.zig\").install(); }\n",
+    );
+    insert_once(
+        &source.join("src/build/uucode_config.zig"),
+        "            \"case_folding_full\",\n",
+        "            \"case_folding_simple\",\n",
+    );
+}
+
+fn insert_once(path: &Path, anchor: &str, addition: &str) {
+    let mut text = fs::read_to_string(path).expect("read pinned Ghostty source");
+    let at = text.find(anchor).expect("find pinned Ghostty patch anchor") + anchor.len();
+    if !text[at..].starts_with(addition) {
+        text.insert_str(at, addition);
+        fs::write(path, text).expect("patch pinned Ghostty source");
     }
 }
 

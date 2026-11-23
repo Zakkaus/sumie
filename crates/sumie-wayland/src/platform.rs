@@ -174,6 +174,13 @@ impl Platform {
         self.state.events.drain(..)
     }
 
+    /// Change the focused input recipient; restart IME composition on the same surface.
+    /// Text events carry the recipient's generation, including pending clipboard reads.
+    /// Call outside the interval between `begin_frame` and the buffer commit.
+    pub fn set_input_generation(&mut self, generation: u64) {
+        self.state.set_input_generation(generation);
+    }
+
     /// Request text from the keyboard seat's clipboard. Non-empty UTF-8 reads
     /// smaller than `max_bytes` arrive in request order as `Event::ClipboardText`.
     /// Reads that reach the size limit or take more than five seconds are discarded.
@@ -299,6 +306,7 @@ pub(crate) struct State {
     pub(crate) keyboard: Option<Keyboard>,
     pub(crate) pointer: Option<Pointer>,
     pub(crate) text_input_manager: Option<ZwpTextInputManagerV3>,
+    pub(crate) input_generation: u64,
     pub(crate) cursor_rect: Option<CursorRect>,
     pub(crate) events: VecDeque<Event>,
     logical: (u32, u32),
@@ -366,6 +374,7 @@ impl State {
             keyboard: None,
             pointer: None,
             text_input_manager,
+            input_generation: 0,
             cursor_rect: None,
             events: VecDeque::new(),
             logical: (800, 600),
