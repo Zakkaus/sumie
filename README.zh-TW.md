@@ -14,7 +14,7 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 用 `SUMIE_FONT` 指定字型家族，並用 `SUMIE_FONT_PX` 指定邏輯像素字級。
 `SUMIE_FONT_HINTING` 接受 `off`（預設）、`light` 或 `normal`。
-用 `SUMIE_FONT_WEIGHT` 設定主要字型的字重，接受 100 至 900 的整數；未設定時沿用平台的預設配對。
+用 `SUMIE_FONT_WEIGHT` 指定主要字型與後備字型的字重，接受 100 至 900 的整數；未設定時沿用平台的預設配對。
 
 ## 授權
 

@@ -37,7 +37,7 @@ pub enum Hinting {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FontOptions {
     pub hinting: Hinting,
-    /// Primary face weight on the CSS scale, 100 through 900. `None` leaves matching unchanged.
+    /// Primary and fallback weight on the CSS scale, 100 through 900. `None` leaves matching unchanged.
     pub weight: Option<u16>,
 }
 
@@ -159,7 +159,7 @@ impl FontSystem {
         }
         let discovery = Discovery::new(family, options.weight)?;
         let matched = discovery.find(None)?;
-        let font = matched.load(&[], options.weight)?;
+        let font = matched.load(&[])?;
         let metrics = CellMetrics::measure(&font, ppem)?;
         Ok(Self {
             discovery,
@@ -167,6 +167,7 @@ impl FontSystem {
                 matched,
                 font,
                 ppem,
+                baseline: metrics.baseline,
             }],
             fallback: HashMap::new(),
             metrics,
@@ -212,11 +213,12 @@ impl FontSystem {
                 .ok_or(missing)?;
             FaceId(index)
         } else {
-            let font = matched.load(&self.faces, None)?;
+            let font = matched.load(&self.faces)?;
             font.charmap().map_unicode(ch).ok_or(missing)?;
             let ppem = self.metrics.fallback_ppem(&font, self.faces[0].ppem);
             let id = FaceId(self.faces.len());
             self.faces.push(Face {
+                baseline: self.metrics.fallback_baseline(&font, ppem),
                 matched,
                 font,
                 ppem,

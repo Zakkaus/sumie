@@ -72,25 +72,32 @@ mod linux {
     }
 
     #[test]
-    fn fallback_ink_is_centered_in_two_cells() {
+    fn wide_fallback_preserves_baseline_and_punctuation_bearings() {
         let Some(mut fonts) = jetbrains() else { return };
-        let run = match fonts.shape("A中A", &[1, 2, 1]) {
-            Err(FontError::MissingGlyph(0x4e2d)) => {
-                eprintln!("skipped: no CJK fallback font covers U+4E2D");
-                return;
-            }
+        // Japanese and Taiwanese faces deliberately position the full stop differently.
+        fonts.discovery = crate::Discovery::new("Noto Sans CJK JP", None).unwrap();
+        let run = match fonts.shape("Aっつ。A", &[1, 2, 2, 2, 1]) {
+            Err(FontError::MissingGlyph(_)) => return,
             result => result.unwrap(),
         };
-        let glyph = run.glyphs[1];
-        assert_ne!(glyph.key.face(), fonts.primary_face());
+        let [_, small, full, stop, latin] = run.glyphs[..] else {
+            panic!("unexpected glyphs: {:?}", run.glyphs);
+        };
+        let id = small.key.face();
+        if fonts.family(id) != Some("Noto Sans CJK JP") {
+            eprintln!("skipped: Japanese punctuation fixture is not installed");
+            return;
+        }
+        assert_ne!(id, fonts.primary_face());
         assert_eq!(
-            (run.cells, glyph.cluster, glyph.column, glyph.cells),
-            (4, 1, 1, 2)
+            (run.cells, small.cluster, small.column, small.cells),
+            (8, 1, 1, 2)
         );
-        assert_eq!((run.glyphs[2].cluster, run.glyphs[2].column), (4, 3));
-        let mask = fonts.rasterize(glyph.key).unwrap();
+        assert_eq!((latin.cluster, latin.column), (10, 7));
+        assert_eq!((full.key.face(), stop.key.face()), (id, id));
+        assert_eq!((small.y, stop.y), (full.y, full.y));
         let metrics = fonts.metrics();
-        let face = &fonts.faces[glyph.key.face().0];
+        let face = &fonts.faces[id.0];
         if let Some(water) = face.font.charmap().map_unicode('水') {
             let advance = face
                 .font
@@ -106,27 +113,13 @@ mod linux {
                 "water advance: {advance}, expected: {expected}"
             );
         }
-        let left = glyph.x + mask.left - metrics.width.cast_signed();
-        let right = (2 * metrics.width).cast_signed() - left - mask.rect.width.cast_signed();
-        let top = glyph.y + mask.top;
-        let bottom = metrics.height.cast_signed() - top - mask.rect.height.cast_signed();
-        assert!(
-            left >= 0 && right >= 0 && left.abs_diff(right) <= 1,
-            "horizontal padding: {left}, {right}"
-        );
-        assert!(
-            top >= 0 && bottom >= 0 && top.abs_diff(bottom) <= 1,
-            "vertical padding: {top}, {bottom}"
-        );
-        println!(
-            "{} at {} ppem: {} × {} mask in a {} × {} slot, padding [{left}, {right}, {top}, {bottom}]",
-            fonts.family(glyph.key.face()).unwrap(),
-            glyph.key.ppem(),
-            mask.rect.width,
-            mask.rect.height,
-            2 * metrics.width,
-            metrics.height
-        );
+        let mask = fonts.rasterize(stop.key).unwrap();
+        let cell_width = metrics.width.cast_signed();
+        let right = stop.x - stop.column.cast_signed() * cell_width
+            + mask.left
+            + mask.rect.width.cast_signed();
+        assert!(right <= cell_width, "full stop extends past slot midpoint");
+        assert!(stop.y + mask.top >= metrics.height.cast_signed() / 2);
     }
 
     #[test]

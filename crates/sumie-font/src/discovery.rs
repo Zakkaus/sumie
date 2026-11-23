@@ -10,10 +10,11 @@ pub(crate) struct Match {
     pub family: String,
     path: PathBuf,
     index: u32,
+    weight: Option<u16>,
 }
 
 impl Match {
-    pub fn load(&self, faces: &[Face], weight: Option<u16>) -> Result<Font, FontError> {
+    pub fn load(&self, faces: &[Face]) -> Result<Font, FontError> {
         // Different faces of a collection share its file bytes.
         let source = if let Some(face) = faces.iter().find(|face| face.matched.path == self.path) {
             face.font.source().clone()
@@ -30,7 +31,10 @@ impl Match {
         // Fontconfig's upper index bits select a one-based named instance.
         let named = self.index >> 16;
         let axis = Tag::new(b"wght");
-        if let Some(weight) = weight.filter(|_| font.axes().get_by_tag(axis).is_some()) {
+        if let Some(weight) = self
+            .weight
+            .filter(|_| font.axes().get_by_tag(axis).is_some())
+        {
             let variation = [(axis, f32::from(weight))];
             let instance = font.instance_builder();
             return Ok(match named {
@@ -54,6 +58,7 @@ pub(crate) struct Face {
     pub matched: Match,
     pub font: Font,
     pub ppem: f32,
+    pub baseline: i32,
 }
 
 impl Face {
@@ -98,10 +103,10 @@ impl Discovery {
                 .iter()
                 .find(|font| font.get_string(c"family").is_ok_and(is_nerd_family))
             {
-                return to_match(&nerd);
+                return to_match(&nerd, self.weight);
             }
         }
-        to_match(&self.pattern(codepoint)?.font_match()?)
+        to_match(&self.pattern(codepoint)?.font_match()?, self.weight)
     }
 
     fn pattern(&self, codepoint: Option<char>) -> Result<fontconfig::Pattern<'_>, FontError> {
@@ -113,7 +118,8 @@ impl Discovery {
             let mut charset = CharSet::new(&self.fc)?;
             charset.add_char(codepoint)?;
             pattern.add_charset(charset)?;
-        } else if let Some(weight) = self.weight {
+        }
+        if let Some(weight) = self.weight {
             pattern.add_integer(fontconfig::FC_WEIGHT, fontconfig_weight(weight))?;
         }
         Ok(pattern)
@@ -121,7 +127,7 @@ impl Discovery {
 }
 
 #[cfg(target_os = "linux")]
-fn to_match(matched: &fontconfig::Pattern<'_>) -> Result<Match, FontError> {
+fn to_match(matched: &fontconfig::Pattern<'_>, weight: Option<u16>) -> Result<Match, FontError> {
     let path = PathBuf::from(matched.filename()?);
     let index =
         u32::try_from(matched.face_index()?).map_err(|_| FontError::InvalidFont(path.clone()))?;
@@ -129,6 +135,7 @@ fn to_match(matched: &fontconfig::Pattern<'_>) -> Result<Match, FontError> {
         family: matched.get_string(c"family")?.to_owned(),
         path,
         index,
+        weight,
     })
 }
 

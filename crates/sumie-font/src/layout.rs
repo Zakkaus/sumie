@@ -229,10 +229,10 @@ impl Segment<'_> {
             let cells = next_column - cell.column;
             let anchor = (cell.column * self.metrics.width).cast_signed();
             let centered = cell.width == 2 || cell.continuation;
-            let (ppem, dx, baseline) = if centered {
-                self.center_ink(cell, &infos[start..end], &positions[start..end])
+            let (ppem, dx) = if centered {
+                self.fit_cluster(cell, &infos[start..end], &positions[start..end])
             } else {
-                (self.face.ppem, 0, self.metrics.baseline)
+                (self.face.ppem, 0)
             };
             let scale = ppem / f32::from(self.face.font.units_per_em());
             if !infos[start].unsafe_to_break() || centered {
@@ -246,7 +246,7 @@ impl Segment<'_> {
                     column: cell.column,
                     cells,
                     x: anchor + dx + px(relative + pos.x_offset, scale).round() as i32,
-                    y: baseline - px(pos.y_offset, scale).round() as i32,
+                    y: self.face.baseline - px(pos.y_offset, scale).round() as i32,
                 });
                 relative += pos.x_advance;
             }
@@ -260,28 +260,40 @@ impl Segment<'_> {
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-    fn center_ink(
+    fn fit_cluster(
         &self,
         cell: &Input,
         infos: &[GlyphInfo],
         positions: &[GlyphPosition],
-    ) -> (f32, i32, i32) {
+    ) -> (f32, i32) {
         let width = (u32::from(cell.width) * self.metrics.width) as f32;
         let height = self.metrics.height as f32;
         let mut ppem = self.face.ppem;
         let mut bounds = ink_bounds(&self.face.font, ppem, infos, positions);
-        if bounds.width() > width || bounds.height() > height {
-            // Leave one pixel for the two ends to round outwards.
-            ppem *= (width / (bounds.width() + 1.0)).min(height / (bounds.height() + 1.0));
+        let baseline = self.face.baseline as f32;
+        // At a fixed baseline, spare pixels above the ink cannot absorb a descender.
+        let fit = fit_axis(bounds.width(), width)
+            .min(fit_axis(-bounds.min.y, baseline))
+            .min(fit_axis(bounds.max.y, height - baseline));
+        if fit < 1.0 {
+            ppem *= fit;
             bounds = ink_bounds(&self.face.font, ppem, infos, positions);
+        } else if !cell.continuation {
+            let units = positions.iter().map(|pos| pos.x_advance).sum();
+            let advance = px(units, ppem / f32::from(self.face.font.units_per_em()));
+            return (ppem, ((width - advance) * 0.5).round() as i32);
         }
+        // Detached marks have no base advance in this face's shaping run.
         let x = ((width - bounds.width()) * 0.5 - bounds.min.x).round() as i32;
-        let y = if cell.continuation {
-            self.metrics.baseline
-        } else {
-            ((height - bounds.height()) * 0.5 - bounds.min.y).round() as i32
-        };
-        (ppem, x, y)
+        (ppem, x)
+    }
+}
+
+fn fit_axis(extent: f32, available: f32) -> f32 {
+    if extent > available && available > 0.0 {
+        available / extent
+    } else {
+        1.0
     }
 }
 

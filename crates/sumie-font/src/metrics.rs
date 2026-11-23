@@ -37,6 +37,16 @@ impl CellMetrics {
             .min(2.0 * primary_ppem)
             .min(MAX_PPEM)
     }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    pub(crate) fn fallback_baseline(self, font: &Font, ppem: f32) -> i32 {
+        font.metrics()
+            .scaled_f32(ppem)
+            .h_line()
+            .map_or(self.baseline, |line| {
+                ((self.height as f32 + line.ascender + line.descender) * 0.5).round() as i32
+            })
+    }
 }
 
 fn advance(font: &Font, ch: char, ppem: f32) -> Option<f32> {
