@@ -10,6 +10,8 @@
 //! use sumie_core::wgpu;
 //! ```
 
+use unicode_script::{Script, UnicodeScript};
+
 pub mod graphics;
 mod link;
 pub mod mouse;
@@ -140,16 +142,24 @@ fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Sho
         (KEY_PAGE_DOWN, true) => TabAction::MoveRight,
         (_, false) => return None,
         (_, true) => {
-            let key = match evdev {
-                KEY_C => Some('c'),
-                KEY_E => Some('e'),
-                KEY_F => Some('f'),
-                KEY_O => Some('o'),
-                KEY_V => Some('v'),
-                KEY_T => Some('t'),
-                KEY_W => Some('w'),
-                KEY_Z => Some('z'),
-                _ => symbol,
+            // An unbound Latin key must not invoke a binding from its QWERTY position.
+            let key = match symbol {
+                Some(ch)
+                    if ch.is_ascii() || !ch.is_alphabetic() || ch.script() == Script::Latin =>
+                {
+                    Some(ch)
+                }
+                _ => match evdev {
+                    KEY_C => Some('c'),
+                    KEY_E => Some('e'),
+                    KEY_F => Some('f'),
+                    KEY_O => Some('o'),
+                    KEY_V => Some('v'),
+                    KEY_T => Some('t'),
+                    KEY_W => Some('w'),
+                    KEY_Z => Some('z'),
+                    _ => None,
+                },
             };
             match key?.to_ascii_lowercase() {
                 'c' => return Some(Shortcut::Copy),

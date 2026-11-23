@@ -159,8 +159,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("closing an earlier tab loses the active pane", "test", "crates/sumie-core/src/tabs.rs",
           replace_once("self.active -= 1;", "self.active = 0;"),
           "test tabs::tests::close_preserves_active_identity_or_selects_a_neighbor ... FAILED")
-    probe("three pixels lose their split divider", "test", "crates/sumie-core/src/splits.rs",
-          replace_once("len >= 3 && !rect.is_empty()", "len >= 4 && !rect.is_empty()"),
+    probe("three pixels lose their split divider", "test", "crates/sumie-core/src/splits/geometry.rs",
+          replace_once("slack != 0 && !rect.is_empty()", "slack > 1 && !rect.is_empty()"),
           "test splits::tests::tiny_windows_partition_every_pixel ... FAILED")
     probe("contrast above the supported range", "test", "crates/sumie-config/src/lib.rs",
           replace_once("(1.0..=21.0).contains(&ratio)", "(1.0..=22.0).contains(&ratio)"),

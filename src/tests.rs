@@ -46,6 +46,31 @@ fn local_pane_executes_committed_input_without_preedit() {
 }
 
 #[test]
+fn held_enter_never_reaches_the_next_pty() {
+    use KeyAction::{Press, Release, Repeat};
+    let open = || {
+        ready_pane(
+            "printf '\\033[>11uREADY\\n'; exec cat",
+            &request_environment(),
+        )
+    };
+    let (mut first, mut next) = (open(), open());
+    let mut routing = input::Routing::default();
+    let enter = |action| key_event(28, xkeysym::key::Return, action, Modifiers::default());
+    input::route(0, &mut first, &mut routing, false, enter(Press)).unwrap();
+    assert!(first.pty.input_fd().is_some());
+    let recipient = routing.change_recipient();
+    for action in [Repeat, Release] {
+        input::route(recipient, &mut next, &mut routing, false, enter(action)).unwrap();
+        assert!(next.pty.input_fd().is_none());
+    }
+    for mut pane in [first, next] {
+        pane.command(PaneCommand::Close).unwrap();
+        crate::sources::reap(&mut pane.pty).unwrap();
+    }
+}
+
+#[test]
 fn bracketed_paste_fits_or_leaves_the_queue_unchanged() {
     use sumie_pty::INPUT_LIMIT;
     let mut pane = ready_pane(
@@ -81,7 +106,7 @@ fn matched_shortcuts_never_reach_the_pty() {
     );
     let mut routing = input::Routing::default();
     for (physical, shifted, base, text) in [
-        (33, xkeysym::key::F, xkeysym::key::f, "F"),
+        (18, xkeysym::key::F, xkeysym::key::f, "F"), // Colemak
         (
             46,
             xkeysym::key::Cyrillic_ES,
@@ -117,9 +142,10 @@ fn matched_shortcuts_never_reach_the_pty() {
             )
             .unwrap();
             match (physical, pressed, repeat) {
-                (33, true, false) => {
+                (18, true, false) => {
                     assert_eq!(effect, input::Effect::Search(input::SearchAction::Open));
                 }
+                (46, true, false) => assert_eq!(effect, input::Effect::Copy(1)),
                 (47, true, false) => assert_eq!(effect, input::Effect::ReadClipboard),
                 _ => (),
             }
@@ -153,7 +179,7 @@ fn window_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut inpu
     let alt = Modifiers { alt: true, ..plain };
     let chords = [
         (20, key::Cyrillic_TE, ctrl_shift, TabAction::Open),
-        (17, key::W, ctrl_shift, TabAction::Close),
+        (44, key::W, ctrl_shift, TabAction::Close), // AZERTY
         (15, key::Tab, ctrl, TabAction::Cycle(1)),
         (15, key::ISO_Left_Tab, ctrl_shift, TabAction::Cycle(-1)),
         (109, key::Page_Down, ctrl, TabAction::Cycle(1)),
@@ -223,7 +249,7 @@ fn pane_chords(
     [
         (18, key::E, ctrl_shift, Pane(Split(Horizontal))),
         (24, key::O, ctrl_shift, Pane(Split(Vertical))),
-        (44, key::Z, ctrl_shift, Pane(Zoom)),
+        (17, key::Z, ctrl_shift, Pane(Zoom)), // AZERTY
         (105, key::Left, focus, Pane(Focus(Left))),
         (106, key::Right, focus, Pane(Focus(Right))),
         (103, key::Up, focus, Pane(Focus(Up))),
@@ -275,7 +301,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
     };
     let escape = |action| key_event(1, key::Escape, action, plain);
     let typed = |action| key_event(30, key::a, action, plain);
-    let paste_key = |action, modifiers| key_event(47, key::v, action, modifiers);
+    let paste_key = |action, modifiers| key_event(47, key::Cyrillic_EM, action, modifiers);
     let insert = |text: &str| Effect::Search(SearchAction::Insert(text.into()));
     let mut searching = true;
     for (event, expected) in [
@@ -287,6 +313,8 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
         (paste_key(Repeat, plain), Effect::None),
         (paste_key(Release, plain), Effect::None),
         (paste(1), insert("paste")),
+        (key_event(17, key::Eacute, Press, ctrl_shift), Effect::None), // BÉPO
+        (key_event(17, key::Eacute, Release, plain), Effect::None),
         (typed(Press), insert("a")),
         (typed(Repeat), insert("a")),
         (escape(Press), Effect::Search(SearchAction::Close)),
@@ -320,7 +348,10 @@ fn key_event(physical: u32, keysym: u32, action: KeyAction, modifiers: Modifiers
         serial: 1,
         physical,
         keysym,
-        utf8: pressed.then(|| "a".into()),
+        utf8: xkeysym::Keysym::new(keysym)
+            .key_char()
+            .filter(|_| pressed)
+            .map(String::from),
         modifiers,
         pressed,
         repeat: matches!(action, KeyAction::Repeat),

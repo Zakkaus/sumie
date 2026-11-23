@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use sumie_core::splits::Layout;
 use sumie_wayland::{Event, Modifiers, PointerButton as Button, PointerPhase as Phase};
 
-use super::{Gpu, PaneState, Result, Session, View, links, tabs};
+use super::{Gpu, PaneState, PaneTab, Result, Session, View, links, tabs};
 use crate::input::{self, Effect, Routing, SearchAction};
 
 #[derive(Clone, Copy)]
@@ -38,19 +38,56 @@ impl Target {
     }
 }
 
+type LayoutKey = (u64, u64);
+
+impl PaneTab {
+    fn layout_key(&self) -> LayoutKey {
+        // Pane IDs are unique across tabs; divider IDs are only unique within a tab.
+        (self.panes[0].id, self.layout_revision)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Pointer {
     target: Option<Target>,
     held: [bool; 3],
+    presented: Option<LayoutKey>,
+    pressed_layout: Option<LayoutKey>,
 }
 
 impl Pointer {
+    pub(super) fn present_layout(&mut self, tab: &PaneTab) {
+        self.presented = Some(tab.layout_key());
+    }
+
+    pub(super) fn layout_is_presented(&self, tab: &PaneTab) -> bool {
+        self.presented == Some(tab.layout_key())
+    }
+
     pub(super) fn reset(&mut self) {
         // A focus change ends the drag but does not transfer held buttons to a new pane.
         self.target = None;
     }
 
-    fn route(&mut self, phase: Phase, hit: impl FnOnce() -> Option<Target>) -> Option<Target> {
+    fn cancel_stale_pane(&mut self, layout: LayoutKey) -> Option<u64> {
+        if let Some(Target::Pane(id)) = self.target
+            && self.pressed_layout != Some(layout)
+        {
+            self.reset();
+            return Some(id);
+        }
+        None
+    }
+
+    fn route(
+        &mut self,
+        phase: Phase,
+        layout: LayoutKey,
+        hit: impl FnOnce() -> Option<Target>,
+    ) -> Option<Target> {
+        // Captured dividers can outpace presentation; only new hits need the presented layout.
+        let presented = self.presented;
+        let hit = || (presented == Some(layout)).then(hit).flatten();
         let pane_hit = |target: &Target| matches!(target, Target::Pane(_));
         match phase {
             Phase::Press(button, _) => self
@@ -73,6 +110,7 @@ impl Pointer {
 
     fn press(&mut self, button: Button, target: Target) {
         self.target = Some(target);
+        self.pressed_layout = self.presented;
         self.held[button as usize] = true;
     }
 
@@ -171,10 +209,17 @@ impl Session {
     }
 
     fn pointer_input(&mut self, event: PointerEvent, gpu: &mut Gpu, banner: bool) -> Result<()> {
+        let tab = self.tabs.active_mut().expect("live window");
+        let key = tab.layout_key();
+        if let Some(id) = self.pane_pointer.cancel_stale_pane(key) {
+            self.routing.reset_pointer();
+            if let Ok(index) = tab.panes.binary_search_by_key(&id, |pane| pane.id) {
+                tab.panes[index].pane.leave_tab()?;
+            }
+        }
         let view = &self.view;
-        let layout = &self.tabs.active().expect("live window").layout;
-        let target = self.pane_pointer.route(event.phase, || {
-            Target::at(layout, view.window_pixel(event.position), view.device)
+        let target = self.pane_pointer.route(event.phase, key, || {
+            Target::at(&tab.layout, view.window_pixel(event.position), view.device)
         });
         if matches!(event.phase, Phase::Cancel) && !matches!(target, Some(Target::Pane(_))) {
             self.routing.reset_pointer();
@@ -221,12 +266,12 @@ impl Session {
     }
 
     pub(super) fn pane_under_pointer(&self, position: (f64, f64)) -> Option<u64> {
-        if self.view.over_tab_bar(position) {
+        let tab = self.tabs.active()?;
+        if !self.pane_pointer.layout_is_presented(tab) || self.view.over_tab_bar(position) {
             return None;
         }
-        let layout = &self.tabs.active()?.layout;
         let pixel = self.view.window_pixel(position);
-        match Target::at(layout, pixel, self.view.device)? {
+        match Target::at(&tab.layout, pixel, self.view.device)? {
             Target::Pane(id) => Some(id),
             Target::Divider(_) => None,
         }
@@ -310,22 +355,30 @@ fn apply_pane_effect(
 mod tests {
     use sumie_core::splits::{Axis, Rect, SplitTree};
 
-    use super::{Button, Layout, Phase, Pointer, Target};
+    use super::{Button, Layout, LayoutKey, Phase, Pointer, Target};
+
+    const SHOWN: LayoutKey = (1, 0);
+    const PENDING: LayoutKey = (1, 1);
+
+    fn pointer() -> Pointer {
+        Pointer {
+            presented: Some(SHOWN),
+            ..Pointer::default()
+        }
+    }
 
     #[test]
-    fn hits_are_absolute_at_the_bar_and_divider() {
+    fn hits_are_absolute_and_wait_for_zoom_presentation() {
         let mut tree = SplitTree::new(1);
         tree.split(Axis::Horizontal, 2);
         let mut layout = Layout::default();
-        tree.layout(
-            Rect {
-                x: 0,
-                y: 20,
-                width: 81,
-                height: 80,
-            },
-            &mut layout,
-        );
+        let bounds = Rect {
+            x: 0,
+            y: 20,
+            width: 81,
+            height: 80,
+        };
+        tree.layout(bounds, [1; 2], &mut layout);
         let divider = layout.dividers[0].id;
         for (pixel, target) in [
             ([-0.1, 60.0], None),
@@ -339,49 +392,71 @@ mod tests {
         ] {
             assert_eq!(Target::at(&layout, pixel, [81, 100]), target);
         }
+
+        let press = Phase::Press(Button::Left, 0);
+        let mut pointer = pointer();
+        tree.toggle_zoom();
+        tree.layout(bounds, [1; 2], &mut layout);
+        let hit = || Target::at(&layout, [39.9, 20.0], [81, 100]);
+        assert_eq!(pointer.route(press, PENDING, hit), None);
+        pointer.presented = Some(PENDING);
+        assert_eq!(pointer.route(press, PENDING, hit), Some(Target::Pane(2)));
     }
 
     #[test]
     fn drag_and_release_stay_with_the_pressed_pane_but_wheel_does_not() {
-        let mut pointer = Pointer::default();
+        let mut pointer = pointer();
         let left = Target::Pane(1);
         let right = Target::Pane(2);
         let over_right = || Some(right);
         pointer.press(Button::Left, left);
-        assert_eq!(pointer.route(Phase::Motion, over_right), Some(left));
-        assert_eq!(pointer.route(Phase::Wheel(120.0), over_right), Some(right));
+        assert_eq!(pointer.route(Phase::Motion, SHOWN, over_right), Some(left));
         assert_eq!(
-            pointer.route(Phase::Release(Button::Left), over_right),
+            pointer.route(Phase::Wheel(120.0), SHOWN, over_right),
+            Some(right)
+        );
+        assert_eq!(
+            pointer.route(Phase::Release(Button::Left), SHOWN, over_right),
             Some(left)
         );
-        assert_eq!(pointer.route(Phase::Motion, over_right), Some(right));
+        assert_eq!(pointer.route(Phase::Motion, SHOWN, over_right), Some(right));
     }
 
     #[test]
     fn divider_drag_requires_a_left_press_and_ends_on_focus_change() {
-        let mut pointer = Pointer::default();
+        let mut pointer = pointer();
         let divider = Target::Divider(0);
         let over_divider = || Some(divider);
         let over_pane = || Some(Target::Pane(1));
         let left_press = Phase::Press(Button::Left, 0);
         let right_press = Phase::Press(Button::Right, 0);
         let release = Phase::Release(Button::Left);
-        assert_eq!(pointer.route(Phase::Motion, over_divider), None);
-        assert_eq!(pointer.route(right_press, over_divider), None);
-        assert_eq!(pointer.route(left_press, over_divider), Some(divider));
+        assert_eq!(pointer.route(Phase::Motion, SHOWN, over_divider), None);
+        assert_eq!(pointer.route(right_press, SHOWN, over_divider), None);
+        assert_eq!(
+            pointer.route(left_press, SHOWN, over_divider),
+            Some(divider)
+        );
         pointer.press(Button::Left, divider);
-        assert_eq!(pointer.route(Phase::Motion, over_pane), Some(divider));
-        assert_eq!(pointer.route(release, over_pane), Some(divider));
+        assert_eq!(pointer.cancel_stale_pane(PENDING), None);
+        assert_eq!(
+            pointer.route(Phase::Motion, PENDING, over_pane),
+            Some(divider)
+        );
+        assert_eq!(pointer.route(release, PENDING, over_pane), Some(divider));
 
         pointer.press(Button::Left, divider);
         pointer.reset();
-        assert_eq!(pointer.route(Phase::Motion, over_pane), None);
-        assert_eq!(pointer.route(release, over_pane), None);
-        assert_eq!(pointer.route(Phase::Motion, over_pane), over_pane());
+        assert_eq!(pointer.route(Phase::Motion, SHOWN, over_pane), None);
+        assert_eq!(pointer.route(release, SHOWN, over_pane), None);
+        assert_eq!(pointer.route(Phase::Motion, SHOWN, over_pane), over_pane());
 
         pointer.press(Button::Left, divider);
-        assert_eq!(pointer.route(Phase::Cancel, over_pane), Some(divider));
-        assert_eq!(pointer.route(release, over_pane), None);
-        assert_eq!(pointer.route(Phase::Motion, over_pane), over_pane());
+        assert_eq!(
+            pointer.route(Phase::Cancel, SHOWN, over_pane),
+            Some(divider)
+        );
+        assert_eq!(pointer.route(release, SHOWN, over_pane), None);
+        assert_eq!(pointer.route(Phase::Motion, SHOWN, over_pane), over_pane());
     }
 }

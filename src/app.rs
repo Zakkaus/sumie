@@ -85,6 +85,7 @@ struct Session {
 struct PaneTab {
     tree: SplitTree,
     layout: Layout,
+    layout_revision: u64,
     panes: Vec<PaneState>,
 }
 
@@ -494,11 +495,12 @@ impl Session {
         self.frame_retry = None;
         let tab = self.tabs.active().unwrap();
         let cursor_hidden = tab.focused().sources.cursor_hidden();
-        let dirty = tab
-            .layout
-            .panes
-            .iter()
-            .any(|&(id, _)| tab.get(id).frame_dirty);
+        let dirty = !self.pane_pointer.layout_is_presented(tab)
+            || tab
+                .layout
+                .panes
+                .iter()
+                .any(|&(id, _)| tab.get(id).frame_dirty);
         if !dirty && self.cursor_hidden == cursor_hidden {
             return Ok(false);
         }
@@ -522,6 +524,7 @@ impl Session {
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
                 self.view.frame_presented();
+                self.pane_pointer.present_layout(tab);
                 for pane in &mut tab.panes {
                     pane.frame_dirty = false;
                 }

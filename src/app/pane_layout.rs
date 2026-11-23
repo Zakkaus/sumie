@@ -6,10 +6,11 @@ impl PaneTab {
     pub(super) fn new(pane: PaneState) -> Self {
         let tree = SplitTree::new(pane.id);
         let mut layout = Layout::default();
-        tree.layout(pane.rect, &mut layout);
+        tree.layout(pane.rect, [1; 2], &mut layout);
         Self {
             tree,
             layout,
+            layout_revision: 0,
             panes: vec![pane],
         }
     }
@@ -43,7 +44,9 @@ impl PaneTab {
     }
 
     pub(super) fn resize_grid(&mut self, view: &View) -> Result<()> {
-        self.tree.layout(view.content_rect(), &mut self.layout);
+        self.tree
+            .layout(view.content_rect(), view.cell, &mut self.layout);
+        self.layout_revision = self.layout_revision.wrapping_add(1);
         for &(id, rect) in self.layout.panes.iter().chain(&self.layout.hidden) {
             let index = self.index(id);
             self.panes[index].resize_grid(rect, view)?;
@@ -89,7 +92,9 @@ impl Session {
     fn split(&mut self, axis: Axis, gpu: &mut Gpu, config: &sumie_config::Config) -> Result<()> {
         let tab = self.tabs.active().unwrap();
         let old = tab.tree.focused();
-        let rect = tab.tree.split_preview(axis, self.view.content_rect());
+        let rect = tab
+            .tree
+            .split_preview(axis, self.view.content_rect(), self.view.cell);
         let pane = match self.spawn_pane(rect, config) {
             Ok(pane) => pane,
             Err(error) => {

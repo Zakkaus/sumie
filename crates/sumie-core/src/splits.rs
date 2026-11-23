@@ -1,5 +1,8 @@
 //! Split topology, focus, and device-pixel geometry for one tab.
 
+mod geometry;
+use geometry::{Ratio, combined_tracks, partition};
+
 #[cfg(test)]
 mod tests;
 
@@ -135,6 +138,7 @@ pub struct Divider {
     pub axis: Axis,
     start: u32,
     available: u32,
+    limits: [u32; 2],
 }
 
 impl Divider {
@@ -157,7 +161,7 @@ impl Layout {
     fn pane(&self, id: u64) -> Option<Rect> {
         self.panes
             .iter()
-            .find_map(|&(pane, rect)| (pane == id && !rect.is_empty()).then_some(rect))
+            .find_map(|&(pane, rect)| (pane == id).then_some(rect))
     }
 }
 
@@ -185,25 +189,29 @@ impl SplitTree {
         self.focused
     }
 
-    /// Return the new pane's bounds after a split, without changing the tree.
-    /// Like [`Self::split`], this uses the unzoomed geometry.
+    /// Return the new pane's bounds after a split, with the same minimum pane
+    /// dimensions in device pixels as [`Self::layout`]. Like [`Self::split`],
+    /// this uses unzoomed geometry without changing the tree.
     #[must_use]
-    pub fn split_preview(&self, axis: Axis, bounds: Rect) -> Rect {
-        let pane = self.root.focused_rect(self.focused, bounds.clipped());
-        partition(pane, axis, Ratio::EVEN)[2]
+    pub fn split_preview(&self, axis: Axis, bounds: Rect, cell: [u32; 2]) -> Rect {
+        geometry::split_preview(&self.root, self.focused, axis, bounds.clipped(), cell)
     }
 
     /// Split the focused pane evenly, focus `new_id`, and exit zoom.
     /// The caller must supply an ID that is not already in the tree.
     pub fn split(&mut self, axis: Axis, new_id: u64) {
-        let leaf = self.root.focused_leaf_mut(self.focused);
-        *leaf = Node::Split(Box::new(Branch {
-            id: self.next_divider,
-            axis,
-            ratio: Ratio::EVEN,
-            first: Node::Leaf(self.focused),
-            second: Node::Leaf(new_id),
-        }));
+        let focused = self.focused;
+        let replaced = self.root.replace_leaf(focused, &|| {
+            Node::Split(Box::new(Branch {
+                id: self.next_divider,
+                axis,
+                ratio: Ratio::EVEN,
+                tracks: combined_tracks(axis, [1; 2], [1; 2]),
+                first: Node::Leaf(focused),
+                second: Node::Leaf(new_id),
+            }))
+        });
+        debug_assert!(replaced, "the focused pane is always a leaf in the tree");
         self.next_divider += 1;
         self.focused = new_id;
         self.zoomed = false;
@@ -270,7 +278,7 @@ impl SplitTree {
         if self.zoomed {
             return false;
         }
-        let Some(pane) = layout.pane(self.focused) else {
+        let Some(pane) = layout.pane(self.focused).filter(|pane| !pane.is_empty()) else {
             return false;
         };
         let axis = direction.axis();
@@ -289,7 +297,7 @@ impl SplitTree {
     }
 
     /// Move a divider to an absolute window-device-pixel position along its
-    /// partition axis, keeping at least one pixel on each side. Return whether
+    /// partition axis within the current layout's limits. Return whether
     /// geometry changed; use a layout from this tree's current geometry.
     pub fn drag(&mut self, divider_id: u64, position: [u32; 2], layout: &Layout) -> bool {
         if self.zoomed {
@@ -310,24 +318,24 @@ impl SplitTree {
         self.move_divider(divider, position)
     }
 
-    /// Replace `layout` while retaining its allocations. Exclusive edges
-    /// beyond `u32::MAX` are clipped.
-    pub fn layout(&self, bounds: Rect, layout: &mut Layout) {
+    /// Replace `layout` while retaining its allocations. Use `cell` as the
+    /// minimum pane dimensions in device pixels when space permits. Exclusive
+    /// edges beyond `u32::MAX` are clipped.
+    pub fn layout(&self, bounds: Rect, cell: [u32; 2], layout: &mut Layout) {
         layout.panes.clear();
         layout.hidden.clear();
         layout.dividers.clear();
         let bounds = bounds.clipped();
         self.root
-            .layout(bounds, layout, self.zoomed.then_some(self.focused));
+            .layout(bounds, cell, layout, self.zoomed.then_some(self.focused));
         if self.zoomed {
             layout.panes.push((self.focused, bounds));
         }
     }
 
     fn move_divider(&mut self, divider: Divider, position: u32) -> bool {
-        let first = position
-            .saturating_sub(divider.start)
-            .clamp(1, divider.available - 1);
+        let [min, max] = divider.limits;
+        let first = position.saturating_sub(divider.start).clamp(min, max);
         if first == divider.position() - divider.start {
             return false;
         }
@@ -371,54 +379,26 @@ fn bordering_divider(layout: &Layout, pane: Rect, axis: Axis, forward: bool) -> 
     })
 }
 
-#[derive(Clone, Copy)]
-struct Ratio {
-    first: u32,
-    available: u32,
-}
-
-impl Ratio {
-    const EVEN: Self = Self {
-        first: 1,
-        available: 2,
-    };
-
-    fn offset(self, available: u32) -> u32 {
-        let offset = u64::from(available) * u64::from(self.first) / u64::from(self.available);
-        let offset = u32::try_from(offset).expect("a split fraction never exceeds its span");
-        if available >= 2 {
-            offset.clamp(1, available - 1)
-        } else {
-            offset
-        }
-    }
-}
-
-fn partition(rect: Rect, axis: Axis, ratio: Ratio) -> [Rect; 3] {
-    let Span { start, len } = rect.span(axis);
-    // At tiny sizes, spend pixels on the panes before showing a divider.
-    let divider = u32::from(len >= 3 && !rect.is_empty());
-    let available = len - divider;
-    let first = ratio.offset(available);
-    let position = start + first;
-    [
-        rect.with_span(axis, start, first),
-        rect.with_span(axis, position, divider),
-        rect.with_span(axis, position + divider, available - first),
-    ]
-}
-
 struct Branch {
     id: u64,
     axis: Axis,
     ratio: Ratio,
+    // Subtree minimum along each axis, counted in cells before adding dividers.
+    tracks: [u32; 2],
     first: Node,
     second: Node,
 }
 
 impl Branch {
-    fn layout(&self, rect: Rect, layout: &mut Layout, zoom: Option<u64>) {
-        let [first, divider, second] = partition(rect, self.axis, self.ratio);
+    fn update_tracks(&mut self) {
+        self.tracks = combined_tracks(self.axis, self.first.tracks(), self.second.tracks());
+    }
+
+    fn layout(&self, rect: Rect, cell: [u32; 2], layout: &mut Layout, zoom: Option<u64>) {
+        let axis = self.axis as usize;
+        let tracks = [self.first.tracks()[axis], self.second.tracks()[axis]];
+        let partition = partition(rect, self.axis, self.ratio, tracks, cell[axis]);
+        let [first, divider, second] = partition.rects;
         if zoom.is_none() && !divider.is_empty() {
             let Span { start, len } = rect.span(self.axis);
             layout.dividers.push(Divider {
@@ -427,10 +407,11 @@ impl Branch {
                 axis: self.axis,
                 start,
                 available: len - 1,
+                limits: partition.limits,
             });
         }
-        self.first.layout(first, layout, zoom);
-        self.second.layout(second, layout, zoom);
+        self.first.layout(first, cell, layout, zoom);
+        self.second.layout(second, cell, layout, zoom);
     }
 }
 
@@ -440,27 +421,29 @@ enum Node {
 }
 
 impl Node {
-    fn focused_rect(&self, id: u64, rect: Rect) -> Rect {
-        self.leaf_rect(id, rect)
-            .expect("the focused pane is always a leaf in the tree")
-    }
-
-    fn leaf_rect(&self, id: u64, rect: Rect) -> Option<Rect> {
+    fn tracks(&self) -> [u32; 2] {
         match self {
-            Self::Leaf(leaf) => (*leaf == id).then_some(rect),
-            Self::Split(branch) => {
-                let [first, _, second] = partition(rect, branch.axis, branch.ratio);
-                branch
-                    .first
-                    .leaf_rect(id, first)
-                    .or_else(|| branch.second.leaf_rect(id, second))
-            }
+            Self::Leaf(_) => [1; 2],
+            Self::Split(branch) => branch.tracks,
         }
     }
 
-    fn focused_leaf_mut(&mut self, id: u64) -> &mut Self {
-        self.leaf_mut(id)
-            .expect("the focused pane is always a leaf in the tree")
+    fn replace_leaf(&mut self, id: u64, replacement: &impl Fn() -> Self) -> bool {
+        match self {
+            Self::Leaf(leaf) if *leaf == id => {
+                *self = replacement();
+                true
+            }
+            Self::Leaf(_) => false,
+            Self::Split(branch) => {
+                let replaced = branch.first.replace_leaf(id, replacement)
+                    || branch.second.replace_leaf(id, replacement);
+                if replaced {
+                    branch.update_tracks();
+                }
+                replaced
+            }
+        }
     }
 
     fn leaf_mut(&mut self, id: u64) -> Option<&mut Self> {
@@ -496,7 +479,12 @@ impl Node {
         } else if matches!(branch.second, Self::Leaf(leaf) if leaf == id) {
             (&mut branch.first, false)
         } else {
-            return branch.first.remove(id).or_else(|| branch.second.remove(id));
+            let replacement = branch
+                .first
+                .remove(id)
+                .or_else(|| branch.second.remove(id))?;
+            branch.update_tracks();
+            return Some(replacement);
         };
         let replacement = sibling.edge_leaf(first);
         *self = std::mem::replace(sibling, Self::Leaf(id));
@@ -513,12 +501,12 @@ impl Node {
         }
     }
 
-    fn layout(&self, rect: Rect, layout: &mut Layout, zoom: Option<u64>) {
+    fn layout(&self, rect: Rect, cell: [u32; 2], layout: &mut Layout, zoom: Option<u64>) {
         match self {
             Self::Leaf(id) if zoom.is_none() => layout.panes.push((*id, rect)),
             Self::Leaf(id) if zoom != Some(*id) => layout.hidden.push((*id, rect)),
             Self::Leaf(_) => (),
-            Self::Split(branch) => branch.layout(rect, layout, zoom),
+            Self::Split(branch) => branch.layout(rect, cell, layout, zoom),
         }
     }
 }

@@ -43,6 +43,8 @@ pub(crate) enum SearchTarget {
 pub(crate) struct Routing {
     shortcuts: Shortcuts,
     pub(crate) generation: u64,
+    // Only the current input generation can own a PTY key press.
+    terminal_presses: Vec<u32>,
     repeating_search_key: Option<u32>,
     search_presses: [Option<SearchTarget>; 3],
 }
@@ -50,6 +52,7 @@ pub(crate) struct Routing {
 impl Routing {
     pub(crate) fn change_recipient(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1);
+        self.terminal_presses.clear();
         self.repeating_search_key = None;
         // Keep ownership until release, but never activate a button in a reopened search.
         for pressed in self.search_presses.iter_mut().flatten() {
@@ -60,6 +63,22 @@ impl Routing {
 
     pub(crate) fn reset_pointer(&mut self) {
         self.search_presses.fill(None);
+    }
+
+    fn terminal_key(&mut self, physical: u32, action: KeyAction) -> bool {
+        let held = self
+            .terminal_presses
+            .iter()
+            .position(|&key| key == physical);
+        match (action, held) {
+            (KeyAction::Press, None) => self.terminal_presses.push(physical),
+            (KeyAction::Release, Some(i)) => {
+                self.terminal_presses.swap_remove(i);
+            }
+            (KeyAction::Repeat | KeyAction::Release, None) => return false,
+            _ => (),
+        }
+        true
     }
 
     fn search_key(
@@ -156,6 +175,7 @@ pub(crate) fn route(
                 Some(Shortcut::Paste) => return Ok(Effect::ReadClipboard),
                 Some(Shortcut::Search) => return Ok(Effect::Search(SearchAction::Open)),
                 Some(Shortcut::Consume) => return Ok(Effect::None),
+                None if !routing.terminal_key(physical, action) => return Ok(Effect::None),
                 None => (),
             }
             key_text = utf8;
