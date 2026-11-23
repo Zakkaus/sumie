@@ -28,7 +28,8 @@ use toml::Spanned;
 mod shell;
 pub use shell::Shell;
 
-const POINT_TO_PX: f32 = 96.0 / 72.0;
+/// Ratio of logical pixels at 96 DPI to typographic points.
+pub const POINT_TO_PX: f32 = 96.0 / 72.0;
 const MIN_WEIGHT: u16 = 100;
 const MAX_WEIGHT: u16 = 900;
 const MAX_INCLUDE_DEPTH: usize = 64;

@@ -31,6 +31,29 @@ fn search_keeps_terminal_dimensions() {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn font_zoom_reflows_grid_and_reset_restores_config_size() {
+    use crate::view::{FontSettings, View};
+    use sumie_core::FontZoom;
+
+    let config = sumie_config::Config::default();
+    let font = FontSettings::from_config(config.font).unwrap();
+    let mut view = View::new(150, [640, 320], [800, 400], font, &config.colors).unwrap();
+    let cell = view.cell;
+    let initial = view.size();
+
+    assert!(view.zoom(FontZoom::Increase).unwrap());
+    let zoomed = view.size();
+    assert!(view.cell[1] > cell[1] && zoomed.rows < initial.rows);
+    assert_eq!([zoomed.width_px, zoomed.height_px], [800, 400]);
+
+    assert!(view.zoom(FontZoom::Reset).unwrap());
+    assert_eq!(view.cell, cell);
+    let restored = view.size();
+    assert_eq!([restored.cols, restored.rows], [initial.cols, initial.rows]);
+}
+
 const WIDTH: u32 = 36;
 const HEIGHT: u32 = 34;
 const CELL: [u32; 2] = [8, 16];

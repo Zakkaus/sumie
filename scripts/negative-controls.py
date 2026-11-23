@@ -244,6 +244,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("Size {\n            cols,\n            rows,",
                            "Size {\n            cols,\n            rows: rows - u16::from(self.search_bar.is_some()),"),
               "test grid_tests::search_keeps_terminal_dimensions ... FAILED")
+        probe("zoom leaves the font at its configured size", "test", "src/view.rs",
+              replace_once("self.replace_font(self.font_settings.at_scale(self.scale, points)?);",
+                           "self.replace_font(self.font_settings.at_scale(self.scale, None)?);"),
+              "test grid_tests::font_zoom_reflows_grid_and_reset_restores_config_size ... FAILED")
         probe("search wheel reaches terminal mouse routing", "test", "src/input.rs",
               replace_once("return pane.search_pointer(event);",
                            "if !matches!(event.phase, sumie_core::mouse::MousePhase::Wheel(_)) {\n"

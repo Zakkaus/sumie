@@ -5,7 +5,7 @@ use std::{
     mem::{Discriminant, discriminant},
 };
 
-use sumie_core::{CellPosition, CellRange};
+use sumie_core::{CellPosition, CellRange, FontZoom};
 use sumie_font::{FontError, FontStyle, FontSystem};
 use sumie_pty::Size;
 use sumie_render::{
@@ -27,6 +27,7 @@ use tabs::Tabs;
 pub(crate) struct View {
     font: FontSystem,
     font_settings: FontSettings,
+    zoom_points: Option<f32>,
     font_errors: FontErrors,
     logical: [u32; 2],
     scale: u32,
@@ -86,12 +87,13 @@ impl View {
     ) -> Result<Self> {
         u16::try_from(device[0])?;
         u16::try_from(device[1])?;
-        let font = font_settings.at_scale(scale)?;
+        let font = font_settings.at_scale(scale, None)?;
         let cell = [font.metrics().width, font.metrics().height];
         let grid = grid_size(device, cell);
         Ok(Self {
             font,
             font_settings,
+            zoom_points: None,
             font_errors: FontErrors::default(),
             scale,
             tabs: Tabs::default(),
@@ -119,7 +121,7 @@ impl View {
         u16::try_from(device[0])?;
         u16::try_from(device[1])?;
         if scale != self.scale {
-            let font = self.font_settings.at_scale(scale)?;
+            let font = self.font_settings.at_scale(scale, self.zoom_points)?;
             self.tabs.rescale(scale)?;
             self.font = font;
             self.scale = scale;
@@ -137,18 +139,33 @@ impl View {
     /// Replace the font and its atlas at the current scale, leaving the view intact on error.
     pub(crate) fn set_font(&mut self, config: sumie_config::Font) -> Result<bool> {
         let settings = FontSettings::from_config(config)?;
-        if settings.same_as(&self.font_settings) {
-            return Ok(false);
+        let changed = !settings.matches(&self.font_settings, self.zoom_points);
+        if changed {
+            self.replace_font(settings.at_scale(self.scale, None)?);
         }
-        let font = settings.at_scale(self.scale)?;
+        self.font_settings = settings;
+        self.zoom_points = None;
+        Ok(changed)
+    }
+
+    pub(crate) fn zoom(&mut self, action: FontZoom) -> Result<bool> {
+        let points = self.font_settings.zoom(self.zoom_points, action);
+        let changed = self.font_settings.px(points).to_bits()
+            != self.font_settings.px(self.zoom_points).to_bits();
+        if changed {
+            self.replace_font(self.font_settings.at_scale(self.scale, points)?);
+        }
+        self.zoom_points = points;
+        Ok(changed)
+    }
+
+    fn replace_font(&mut self, font: FontSystem) {
         let cell = [font.metrics().width, font.metrics().height];
         self.grid = grid_size(self.terminal_device(), cell);
         self.reset_hits();
         self.search_box = None;
         self.cell = cell;
         self.font = font;
-        self.font_settings = settings;
-        Ok(true)
     }
 
     pub(crate) fn set_selection_colors(&mut self, colors: &sumie_config::Colors) {

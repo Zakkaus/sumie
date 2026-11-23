@@ -50,7 +50,15 @@ pub enum Shortcut {
     Paste,
     Search,
     Tab(TabAction),
+    Zoom(FontZoom),
     Consume,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontZoom {
+    Increase,
+    Decrease,
+    Reset,
 }
 
 impl Shortcuts {
@@ -100,6 +108,13 @@ fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Sho
     const KEY_V: u32 = 47;
     const KEY_PAGE_UP: u32 = 104;
     const KEY_PAGE_DOWN: u32 = 109;
+
+    match symbol {
+        Some('=' | '+') => return Some(Shortcut::Zoom(FontZoom::Increase)),
+        Some('-') => return Some(Shortcut::Zoom(FontZoom::Decrease)),
+        Some('0') => return Some(Shortcut::Zoom(FontZoom::Reset)),
+        _ => (),
+    }
 
     let action = match (evdev, shift) {
         (KEY_TAB | KEY_PAGE_DOWN, false) => TabAction::Cycle(1),

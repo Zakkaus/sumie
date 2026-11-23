@@ -129,15 +129,16 @@ fn matched_shortcuts_never_reach_the_pty() {
             );
         }
     }
-    tab_shortcuts_never_reach_the_pty(&mut pane, &mut routing);
+    window_shortcuts_never_reach_the_pty(&mut pane, &mut routing);
     search_modal_routes(&mut pane, &mut routing);
     pane.command(PaneCommand::Close).unwrap();
     crate::sources::reap(&mut pane.pty).unwrap();
 }
 
-fn tab_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut input::Routing) {
+fn window_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut input::Routing) {
     use KeyAction::{Press, Release, Repeat};
     use input::Effect;
+    use sumie_core::FontZoom;
     use xkeysym::key;
 
     let plain = Modifiers::default();
@@ -160,6 +161,12 @@ fn tab_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut input::
         (104, key::Page_Up, ctrl_shift, TabAction::MoveLeft),
         (109, key::Page_Down, ctrl_shift, TabAction::MoveRight),
     ];
+    let zoom = [
+        (12, key::equal, ctrl, Effect::Zoom(FontZoom::Increase)),
+        (10, key::plus, ctrl_shift, Effect::Zoom(FontZoom::Increase)),
+        (7, key::minus, ctrl, Effect::Zoom(FontZoom::Decrease)),
+        (11, key::_0, ctrl_shift, Effect::Zoom(FontZoom::Reset)),
+    ];
     let digits = (0_u8..9).map(|index| {
         let action = if index == 8 {
             TabAction::Last
@@ -168,9 +175,15 @@ fn tab_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut input::
         };
         (u32::from(index + 2), u32::from(b'1' + index), alt, action)
     });
-    for (physical, symbol, modifiers, tab_action) in chords.into_iter().chain(digits) {
+    let tabs = chords
+        .into_iter()
+        .chain(digits)
+        .map(|(physical, symbol, modifiers, action)| {
+            (physical, symbol, modifiers, Effect::Tab(action))
+        });
+    for (physical, symbol, modifiers, effect) in tabs.chain(zoom) {
         for (action, modifiers, expected) in [
-            (Press, modifiers, Effect::Tab(tab_action)),
+            (Press, modifiers, effect),
             (Repeat, plain, Effect::None),
             (Release, plain, Effect::None),
         ] {
@@ -179,7 +192,7 @@ fn tab_shortcuts_never_reach_the_pty(pane: &mut LocalPane, routing: &mut input::
                 input::route(0, pane, routing, false, event).unwrap(),
                 expected
             );
-            assert!(pane.pty.input_fd().is_none(), "matched tab key: {physical}");
+            assert!(pane.pty.input_fd().is_none(), "matched key: {physical}");
         }
     }
 

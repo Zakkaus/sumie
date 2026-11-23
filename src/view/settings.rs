@@ -1,5 +1,7 @@
 use std::{borrow::Cow, mem::discriminant};
 
+use sumie_config::POINT_TO_PX;
+use sumie_core::FontZoom;
 use sumie_font::{FontError, FontOptions, FontSystem, Hinting};
 
 use crate::Result;
@@ -37,18 +39,32 @@ impl FontSettings {
         })
     }
 
-    pub(super) fn same_as(&self, other: &Self) -> bool {
+    pub(super) fn matches(&self, other: &Self, zoom_points: Option<f32>) -> bool {
         self.family == other.family
-            && self.px.to_bits() == other.px.to_bits()
+            && self.px.to_bits() == other.px(zoom_points).to_bits()
             && self.options.weight == other.options.weight
             && discriminant(&self.options.hinting) == discriminant(&other.options.hinting)
     }
 
-    pub(super) fn at_scale(&self, scale: u32) -> Result<FontSystem> {
+    pub(super) fn zoom(&self, current: Option<f32>, action: FontZoom) -> Option<f32> {
+        let delta = match action {
+            FontZoom::Increase => 1.0,
+            FontZoom::Decrease => -1.0,
+            FontZoom::Reset => return None,
+        };
+        let points = current.unwrap_or(self.px / POINT_TO_PX);
+        Some((points + delta).clamp(4.0, 200.0))
+    }
+
+    pub(super) fn px(&self, zoom_points: Option<f32>) -> f32 {
+        zoom_points.map_or(self.px, |points| points * POINT_TO_PX)
+    }
+
+    pub(super) fn at_scale(&self, scale: u32, zoom_points: Option<f32>) -> Result<FontSystem> {
         let scale_units = u16::try_from(scale)?;
         let font = FontSystem::new(
             &self.family,
-            self.px,
+            self.px(zoom_points),
             f32::from(scale_units) / 120.0,
             self.options,
         )?;

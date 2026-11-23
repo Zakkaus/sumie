@@ -324,6 +324,17 @@ impl Session {
         Ok(())
     }
 
+    fn zoom(&mut self, action: sumie_core::FontZoom) -> Result<()> {
+        match self.view.zoom(action) {
+            Ok(true) => self.resize_grid(),
+            Ok(false) => Ok(()),
+            Err(error) => {
+                tracing::warn!(%error, "could not zoom terminal font");
+                Ok(())
+            }
+        }
+    }
+
     fn input(&mut self, event: Event, gpu: &mut Gpu) -> Result<Option<tabs::Action>> {
         if let std::ops::ControlFlow::Break(action) = self.bar_input(&event) {
             return Ok(action);
@@ -374,6 +385,7 @@ impl Session {
         };
         match effect {
             input::Effect::Tab(action) => return Ok(Some(tabs::Action::Key(action))),
+            input::Effect::Zoom(action) => self.zoom(action)?,
             input::Effect::Search(action) => {
                 if matches!(
                     action,

@@ -40,8 +40,14 @@ impl Atlas {
             side,
             pixels: vec![0; (side as usize).pow(2)],
             entries: HashMap::new(),
-            dirty: Vec::new(),
-            resized: false,
+            // A replacement atlas can reuse a GPU texture with the same dimensions.
+            dirty: vec![Rect {
+                x: 0,
+                y: 0,
+                width: side,
+                height: side,
+            }],
+            resized: true,
             x: 0,
             y: 0,
             shelf_height: 0,

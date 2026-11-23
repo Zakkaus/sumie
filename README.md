@@ -10,6 +10,8 @@ On Wayland, Ctrl+Shift+T opens a tab in the active shell's last reported local d
 
 Ctrl+Tab or Ctrl+PageDown selects the next tab; Ctrl+Shift+Tab or Ctrl+PageUp selects the previous one. Alt+1 through Alt+8 select tabs by position, and Alt+9 selects the last tab. Ctrl+Shift+PageUp and Ctrl+Shift+PageDown move the active tab left and right. The bar appears when a second tab opens. Click a tab to select it, middle-click to close it, or scroll over the bar to switch tabs.
 
+Press Ctrl+= or Ctrl++ to increase the terminal font size by 1 pt, or Ctrl+- to decrease it. The shortcuts clamp zoom to 4–200 pt. All tabs in the window share the size, and the grid reflows without resizing the window. Ctrl+0 restores the configured size, as does changing `[font].size` in the config file.
+
 On macOS 13 or later, sumie opens a Metal test page, not a shell. Run `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` to save the third presented frame and close the window.
 
 On first launch on Linux, sumie uses ncurses `tic` to install `xterm-sumie` under `$XDG_DATA_HOME/sumie/terminfo` (default: `~/.local/share/sumie/terminfo`). It reuses the entry until the bundled source changes. If it cannot install the entry, it starts the shell with `TERM=xterm-256color` instead.
