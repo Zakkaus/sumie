@@ -238,7 +238,7 @@ fn moving_parent_divider_keeps_nested_panes_navigable() {
     assert_eq!(tree.focused(), 2);
 
     tree.layout(rect(0, 0, 2, 40), cell, &mut layout);
-    assert!(layout.dividers.is_empty());
+    assert_eq!(layout.dividers, []);
     assert!(tree.focus_neighbor(Direction::Right, &layout));
     assert_eq!(tree.focused(), 3);
 }
