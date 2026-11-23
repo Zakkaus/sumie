@@ -104,7 +104,8 @@ pub struct TerminalModeConfig {
 #[repr(C)]
 #[derive(Default)]
 pub struct Style {
-    colors: [[u8; 4]; 3],
+    colors: [[u8; 4]; 2],
+    pub underline_color: [u8; 4],
     pub flags: u16,
     reserved: u16,
 }
@@ -188,9 +189,25 @@ pub const CLIPBOARD_WRITE_DENIED: c_int = 1;
 pub const CLIPBOARD_WRITE_UNSUPPORTED: c_int = 2;
 pub const CLIPBOARD_READ_DENIED: c_int = 1;
 pub const MODE_BRACKETED_PASTE: u16 = 2004;
+pub const STYLE_COLOR_NONE: u8 = 0;
+pub const STYLE_COLOR_PALETTE: u8 = 1;
+pub const STYLE_COLOR_RGB: u8 = 2;
+pub const STYLE_BOLD: u16 = 1;
+pub const STYLE_ITALIC: u16 = 1 << 1;
+pub const STYLE_FAINT: u16 = 1 << 2;
 pub const STYLE_INVERSE: u16 = 1 << 4;
 pub const STYLE_INVISIBLE: u16 = 1 << 5;
+pub const STYLE_STRIKETHROUGH: u16 = 1 << 6;
+pub const STYLE_OVERLINE: u16 = 1 << 7;
+pub const STYLE_UNDERLINE_SHIFT: u16 = 8;
+pub const SGR_UNDERLINE_NONE: u16 = 0;
+pub const SGR_UNDERLINE_SINGLE: u16 = 1;
+pub const SGR_UNDERLINE_DOUBLE: u16 = 2;
+pub const SGR_UNDERLINE_CURLY: u16 = 3;
+pub const SGR_UNDERLINE_DOTTED: u16 = 4;
+pub const SGR_UNDERLINE_DASHED: u16 = 5;
 pub const CELL_DATA_WIDE: c_int = 3;
+pub const CELL_DATA_HAS_HYPERLINK: c_int = 7;
 pub const CELL_WIDE_NARROW: c_int = 0;
 pub const CELL_WIDE_WIDE: c_int = 1;
 pub const CELL_WIDE_SPACER_TAIL: c_int = 2;
@@ -201,6 +218,7 @@ pub const RENDER_STATE_DATA_ROW_ITERATOR: c_int = 4;
 pub const RENDER_STATE_DATA_COLOR_BACKGROUND: c_int = 5;
 pub const RENDER_STATE_DATA_COLOR_FOREGROUND: c_int = 6;
 pub const RENDER_STATE_DATA_COLOR_CURSOR: c_int = 7;
+pub const RENDER_STATE_DATA_COLOR_PALETTE: c_int = 9;
 pub const RENDER_STATE_DATA_CURSOR_VISUAL_STYLE: c_int = 10;
 pub const RENDER_STATE_DATA_CURSOR_VISIBLE: c_int = 11;
 pub const RENDER_STATE_DATA_CURSOR_BLINKING: c_int = 12;

@@ -1,22 +1,51 @@
 use std::path::PathBuf;
 
-use skrifa::font::Source;
+use skrifa::font::{
+    Source,
+    attribute::{Attributes, Style},
+};
 use skrifa::{Font, FontRef, Tag};
 
-use crate::FontError;
+use crate::{FontError, FontStyle};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Request {
+    style: FontStyle,
+    weight: Option<u16>,
+}
+
+impl Request {
+    fn new(weight: Option<u16>, style: FontStyle) -> Self {
+        let weight = if style.bold {
+            Some((weight.unwrap_or(400) + 300).min(900))
+        } else {
+            weight
+        };
+        Self { style, weight }
+    }
+
+    fn synthetic(self, attributes: Attributes) -> FontStyle {
+        FontStyle {
+            // A real semibold can stand in for bold when the requested weight is unavailable.
+            bold: self.style.bold
+                && attributes.weight.value() < f32::from(self.weight.unwrap_or(700).min(600)),
+            italic: self.style.italic && attributes.style == Style::Normal,
+        }
+    }
+}
 
 #[cfg_attr(target_os = "linux", derive(Debug))]
 pub(crate) struct Match {
     pub family: String,
     path: PathBuf,
     index: u32,
-    weight: Option<u16>,
+    request: Request,
     #[cfg(target_os = "macos")]
     bytes: skrifa::font::Blob,
 }
 
 impl Match {
-    pub fn load(&self, faces: &[Face]) -> Result<Font, FontError> {
+    pub fn load(&self, faces: &[Face]) -> Result<(Font, FontStyle), FontError> {
         // Different faces of a collection share its file bytes.
         let source = if let Some(face) = faces.iter().find(|face| face.matched.path == self.path) {
             face.font.source().clone()
@@ -37,25 +66,66 @@ impl Match {
         };
         let font = Font::new(source, self.face_index())
             .ok_or_else(|| FontError::InvalidFont(self.path.clone()))?;
-        // Fontconfig's upper index bits select a one-based named instance.
-        let named = self.index >> 16;
-        let axis = Tag::new(b"wght");
-        if let Some(weight) = self
+        let overrides = self.overrides(&font);
+        let synthetic = if self.request.style == FontStyle::default() {
+            FontStyle::default()
+        } else {
+            self.request.synthetic(self.attributes(&font, overrides))
+        };
+        let named = self.named_instance();
+        let font = if let Some(index) = named {
+            font.instance_builder()
+                .named_instance_with_overrides(index, overrides.into_iter().flatten())
+                .build()
+        } else if overrides.iter().any(Option::is_some) {
+            font.instance_builder()
+                .variations(overrides.into_iter().flatten())
+                .build()
+        } else {
+            font
+        };
+        Ok((font, synthetic))
+    }
+
+    fn overrides(&self, font: &Font) -> [Option<(Tag, f32)>; 2] {
+        let axes = font.axes();
+        let wght = Tag::new(b"wght");
+        let weight = self
+            .request
             .weight
-            .filter(|_| font.axes().get_by_tag(axis).is_some())
-        {
-            let variation = [(axis, f32::from(weight))];
-            let instance = font.instance_builder();
-            return Ok(match named {
-                0 => instance.variations(variation),
-                index => instance.named_instance_with_overrides(index - 1, variation),
+            .filter(|_| axes.get_by_tag(wght).is_some())
+            .map(|weight| (wght, f32::from(weight)));
+        let mut posture = None;
+        if self.request.style.italic {
+            let ital = Tag::new(b"ital");
+            let slnt = Tag::new(b"slnt");
+            if axes
+                .get_by_tag(ital)
+                .is_some_and(|axis| axis.max_value() >= 0.5)
+            {
+                posture = Some((ital, 1.0));
+            } else if axes.get_by_tag(slnt).is_some() {
+                // OpenType slant angles are counterclockwise from vertical.
+                posture = Some((slnt, -12.0));
             }
-            .build());
         }
-        Ok(match named {
-            0 => font,
-            index => font.instance_builder().named_instance(index - 1).build(),
-        })
+        [weight, posture]
+    }
+
+    fn attributes(&self, font: &Font, overrides: [Option<(Tag, f32)>; 2]) -> Attributes {
+        let variations = overrides.into_iter().flatten();
+        if let Some(index) = self.named_instance() {
+            Attributes::from_named_instance_with_overrides(font, index, variations)
+        } else if overrides.iter().any(Option::is_some) {
+            Attributes::from_variations(font, variations)
+        } else {
+            font.default_attributes()
+        }
+    }
+
+    fn named_instance(&self) -> Option<u32> {
+        // Fontconfig's upper index bits select a one-based named instance.
+        (self.index >> 16).checked_sub(1)
     }
 
     const fn face_index(&self) -> u32 {
@@ -68,11 +138,14 @@ pub(crate) struct Face {
     pub font: Font,
     pub ppem: f32,
     pub baseline: i32,
+    pub synthetic: FontStyle,
 }
 
 impl Face {
     pub fn matches(&self, matched: &Match) -> bool {
-        self.matched.path == matched.path && self.matched.index == matched.index
+        self.matched.path == matched.path
+            && self.matched.index == matched.index
+            && self.matched.request == matched.request
     }
 
     pub fn sfnt(&self) -> Option<FontRef<'_>> {
@@ -100,16 +173,17 @@ impl Discovery {
         })
     }
 
-    pub fn find(&mut self, codepoint: Option<char>) -> Result<Match, FontError> {
+    pub fn find(&mut self, codepoint: Option<char>, style: FontStyle) -> Result<Match, FontError> {
+        let request = Request::new(self.weight, style);
         if let Some(ch) = codepoint.filter(|&ch| is_private_use(ch))
-            && let Some(matched) = self.find_nerd(ch)?
+            && let Some(matched) = self.find_nerd(ch, request)?
         {
             return Ok(matched);
         }
-        to_match(&self.pattern(codepoint)?.font_match()?, self.weight)
+        to_match(&self.pattern(codepoint, request)?.font_match()?, request)
     }
 
-    fn find_nerd(&self, ch: char) -> Result<Option<Match>, FontError> {
+    fn find_nerd(&self, ch: char, request: Request) -> Result<Option<Match>, FontError> {
         use fontconfig::{ObjectSet, UnicodeCoverage, list_fonts};
 
         // FontSort ranks non-covering faces too. FontList matches the requested charset.
@@ -124,7 +198,7 @@ impl Discovery {
             return Ok(None);
         }
         let ranked = self
-            .pattern(Some(ch))?
+            .pattern(Some(ch), request)?
             .sort_fonts(UnicodeCoverage::NoTrim)?;
         for font in ranked.iter().filter(is_nerd) {
             let (file, index) = (font.filename()?, font.face_index()?);
@@ -132,17 +206,24 @@ impl Discovery {
                 other.face_index().is_ok_and(|value| value == index)
                     && other.filename().is_ok_and(|value| value == file)
             }) {
-                return to_match(&font, self.weight).map(Some);
+                return to_match(&font, request).map(Some);
             }
         }
         Ok(None)
     }
 
-    fn pattern(&self, codepoint: Option<char>) -> Result<fontconfig::Pattern<'_>, FontError> {
+    fn pattern(
+        &self,
+        codepoint: Option<char>,
+        request: Request,
+    ) -> Result<fontconfig::Pattern<'_>, FontError> {
         let mut pattern = self.charset_pattern(codepoint)?;
         pattern.add_string(c"family", &self.family)?;
-        if let Some(weight) = self.weight {
+        if let Some(weight) = request.weight {
             pattern.add_integer(fontconfig::FC_WEIGHT, fontconfig_weight(weight))?;
+        }
+        if request.style.italic {
+            pattern.add_integer(fontconfig::FC_SLANT, fontconfig::FC_SLANT_ITALIC)?;
         }
         Ok(pattern)
     }
@@ -164,7 +245,7 @@ impl Discovery {
 }
 
 #[cfg(target_os = "linux")]
-fn to_match(matched: &fontconfig::Pattern<'_>, weight: Option<u16>) -> Result<Match, FontError> {
+fn to_match(matched: &fontconfig::Pattern<'_>, request: Request) -> Result<Match, FontError> {
     let path = PathBuf::from(matched.filename()?);
     let index =
         u32::try_from(matched.face_index()?).map_err(|_| FontError::InvalidFont(path.clone()))?;
@@ -172,7 +253,7 @@ fn to_match(matched: &fontconfig::Pattern<'_>, weight: Option<u16>) -> Result<Ma
         family: matched.get_string(c"family")?.to_owned(),
         path,
         index,
-        weight,
+        request,
     })
 }
 

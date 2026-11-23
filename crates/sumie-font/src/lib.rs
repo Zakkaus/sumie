@@ -5,6 +5,7 @@
 #![deny(unsafe_code)]
 
 mod atlas;
+mod decoration;
 mod discovery;
 mod layout;
 mod metrics;
@@ -21,6 +22,7 @@ use skrifa::GlyphId;
 use thiserror::Error;
 
 pub use atlas::{Atlas, AtlasGlyph, Rect};
+pub use decoration::Decoration;
 pub use layout::{ShapedGlyph, ShapedRun};
 pub use metrics::CellMetrics;
 
@@ -43,7 +45,20 @@ pub struct FontOptions {
     pub weight: Option<u16>,
 }
 
-/// Identifies a face, including its font collection index and variation instance.
+/// Face style requested for a shaping run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FontStyle {
+    pub bold: bool,
+    pub italic: bool,
+}
+
+impl FontStyle {
+    const fn index(self) -> usize {
+        self.bold as usize | (self.italic as usize) << 1
+    }
+}
+
+/// Identifies a face, including its collection index, variation instance, and synthetic style.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FaceId(usize);
 
@@ -132,7 +147,8 @@ pub enum FontError {
 pub struct FontSystem {
     discovery: Discovery,
     faces: Vec<Face>,
-    fallback: HashMap<char, FaceId>,
+    primary: [Option<FaceId>; 4],
+    fallback: [HashMap<char, FaceId>; 4],
     metrics: CellMetrics,
     layout: layout::Layout,
     rasterizer: raster::Rasterizer,
@@ -161,8 +177,8 @@ impl FontSystem {
             return Err(FontError::InvalidWeight);
         }
         let mut discovery = Discovery::new(family, options.weight)?;
-        let matched = discovery.find(None)?;
-        let font = matched.load(&[])?;
+        let matched = discovery.find(None, FontStyle::default())?;
+        let (font, synthetic) = matched.load(&[])?;
         let metrics = CellMetrics::measure(&font, ppem)?;
         Ok(Self {
             discovery,
@@ -171,8 +187,10 @@ impl FontSystem {
                 font,
                 ppem,
                 baseline: metrics.baseline,
+                synthetic,
             }],
-            fallback: HashMap::new(),
+            primary: [Some(FaceId(0)), None, None, None],
+            fallback: Default::default(),
             metrics,
             layout: layout::Layout::default(),
             rasterizer: raster::Rasterizer::new(options.hinting),
@@ -198,18 +216,43 @@ impl FontSystem {
             .map(|face| face.matched.family.as_str())
     }
 
-    fn face_for(&mut self, ch: char) -> Result<FaceId, FontError> {
+    fn styled_primary(&mut self, style: FontStyle) -> Result<FaceId, FontError> {
+        if let Some(face) = self.primary[style.index()] {
+            return Ok(face);
+        }
+        let matched = self.discovery.find(None, style)?;
+        let (font, synthetic) = matched.load(&self.faces)?;
+        let id = FaceId(self.faces.len());
+        self.faces.push(Face {
+            matched,
+            font,
+            ppem: self.faces[0].ppem,
+            baseline: self.metrics.baseline,
+            synthetic,
+        });
+        self.primary[style.index()] = Some(id);
+        Ok(id)
+    }
+
+    fn face_for(&mut self, ch: char, style: FontStyle) -> Result<FaceId, FontError> {
         if sprite::covers(ch) {
             return Ok(sprite::FACE);
         }
-        if self.faces[0].font.charmap().map_unicode(ch).is_some() {
-            return Ok(self.primary_face());
+        let primary = self.styled_primary(style)?;
+        if self.faces[primary.0]
+            .font
+            .charmap()
+            .map_unicode(ch)
+            .is_some()
+        {
+            return Ok(primary);
         }
-        if let Some(&face) = self.fallback.get(&ch) {
+        let fallback = &mut self.fallback[style.index()];
+        if let Some(&face) = fallback.get(&ch) {
             return Ok(face);
         }
 
-        let matched = self.discovery.find(Some(ch))?;
+        let matched = self.discovery.find(Some(ch), style)?;
         let missing = FontError::MissingGlyph(u32::from(ch));
         let face = if let Some(index) = self.faces.iter().position(|face| face.matches(&matched)) {
             self.faces[index]
@@ -219,7 +262,7 @@ impl FontSystem {
                 .ok_or(missing)?;
             FaceId(index)
         } else {
-            let font = matched.load(&self.faces)?;
+            let (font, synthetic) = matched.load(&self.faces)?;
             font.charmap().map_unicode(ch).ok_or(missing)?;
             let ppem = self.metrics.fallback_ppem(&font, self.faces[0].ppem);
             let id = FaceId(self.faces.len());
@@ -228,10 +271,11 @@ impl FontSystem {
                 matched,
                 font,
                 ppem,
+                synthetic,
             });
             id
         };
-        self.fallback.insert(ch, face);
+        fallback.insert(ch, face);
         Ok(face)
     }
 

@@ -11,12 +11,14 @@ mod mouse;
 mod search;
 mod selection;
 mod shell;
+mod style;
 pub use anchor::GridAnchor;
 pub use cursor::{Cursor, CursorStyle};
 pub use effects::Event;
 pub use key::{KeyAction, KeyEncoder, KeyEvent};
 pub use mouse::{MouseAction, MouseButton, MouseEncoder, MouseReport};
 pub use search::{Search, SearchMatch};
+pub use style::{CellStyle, Underline};
 
 use effects::Effects;
 use std::ffi::{c_int, c_void};
@@ -34,6 +36,7 @@ pub struct Cell {
     pub wide_wrap_spacer: bool,
     pub foreground: Rgb,
     pub background: Rgb,
+    pub style: CellStyle,
 }
 
 pub type Rgb = [u8; 3];
@@ -46,11 +49,11 @@ pub struct Snapshot {
     pub background: Rgb,
 }
 
-#[derive(Clone, Copy)]
 struct Colors {
     foreground: Rgb,
     background: Rgb,
     cursor: Rgb,
+    palette: Option<[Rgb; 256]>,
 }
 
 /// Width of a Unicode codepoint, before any grapheme clustering.
@@ -326,12 +329,12 @@ impl Terminal {
                 from_mut(&mut self.row_iter).cast(),
             ))?;
         }
-        let colors = self.colors()?;
+        let mut colors = self.colors()?;
         let cursor = self.cursor(colors.cursor)?;
         let mut screen = Vec::with_capacity(usize::from(rows));
         // SAFETY: The row iterator was populated above; the render state is not updated in this loop.
         while unsafe { ffi::ghostty_render_state_row_iterator_next(self.row_iter) } {
-            screen.push(self.snapshot_row(cols, colors)?);
+            screen.push(self.snapshot_row(cols, &mut colors)?);
         }
         Ok(Snapshot {
             rows: screen,
@@ -355,6 +358,7 @@ impl Terminal {
             foreground,
             background,
             cursor,
+            palette: None,
         })
     }
 
@@ -367,7 +371,7 @@ impl Terminal {
         Ok(value)
     }
 
-    fn snapshot_row(&mut self, cols: u16, colors: Colors) -> Result<Vec<Cell>, Error> {
+    fn snapshot_row(&mut self, cols: u16, colors: &mut Colors) -> Result<Vec<Cell>, Error> {
         // SAFETY: The row iterator is positioned on a live row, and CELLS takes a pointer to
         // a preallocated cell iterator handle.
         check(unsafe {
@@ -385,7 +389,7 @@ impl Terminal {
         Ok(row)
     }
 
-    fn snapshot_cell(&self, colors: Colors) -> Result<Cell, Error> {
+    fn snapshot_cell(&self, colors: &mut Colors) -> Result<Cell, Error> {
         let mut cell: ffi::Cell = 0;
         let mut wide: c_int = 0;
         // SAFETY: The cell iterator is positioned on a live cell. RAW writes a GhosttyCell;
@@ -435,6 +439,7 @@ impl Terminal {
             wide_wrap_spacer: wide == ffi::CELL_WIDE_SPACER_HEAD,
             foreground,
             background,
+            style: self.cell_style(cell, &style, &mut colors.palette)?,
         })
     }
 

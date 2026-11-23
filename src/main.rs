@@ -27,6 +27,9 @@ mod sources;
 #[cfg(target_os = "linux")]
 mod view;
 
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod grid_tests;
+
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
 

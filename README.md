@@ -51,6 +51,8 @@ the filename, line, and column at the top of the window until the next valid sav
 Colors use `#rrggbb` notation; an optional `palette` must contain all 16 ANSI colors
 in index order.
 
+Bold and italic use the font family's matching faces when available. They do not change the grid size. SGR 2 dims the foreground to 50% opacity. Underlines can be single, double, curly, dotted or dashed; SGR 58 sets their color independently of text. Strikethrough and overline can appear together with an underline.
+
 Set `cursor.style` to `block`, `bar`, or `underline`. Terminal applications can
 override the shape and blink setting with DECSCUSR until they reset it. An
 unfocused window shows a steady outline for a visible cursor.

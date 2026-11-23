@@ -1,3 +1,5 @@
+mod attributes;
+
 use std::{
     borrow::Cow,
     collections::HashSet,
@@ -5,7 +7,7 @@ use std::{
 };
 
 use sumie_core::{CellPosition, CellRange};
-use sumie_font::{FontError, FontOptions, FontSystem, Hinting};
+use sumie_font::{FontError, FontOptions, FontStyle, FontSystem, Hinting};
 use sumie_pty::Size;
 use sumie_render::{
     AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, PixelRect, Rgba, wgpu,
@@ -14,6 +16,7 @@ use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 use sumie_wayland::CursorRect;
 
 use crate::Result;
+use attributes::{Ink, glyph_quad};
 
 mod overlays;
 
@@ -208,6 +211,7 @@ impl View {
                 &mut self.glyphs,
                 [column, row],
                 rgba(snapshot.foreground),
+                FontStyle::default(),
             );
         }
         if search_open {
@@ -235,17 +239,6 @@ impl View {
             self.line.clear();
             let mut start = 0;
             let mut run = None;
-            let mut draw = |line: &mut Line, column, color| {
-                line.trim_spaces();
-                line.draw(
-                    &mut self.font,
-                    &mut self.font_errors,
-                    &mut self.glyphs,
-                    [column, row],
-                    color,
-                );
-                line.clear();
-            };
             for (column, cell) in (0..).zip(cells) {
                 let highlighted = highlighted(column);
                 let covered = columns
@@ -267,22 +260,25 @@ impl View {
                 if cell.width == 0 {
                     continue;
                 }
-                let color = rgba(foreground);
-                if run != Some((highlighted, color)) {
+                let ink = Ink::new(foreground, cell.style);
+                if run != Some((highlighted, ink)) {
                     if let Some((_, previous)) = run {
-                        draw(&mut self.line, start, previous);
+                        self.finish_run([start, row], previous);
                     }
                     start = column;
-                    run = Some((highlighted, color));
+                    run = Some((highlighted, ink));
                 }
                 let intersects = columns.as_ref().is_some_and(|columns| {
                     columns.start < column + u32::from(cell.width) && column < columns.end
                 });
+                if !intersects {
+                    self.draw_decorations([column, row], cell, ink.color);
+                }
                 self.line
                     .push(if intersects { "" } else { &cell.text }, cell.width);
             }
-            if let Some((_, color)) = run {
-                draw(&mut self.line, start, color);
+            if let Some((_, ink)) = run {
+                self.finish_run([start, row], ink);
             }
         }
     }
@@ -455,12 +451,13 @@ impl Line {
         glyphs: &mut Vec<GlyphQuad>,
         [col, row]: [u32; 2],
         foreground: Rgba,
+        face: FontStyle,
     ) {
         if self.text.is_empty() {
             return;
         }
         let run = loop {
-            match font.shape(&self.text, &self.widths) {
+            match font.shape_styled(&self.text, &self.widths, face) {
                 Ok(run) => break run,
                 Err(error) => {
                     errors.warn(&error);
@@ -485,22 +482,13 @@ impl Line {
                     continue;
                 }
             };
-            let rect = image.rect;
-            if rect.width != 0 && rect.height != 0 {
-                let column = glyph.column + col;
-                let size = [rect.width, rect.height];
-                glyphs.push(GlyphQuad {
-                    atlas: AtlasRect {
-                        origin: [rect.x, rect.y],
-                        size,
-                    },
-                    dest: PixelRect {
-                        origin: [x + glyph.x + image.left, y + glyph.y + image.top],
-                        size,
-                    },
-                    color: foreground,
-                    cell: [column, row],
-                });
+            if image.rect.width != 0 && image.rect.height != 0 {
+                glyphs.push(glyph_quad(
+                    image,
+                    [x + glyph.x, y + glyph.y],
+                    [col + glyph.column, row],
+                    foreground,
+                ));
             }
         }
     }

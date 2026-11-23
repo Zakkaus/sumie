@@ -1,5 +1,3 @@
-#![forbid(unsafe_code)]
-
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -8,6 +6,9 @@ use sumie_render::{
     AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, OffscreenTarget, PixelRect,
     Renderer, Rgba, backends, instance_descriptor, wgpu,
 };
+
+#[cfg(target_os = "linux")]
+mod attributes;
 
 const WIDTH: u32 = 36;
 const HEIGHT: u32 = 34;
@@ -89,6 +90,8 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
             writer.finish().unwrap();
         }
     }
+    #[cfg(target_os = "linux")]
+    attributes::assert_decorations(&mut renderer, &device, &queue);
     assert_cursor_shapes(&mut renderer, &device, &queue, &target);
 }
 
@@ -277,12 +280,12 @@ fn assert_pixel(pixels: &[u8], x: u32, y: u32, expected: Rgba, tolerance: u8) {
 }
 
 fn readback(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
-    const ROW: u32 = WIDTH * 4;
-    const STRIDE: u32 =
-        ROW.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let row_bytes = texture.width() * 4;
+    let stride =
+        row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("grid readback"),
-        size: u64::from(STRIDE * HEIGHT),
+        size: u64::from(stride) * u64::from(texture.height()),
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -293,7 +296,7 @@ fn readback(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture)
             buffer: &buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(STRIDE),
+                bytes_per_row: Some(stride),
                 rows_per_image: None,
             },
         },
@@ -314,9 +317,9 @@ fn readback(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture)
         .expect("mapping callback")
         .expect("mapped readback buffer");
     let view = buffer.get_mapped_range(..).unwrap();
-    let mut pixels = Vec::with_capacity((ROW * HEIGHT) as usize);
-    for row in view.as_chunks::<{ STRIDE as usize }>().0 {
-        pixels.extend_from_slice(&row[..ROW as usize]);
+    let mut pixels = Vec::with_capacity((row_bytes * texture.height()) as usize);
+    for row in view.chunks_exact(stride as usize) {
+        pixels.extend_from_slice(&row[..row_bytes as usize]);
     }
     pixels
 }

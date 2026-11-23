@@ -73,6 +73,8 @@ For screenshots, `--exit-after-frames N --screenshot PATH` captures the Nth actu
 
 `Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. It includes resolved foreground and background colors and the viewport cursor. No handles or borrowed native data escape the crate.
 
+The VT `style` module decodes SGR flags and reads the active palette only when a cell has an indexed underline color. An OSC 8 link without an explicit underline gets a single line; the snapshot does not copy its URL.
+
 The VT `cursor` module configures libghostty-vt's cursor defaults and reads the effective shape and blink mode from the render state. Ghostty preserves explicit DECSCUSR overrides through config reload; DECSCUSR 0 restores the latest defaults.
 
 The VT `effects` module owns the synchronous callback queues. PTY replies and pending decoded clipboard writes each have a 1 MiB limit. The clipboard read callback replies with denial; the write callback replies after admitting a supported write. The title callback copies the latest title. None of these callbacks call platform code or log payloads. PTY output readiness wakes the owner thread before feeding VT, so that same dispatch can drain effects without a second wakeup. VT 1.0.1 parses CSI 22/23 but ignores those actions in its C terminal handler.
@@ -93,7 +95,11 @@ The caller supplies the grid widths for an already ordered, left-to-right run, i
 
 The `sprite` module draws box lines, block elements and Powerline separators (U+2500–259F and U+E0B0–E0BF) before font lookup. Its atlas keys use a reserved face ID. Each mask starts at the cell origin and occupies exactly one device-pixel cell, independent of the font baseline. Light strokes are `max(1, round(cell_height / 16))` pixels thick; heavy strokes are twice that. Sprites use the same R8 atlas and 1:1 sampling as font outlines.
 
+The `decoration` module draws underline, strikethrough and overline masks into the same atlas. It uses the primary face's device-pixel metrics, not the metrics of the face that supplies a fallback glyph. The view places masks per occupied column, including spaces, independently of text shaping. Only a change of face style, foreground or selection splits the shaping run.
+
 Skrifa draws outlines into Zeno's 8-bit coverage rasterizer. `FontOptions` fixes the hinting mode for one font system. The default mode leaves outlines unhinted. Enabled modes cache a hinter per face and raster size without changing grid metrics or shaping advances. An optional CSS weight applies to primary and fallback matches and overrides each face's `wght` coordinate if present.
+
+Styled runs keep the primary grid. The font system resolves a bold or italic face on first use, including for fallback characters. Bold requests weight 700 by default, or the configured weight plus 300 up to 900. When the family lacks a requested trait, the rasterizer strokes the outline for bold or shears it for italic. Each style has its own face identity in the atlas.
 
 Glyph origins and cell metrics use integer device pixels. Atlas entries retain their pixel rectangles when the shelf packer grows; growth marks the full atlas dirty. At a new scale or font size, replace the `FontSystem` and its atlas together. The binary reads the atlas dimensions, bytes, and dirty rectangles, then clears the dirty regions after consuming them. The font crate does not call the GPU.
 

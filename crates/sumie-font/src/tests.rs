@@ -1,6 +1,6 @@
 #[cfg(target_os = "linux")]
 mod linux {
-    use crate::{FontError, FontOptions, FontSystem, Hinting};
+    use crate::{FontError, FontOptions, FontStyle, FontSystem, Hinting};
 
     fn jetbrains_at(logical_px: f32, scale: f32, options: FontOptions) -> Option<FontSystem> {
         const FAMILY: &str = "JetBrains Mono";
@@ -205,11 +205,12 @@ mod linux {
         ];
         let results = cases.map(|(ch, cells, fixture)| -> Result<(), String> {
             let mut discovery = crate::Discovery::new(fixture, None).unwrap();
-            let matched = discovery.find(None).unwrap();
+            let matched = discovery.find(None, FontStyle::default()).unwrap();
             if matched.family != fixture
                 || matched
                     .load(&[])
                     .unwrap()
+                    .0
                     .charmap()
                     .map_unicode(ch)
                     .is_none()
@@ -304,6 +305,53 @@ mod linux {
             (2, (fonts.metrics().width * 2).cast_signed())
         );
     }
+}
+
+#[test]
+fn bold_shape_uses_a_real_face_on_the_same_grid() {
+    use crate::{FontOptions, FontStyle, FontSystem};
+
+    #[cfg(target_os = "linux")]
+    let family = "JetBrains Mono";
+    #[cfg(target_os = "macos")]
+    let family = "Menlo";
+    let mut fonts = FontSystem::new(family, 24.0, 1.0, FontOptions::default()).unwrap();
+    if fonts.family(fonts.primary_face()) != Some(family) {
+        eprintln!("skipped: {family} is not installed");
+        return;
+    }
+    let bold = FontStyle {
+        bold: true,
+        italic: false,
+    };
+    let regular = fonts.shape("H", &[1]).unwrap().glyphs[0];
+    let styled = fonts.shape_styled("H", &[1], bold).unwrap().glyphs[0];
+    assert_eq!(
+        (regular.column, regular.cells, regular.x, regular.y),
+        (styled.column, styled.cells, styled.x, styled.y)
+    );
+    assert_ne!(styled.key.face(), regular.key.face());
+    assert_eq!(
+        fonts.faces[styled.key.face().0].synthetic,
+        FontStyle::default()
+    );
+
+    let coverage = |fonts: &mut FontSystem, key| -> u32 {
+        let rect = fonts.rasterize(key).unwrap().rect;
+        let atlas = fonts.atlas();
+        let stride = atlas.dimensions()[0] as usize;
+        let x = rect.x as usize;
+        let width = rect.width as usize;
+        atlas
+            .pixels()
+            .chunks_exact(stride)
+            .skip(rect.y as usize)
+            .take(rect.height as usize)
+            .flat_map(|row| &row[x..x + width])
+            .map(|&coverage| u32::from(coverage))
+            .sum()
+    };
+    assert!(coverage(&mut fonts, styled.key) > coverage(&mut fonts, regular.key));
 }
 
 #[test]

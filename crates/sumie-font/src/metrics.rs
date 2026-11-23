@@ -8,6 +8,14 @@ pub struct CellMetrics {
     pub width: u32,
     pub height: u32,
     pub baseline: i32,
+    pub(crate) underline: StrokeMetrics,
+    pub(crate) strike: StrokeMetrics,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StrokeMetrics {
+    pub top: u32,
+    pub thickness: u32,
 }
 
 impl CellMetrics {
@@ -23,10 +31,25 @@ impl CellMetrics {
         if height <= 0.0 {
             return Err(FontError::MissingMetrics);
         }
+        let baseline = (line.ascender + line.line_gap * 0.5).round();
+        let styles = font.style_metrics().scaled_f32(ppem);
+        let snap = |offset: f32, thickness: f32| StrokeMetrics {
+            top: (baseline - offset).round().max(0.0) as u32,
+            thickness: thickness.round().max(1.0) as u32,
+        };
+        let underline = styles
+            .underline()
+            .map_or_else(|| snap(-1.0, 1.0), |m| snap(m.position, m.thickness));
+        let strike = styles.strike_through().map_or_else(
+            || snap(line.ascender / 3.0, 1.0),
+            |m| snap(m.position, m.thickness),
+        );
         Ok(Self {
             width: width.round().max(1.0) as u32,
             height: height.round().max(1.0) as u32,
-            baseline: (line.ascender + line.line_gap * 0.5).round() as i32,
+            baseline: baseline as i32,
+            underline,
+            strike,
         })
     }
 

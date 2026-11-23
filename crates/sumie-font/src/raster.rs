@@ -6,9 +6,11 @@ use skrifa::outline::{
     OutlineGlyphCollection, SmoothMode, Target,
 };
 use skrifa::{DrawMemory, Font, PathSink, ScalerFont};
-use zeno::{Command, Fill, Mask, Origin, Placement, Scratch, Vector};
+use zeno::{Command, Fill, Join, Mask, Origin, Placement, Scratch, Stroke, Transform, Vector};
 
-use crate::{Atlas, AtlasGlyph, CellMetrics, Face, FaceId, FontError, GlyphKey, Hinting, sprite};
+use crate::{
+    Atlas, AtlasGlyph, CellMetrics, Decoration, Face, FaceId, FontError, GlyphKey, Hinting, sprite,
+};
 
 pub(crate) struct Rasterizer {
     target: Option<Target>,
@@ -77,7 +79,43 @@ impl Rasterizer {
                 .size(placement.width, placement.height)
                 .offset(offset)
                 .render_into(pixels, Some(pitch));
+            if face.synthetic.bold {
+                self.embolden(key, placement, offset, pixels, pitch);
+            }
         })
+    }
+
+    pub(crate) fn decoration(
+        &mut self,
+        mark: Decoration,
+        key: GlyphKey,
+        metrics: CellMetrics,
+        atlas: &mut Atlas,
+    ) -> Result<AtlasGlyph, FontError> {
+        mark.draw(key, metrics, atlas, &mut self.scratch, &mut self.path.0)
+    }
+
+    fn embolden(
+        &mut self,
+        key: GlyphKey,
+        placement: Placement,
+        offset: Vector,
+        pixels: &mut [u8],
+        pitch: usize,
+    ) {
+        let width = placement.width as usize;
+        self.trial.clear();
+        self.trial.resize(width * placement.height as usize, 0);
+        Mask::with_scratch(&self.path.0, &mut self.scratch)
+            .style(bold_stroke(key))
+            .size(placement.width, placement.height)
+            .offset(offset)
+            .render_into(&mut self.trial, None);
+        for (row, stroke) in pixels.chunks_mut(pitch).zip(self.trial.chunks_exact(width)) {
+            for (pixel, &coverage) in row.iter_mut().zip(stroke) {
+                *pixel = (*pixel).max(coverage);
+            }
+        }
     }
 
     /// Light hinting snaps only the y axis, so vertical stems can straddle pixel
@@ -125,7 +163,21 @@ impl Rasterizer {
         if !has_outline {
             return Ok((Vector::ZERO, Placement::default()));
         }
-        let bounds = self.scratch.bounds(&self.path.0, Fill::NonZero, None);
+        if face.synthetic.italic {
+            // Slant right above the baseline in device coordinates.
+            let oblique = Transform::new(1.0, 0.0, -0.2126, 1.0, 0.0, 0.0);
+            for command in &mut self.path.0 {
+                *command = command.transform(&oblique);
+            }
+        }
+        let mut bounds = self.scratch.bounds(&self.path.0, Fill::NonZero, None);
+        if face.synthetic.bold && !bounds.is_empty() {
+            let stroke = self.scratch.bounds(&self.path.0, bold_stroke(key), None);
+            bounds.min.x = bounds.min.x.min(stroke.min.x);
+            bounds.min.y = bounds.min.y.min(stroke.min.y);
+            bounds.max.x = bounds.max.x.max(stroke.max.x);
+            bounds.max.y = bounds.max.y.max(stroke.max.y);
+        }
         Ok(Placement::compute(Origin::TopLeft, [0.0, 0.0], &bounds))
     }
 
@@ -172,6 +224,14 @@ impl Rasterizer {
             DrawSettings::hinted(instance, false).with_memory(Some(&mut self.outline_memory));
         outline.draw(settings, &mut self.path)?;
         Ok(true)
+    }
+}
+
+fn bold_stroke(key: GlyphKey) -> Stroke<'static> {
+    Stroke {
+        width: key.ppem() / 24.0,
+        join: Join::Round,
+        ..Stroke::default()
     }
 }
 

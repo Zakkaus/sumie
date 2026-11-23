@@ -23,6 +23,7 @@ impl View {
             &mut self.glyphs,
             [0, 0],
             rgba(snapshot.background),
+            super::FontStyle::default(),
         );
     }
 
@@ -45,6 +46,7 @@ impl View {
             &mut self.glyphs,
             [count_column, row],
             color,
+            super::FontStyle::default(),
         );
         let available = count_column - u32::from(count_width != 0) - 1;
         let (preedit, preedit_width) = visible_suffix(&self.preedit, available);
@@ -62,6 +64,7 @@ impl View {
             &mut self.glyphs,
             [0, row],
             color,
+            super::FontStyle::default(),
         );
         self.cursor = Some(Cursor {
             rect: PixelRect {

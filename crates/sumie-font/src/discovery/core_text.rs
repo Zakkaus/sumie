@@ -2,8 +2,10 @@
 
 use std::{cell::OnceCell, collections::HashMap, path::PathBuf, ptr};
 
-use objc2_core_foundation::{CFArray, CFRange, CFRetained, CFString, CFURL, CFURLPathStyle};
-use objc2_core_text::{CTFont, CTFontDescriptor, kCTFontURLAttribute};
+use objc2_core_foundation::{
+    CFArray, CFDictionary, CFRange, CFRetained, CFString, CFURL, CFURLPathStyle,
+};
+use objc2_core_text::{CTFont, CTFontDescriptor, kCTFontFamilyNameAttribute, kCTFontURLAttribute};
 use skrifa::{
     FontRef, MetadataProvider as _,
     font::Blob,
@@ -11,13 +13,14 @@ use skrifa::{
     string::StringId,
 };
 
-use super::{FontError, Match};
+use super::{Font, FontError, FontStyle, Match, Request, Style};
 
 pub(crate) struct Discovery {
     primary: CFRetained<CTFont>,
     weight: Option<u16>,
     files: HashMap<PathBuf, FontFile>,
-    cascade: OnceCell<Option<CFRetained<CFArray<CTFontDescriptor>>>>,
+    families: HashMap<String, Descriptors>,
+    cascade: OnceCell<Descriptors>,
 }
 
 struct FontFile {
@@ -64,13 +67,17 @@ impl Discovery {
             primary,
             weight,
             files: HashMap::new(),
+            families: HashMap::new(),
             cascade: OnceCell::new(),
         })
     }
 
-    pub fn find(&mut self, ch: Option<char>) -> Result<Match, FontError> {
+    pub fn find(&mut self, ch: Option<char>, style: FontStyle) -> Result<Match, FontError> {
+        let request = Request::new(self.weight, style);
+        let mut candidate =
+            |font: &CTFont| matching_face(font, request, ch, &mut self.files, &mut self.families);
         let Some(ch) = ch else {
-            return file_match(&self.primary, &mut self.files, self.weight);
+            return candidate(&self.primary);
         };
         let text = CFString::from_str(ch.encode_utf8(&mut [0; 4]));
         let range = CFRange {
@@ -79,17 +86,7 @@ impl Discovery {
         };
         // SAFETY: the range covers this live CFString in UTF-16 units.
         let preferred = unsafe { self.primary.for_string(&text, range) };
-        let mut candidate = |font: &CTFont| {
-            let matched = file_match(font, &mut self.files, self.weight).ok()?;
-            let face = FontRef::from_index(&matched.bytes, matched.index).ok()?;
-            if face.head().ok()?.flags().contains(Flags::LAST_RESORT_FONT) {
-                return None;
-            }
-            let glyph = face.charmap().map(ch)?;
-            face.outline_glyphs().get(glyph)?;
-            Some(matched)
-        };
-        if let Some(matched) = candidate(&preferred) {
+        if let Ok(matched) = candidate(&preferred) {
             return Ok(matched);
         }
 
@@ -108,7 +105,7 @@ impl Discovery {
                 let font = unsafe { CTFont::with_font_descriptor(&descriptor, 0.0, ptr::null()) };
                 // SAFETY: font is retained; character_set returns an owned CFCharacterSet.
                 if unsafe { font.character_set() }.is_long_character_member(u32::from(ch))
-                    && let Some(matched) = candidate(&font)
+                    && let Ok(matched) = candidate(&font)
                 {
                     return Ok(matched);
                 }
@@ -118,10 +115,99 @@ impl Discovery {
     }
 }
 
+type Descriptors = Option<CFRetained<CFArray<CTFontDescriptor>>>;
+
+fn matching_face(
+    font: &CTFont,
+    request: Request,
+    ch: Option<char>,
+    files: &mut HashMap<PathBuf, FontFile>,
+    families: &mut HashMap<String, Descriptors>,
+) -> Result<Match, FontError> {
+    let original = file_match(font, files, request)?;
+    if request.style == FontStyle::default() && request.weight.is_none() {
+        return require_coverage(original, ch);
+    }
+    let original_rank = rank(&original, ch);
+    if original_rank.is_some_and(|(slant, bold, distance)| !slant && !bold && distance <= 0.0) {
+        return Ok(original);
+    }
+
+    let mut best_rank = original_rank;
+    let mut best = None;
+    if let Some(descriptors) = families
+        .entry(original.family.clone())
+        .or_insert_with_key(|family| family_descriptors(family))
+    {
+        for descriptor in descriptors.iter() {
+            // SAFETY: the descriptor is retained and null selects the identity transform.
+            let font = unsafe { CTFont::with_font_descriptor(&descriptor, 0.0, ptr::null()) };
+            if let Ok(matched) = file_match(&font, files, request)
+                && matched.family == original.family
+                && let Some(rank) = rank(&matched, ch)
+                && best_rank.is_none_or(|current| rank < current)
+            {
+                best_rank = Some(rank);
+                best = Some(matched);
+            }
+        }
+    }
+    best.map_or_else(|| require_coverage(original, ch), Ok)
+}
+
+fn family_descriptors(family: &str) -> Descriptors {
+    // SAFETY: The dictionary contains the documented family-name string and is retained
+    // throughout the call. Matching returns an immutable array of CTFontDescriptor objects.
+    unsafe {
+        let family = CFString::from_str(family);
+        let attributes = CFDictionary::<CFString, CFString>::from_slices(
+            &[kCTFontFamilyNameAttribute],
+            &[&family],
+        );
+        CTFontDescriptor::with_attributes(attributes.as_opaque())
+            .matching_font_descriptors(None)
+            .map(|list| CFRetained::cast_unchecked(list))
+    }
+}
+
+fn rank(matched: &Match, ch: Option<char>) -> Option<(bool, bool, f32)> {
+    if ch.is_some_and(|ch| !covers(matched, ch)) {
+        return None;
+    }
+    let font = Font::new(matched.bytes.clone(), matched.index)?;
+    let attrs = matched.attributes(&font, matched.overrides(&font));
+    Some((
+        matched.request.style.italic != (attrs.style != Style::Normal),
+        matched.request.synthetic(attrs).bold,
+        (f32::from(matched.request.weight.unwrap_or(400)) - attrs.weight.value()).abs(),
+    ))
+}
+
+fn require_coverage(matched: Match, ch: Option<char>) -> Result<Match, FontError> {
+    if let Some(ch) = ch
+        && !covers(&matched, ch)
+    {
+        return Err(FontError::MissingGlyph(u32::from(ch)));
+    }
+    Ok(matched)
+}
+
+fn covers(matched: &Match, ch: char) -> bool {
+    let Ok(face) = FontRef::from_index(&matched.bytes, matched.index) else {
+        return false;
+    };
+    face.head()
+        .is_ok_and(|head| !head.flags().contains(Flags::LAST_RESORT_FONT))
+        && face
+            .charmap()
+            .map(ch)
+            .is_some_and(|glyph| face.outline_glyphs().get(glyph).is_some())
+}
+
 fn file_match(
     font: &CTFont,
     files: &mut HashMap<PathBuf, FontFile>,
-    weight: Option<u16>,
+    request: Request,
 ) -> Result<Match, FontError> {
     // SAFETY: font is retained throughout; the exported URL key is immutable.
     let (name, family, url) = unsafe {
@@ -150,7 +236,7 @@ fn file_match(
         family: family.to_string(),
         path,
         index,
-        weight,
+        request,
         bytes: file.bytes.clone(),
     })
 }

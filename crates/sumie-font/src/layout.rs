@@ -3,7 +3,7 @@ use skrifa::{Font, GlyphId, Tag};
 use zeno::{Bounds, Point};
 
 use crate::raster::Rasterizer;
-use crate::{Atlas, CellMetrics, Face, FaceId, FontError, FontSystem, GlyphKey, sprite};
+use crate::{Atlas, CellMetrics, Face, FaceId, FontError, FontStyle, FontSystem, GlyphKey, sprite};
 
 /// Glyph placement in an input run, in integer device pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,6 +52,19 @@ impl FontSystem {
     /// Returns an error for mismatched widths, an unrepresentable grid, missing font
     /// coverage, or a failed discovery, shaping or wide-glyph outline operation.
     pub fn shape(&mut self, text: &str, widths: &[u8]) -> Result<ShapedRun, FontError> {
+        self.shape_styled(text, widths, FontStyle::default())
+    }
+
+    /// Shapes a styled run using the same grid widths and ligatures as [`Self::shape`].
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::shape`], including failures to load a styled face.
+    pub fn shape_styled(
+        &mut self,
+        text: &str,
+        widths: &[u8],
+        style: FontStyle,
+    ) -> Result<ShapedRun, FontError> {
         u32::try_from(text.len()).map_err(|_| FontError::RunTooLong)?;
         if widths.first() == Some(&0) || widths.len() != text.chars().count() {
             return Err(FontError::InvalidWidths);
@@ -66,12 +79,12 @@ impl FontSystem {
             }
             let continuation = width == 0;
             if continuation {
-                let Some(next_face) = self.face_for_continuation(ch, face)? else {
+                let Some(next_face) = self.face_for_continuation(ch, face, style)? else {
                     continue;
                 };
                 face = next_face;
             } else {
-                face = self.face_for(ch)?;
+                face = self.face_for(ch, style)?;
                 base = (byte, columns, width);
                 columns = columns
                     .checked_add(u32::from(width))
@@ -103,6 +116,7 @@ impl FontSystem {
         &mut self,
         ch: char,
         previous: FaceId,
+        style: FontStyle,
     ) -> Result<Option<FaceId>, FontError> {
         match ch {
             // Pass shaping controls to HarfRust without requiring a cmap entry.
@@ -131,7 +145,7 @@ impl FontSystem {
             | '\u{1d173}'..='\u{1d17a}'
             | '\u{e0000}'..='\u{e00ff}'
             | '\u{e01f0}'..='\u{e0fff}' => Ok(None),
-            _ => self.face_for(ch).map(Some),
+            _ => self.face_for(ch, style).map(Some),
         }
     }
 }
