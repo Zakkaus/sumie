@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=sumie
+GenericName=Terminal
+Comment=GPU terminal emulator
+Exec=sumie
+Icon=sumie
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;command;commandline;
+StartupWMClass=sumie
