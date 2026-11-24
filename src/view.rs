@@ -19,7 +19,7 @@ use sumie_vt::{Rgb, Snapshot};
 use sumie_wayland::CursorRect;
 
 use crate::Result;
-use attributes::glyph_quad;
+pub(crate) use attributes::LinkHighlight;
 pub(crate) use paint::PaneFocus;
 use paint::{PanePaint, PanePainter};
 
@@ -306,7 +306,7 @@ impl View {
         rect: Rect,
         snapshot: &Snapshot,
         selection: Option<CellRange>,
-        hovered_link: &[CellRange],
+        hovered_link: LinkHighlight<'_>,
         banner: Option<&str>,
         focus: PaneFocus<'_>,
     ) {
@@ -347,6 +347,7 @@ impl View {
             line: &mut self.line,
             composition: &mut self.composition,
             cell: self.cell,
+            link_hint: self.palette.link_hint(),
             selection_foreground: self.selection_foreground,
             selection_background: self.selection_background,
             search_bar: self.search_bar.as_deref().filter(|_| focus.active),
@@ -410,7 +411,10 @@ impl View {
             self.content_rect(),
             snapshot,
             selection,
-            hovered_link,
+            LinkHighlight {
+                ranges: hovered_link,
+                control: true,
+            },
             banner,
             PaneFocus {
                 active: true,
@@ -547,7 +551,7 @@ impl Line {
                 }
             };
             if image.rect.width != 0 && image.rect.height != 0 {
-                glyphs.push(glyph_quad(
+                glyphs.push(attributes::glyph_quad(
                     image,
                     [x + glyph.x, y + glyph.y],
                     [col + glyph.column, row],

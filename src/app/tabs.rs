@@ -357,9 +357,14 @@ impl Session {
         gpu: &mut Gpu,
         tab_changed: bool,
     ) -> Result<()> {
+        self.link_pointer.clear_link();
         if let Some((i, id)) = old {
             self.link_pointer.leave_thumbnail(&self.view, id);
-            let tab = self.tabs.as_mut_slice()[i].get_mut(id);
+            let old_tab = &mut self.tabs.as_mut_slice()[i];
+            for pane in &mut old_tab.panes {
+                pane.clear_link_hover();
+            }
+            let tab = old_tab.get_mut(id);
             tab.frame_dirty = true;
             tab.sources.watch_blink(false)?;
             tab.pane.leave_tab()?;

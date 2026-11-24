@@ -170,7 +170,7 @@ impl App {
                     session.tabs.active_mut().unwrap().refresh_visible()?;
                 }
                 let banner = self.reload.banner.as_deref();
-                session.update_link_hover(gpu, banner.is_some())?;
+                session.update_link_hover(gpu, banner.is_some(), self.focused)?;
                 session.watch_blink(self.focused && !self.suspended, banner)?;
                 if ready && session.draw(gpu, &self.capture, banner, self.focused)? {
                     return Ok(());
@@ -269,6 +269,9 @@ impl App {
                     self.focused = activated;
                     if let Some(session) = &mut self.session {
                         session.active_mut().frame_dirty = true;
+                        if !activated {
+                            session.link_pointer.clear_link();
+                        }
                     }
                 }
             }
@@ -475,7 +478,7 @@ impl Session {
                 rect,
                 pane.snapshot.as_ref().expect("visible pane snapshot"),
                 pane.selection.range(),
-                pane.hover.ranges(),
+                pane.hover.highlight(),
                 if focus.active { banner } else { None },
                 focus,
             );

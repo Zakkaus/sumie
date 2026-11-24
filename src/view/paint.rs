@@ -9,7 +9,7 @@ use sumie_font::{FontStyle, FontSystem};
 use sumie_render::{Cursor, CursorShape, DrawList, PixelRect, Rgba};
 use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 
-use super::attributes::{self, Decorations, Ink};
+use super::attributes::{Decorations, Ink, LinkHighlight};
 use super::overlays::{Glyphs, SearchBox};
 use super::{FontErrors, Line, ViewerPaint, grid_size, rgba};
 
@@ -83,6 +83,7 @@ pub(super) struct PanePainter<'a> {
     pub(super) line: &'a mut Line,
     pub(super) composition: &'a mut Line,
     pub(super) cell: [u32; 2],
+    pub(super) link_hint: Rgba,
     pub(super) selection_foreground: Option<Rgb>,
     pub(super) selection_background: Option<Rgb>,
     pub(super) search_bar: Option<&'a str>,
@@ -96,7 +97,7 @@ impl PanePainter<'_> {
         &mut self,
         snapshot: &Snapshot,
         selection: Option<CellRange>,
-        hovered_link: &[CellRange],
+        hovered_link: LinkHighlight<'_>,
         banner: Option<&str>,
     ) {
         let Rect {
@@ -155,7 +156,7 @@ impl PanePainter<'_> {
         &mut self,
         snapshot: &Snapshot,
         selection: Option<CellRange>,
-        mut hovered_link: &[CellRange],
+        mut hovered_link: LinkHighlight<'_>,
         overlay: Option<(u32, u32, u32)>,
         first_row: usize,
     ) {
@@ -206,8 +207,8 @@ impl PanePainter<'_> {
                 let intersects = columns.as_ref().is_some_and(|columns| {
                     columns.start < column + u32::from(cell.width) && column < columns.end
                 });
-                if !intersects {
-                    let hovered = attributes::link_at(&mut hovered_link, row, column);
+                if !intersects && !cell.wide_wrap_spacer {
+                    let hovered = hovered_link.at(row, column);
                     decorations.draw(self, [column, row], cell, ink.color, hovered);
                 }
                 self.line

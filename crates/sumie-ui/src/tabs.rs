@@ -30,6 +30,12 @@ impl Palette {
     }
 
     #[must_use]
+    pub fn link_hint(self) -> Rgba {
+        let [r, g, b, _] = self.accent;
+        [r, g, b, 128]
+    }
+
+    #[must_use]
     pub fn thumbnails(self, scale: u16, hovered: Option<usize>) -> ThumbnailChrome {
         ThumbnailChrome {
             hovered,

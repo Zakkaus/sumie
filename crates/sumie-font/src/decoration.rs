@@ -14,6 +14,7 @@ pub enum Decoration {
     Dotted,
     Dashed,
     Strikethrough,
+    LinkHint,
     Overline,
 }
 
@@ -86,6 +87,13 @@ impl Decoration {
                     path.add_circle([(i as f32 + 0.5) * w / count, offset + 0.5 * t], r);
                 }
                 (offset as u32, offset + 0.5 * t + r)
+            }
+            Self::LinkHint => {
+                let start = u32::from(metrics.width > 1);
+                for x in (start..metrics.width).step_by(3) {
+                    path.add_rect([x as f32, 0.0], 1.0, 1.0);
+                }
+                (0, 1.0)
             }
             Self::Curly => {
                 let crest = 0.5 * t;

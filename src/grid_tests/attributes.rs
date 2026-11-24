@@ -27,6 +27,7 @@ pub(super) fn assert_decorations(
     for (_, sgr) in CASES {
         vt.write(format!("\x1b[24;29;55;22;{sgr}m\x1b[58;2;255;0;0m ").as_bytes());
     }
+    vt.write(b"\x1b[0;48;2;0;0;0m\x1b]8;;https://example.test\x1b\\ \x1b]8;;\x1b\\");
     view.build(&vt.render_snapshot().unwrap(), None, &[], None, true);
     let target = renderer.create_offscreen(view.device);
     renderer.set_minimum_contrast(1.0);
@@ -35,6 +36,7 @@ pub(super) fn assert_decorations(
     let pixels = super::readback(device, queue, target.texture());
     let [w, h] = view.cell.map(|n| n as usize);
     let pitch = view.device[0] as usize;
+    assert_link_hint(&pixels, pitch, CASES.len() * w, w, h);
     let mut single_y = 0;
     for (column, (name, _)) in CASES.into_iter().enumerate() {
         let red = |x, y| pixels[4 * (y * pitch + column * w + x)];
@@ -81,4 +83,23 @@ pub(super) fn assert_decorations(
             _ => unreachable!(),
         }
     }
+}
+
+fn assert_link_hint(pixels: &[u8], pitch: usize, start: usize, w: usize, h: usize) {
+    let rows = (0..h).map(|y| {
+        let offset = 4 * (y * pitch + start);
+        pixels[offset..offset + 4 * w].as_chunks::<4>().0.iter()
+    });
+    let mut ink = rows.filter(|row| row.clone().any(|p| p[..3] != [0, 0, 0]));
+    let row = ink.next().expect("idle OSC 8 link must be visible");
+    assert!(ink.next().is_none(), "hint must be one device pixel thick");
+    assert!(
+        row.clone().any(|p| p[..3] == [0, 0, 0]),
+        "hint must have gaps"
+    );
+    assert!(
+        row.filter(|p| p[..3] != [0, 0, 0])
+            .all(|p| { p[0] <= 1 && (60..100).contains(&p[1]) && (145..185).contains(&p[2]) }),
+        "hint must use a translucent accent"
+    );
 }

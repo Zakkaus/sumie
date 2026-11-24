@@ -55,20 +55,15 @@ pub fn double_click_interval() -> Option<u32> {
 pub(crate) struct Pointer {
     themed: ThemedPointer<()>,
     position: Option<(f64, f64)>,
-    link_cursor: Option<bool>,
+    icon: Option<CursorIcon>,
 }
 
 impl Pointer {
-    pub(crate) fn set_link_cursor(&mut self, connection: &Connection, link: bool) {
-        if self.position.is_none() || self.link_cursor == Some(link) {
+    pub(crate) fn set_icon(&mut self, connection: &Connection, icon: CursorIcon) {
+        if self.position.is_none() || self.icon == Some(icon) {
             return;
         }
-        self.link_cursor = Some(link);
-        let icon = if link {
-            CursorIcon::Pointer
-        } else {
-            CursorIcon::Default
-        };
+        self.icon = Some(icon);
         if let Err(error) = self.themed.set_cursor(connection, icon) {
             tracing::warn!(%error, "could not set pointer cursor");
         }
@@ -83,7 +78,7 @@ impl Pointer {
         let (phase, serial) = match event.kind {
             PointerEventKind::Enter { .. } => {
                 self.position = Some(event.position);
-                self.link_cursor = None;
+                self.icon = None;
                 return Some(Event::PointerEntered {
                     position: event.position,
                     modifiers,
@@ -173,7 +168,7 @@ impl State {
                 self.pointer = Some(Pointer {
                     themed,
                     position: None,
-                    link_cursor: None,
+                    icon: None,
                 });
             }
             Err(error) => {
@@ -226,7 +221,7 @@ impl PointerHandler for State {
             }
             let event = pointer.track(event, modifiers, &mut wheel);
             if matches!(event, Some(Event::PointerEntered { .. })) {
-                pointer.set_link_cursor(connection, false);
+                pointer.set_icon(connection, CursorIcon::Default);
             }
             self.events.extend(event);
         }

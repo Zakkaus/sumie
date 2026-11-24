@@ -5,7 +5,7 @@ use sumie_core::splits::Rect;
 use sumie_render::PixelRect;
 use sumie_vt::{Snapshot, Terminal};
 
-use super::{FontSettings, PaneFocus, View};
+use super::{FontSettings, LinkHighlight, PaneFocus, View};
 use crate::input::SearchTarget;
 
 fn view() -> View {
@@ -63,8 +63,22 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     view.search_selection = 8..13;
     view.preedit = String::from("a");
     view.begin_frame([divider], fg.background);
-    view.build_pane(left, &bg, None, &[], None, focus(1, false));
-    view.build_pane(right, &fg, None, &[], None, focus(2, true));
+    view.build_pane(
+        left,
+        &bg,
+        None,
+        LinkHighlight::default(),
+        None,
+        focus(1, false),
+    );
+    view.build_pane(
+        right,
+        &fg,
+        None,
+        LinkHighlight::default(),
+        None,
+        focus(2, true),
+    );
     view.end_frame();
     view.frame_presented();
 

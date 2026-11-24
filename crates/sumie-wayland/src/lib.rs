@@ -15,6 +15,7 @@ pub use platform::{ConnectError, Platform, ShmPresentError, SourceHandle, Window
 pub use pointer::double_click_interval;
 pub use presentation::PresentationFeedback;
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
+pub use smithay_client_toolkit::seat::pointer::CursorIcon;
 
 /// Events in dispatch order. Text input is sensitive; do not log its contents.
 /// Clipboard and IME text carry the generation of the recipient that requested them.

@@ -26,6 +26,8 @@ pub struct CellStyle {
     pub faint: bool,
     pub strikethrough: bool,
     pub overline: bool,
+    /// This visible cell belongs to an OSC 8 hyperlink.
+    pub hyperlink: bool,
     pub underline: Underline,
     /// Explicit underline color resolved against the active palette, or `None` to use the foreground.
     pub underline_color: Option<Rgb>,
@@ -79,9 +81,7 @@ impl Terminal {
             ffi::SGR_UNDERLINE_DASHED => Underline::Dashed,
             _ => return Err(Error(ffi::INVALID_VALUE)),
         };
-        if style.underline == Underline::None && row_may_have_hyperlinks && has_hyperlink(cell)? {
-            style.underline = Underline::Single;
-        }
+        style.hyperlink = row_may_have_hyperlinks && has_hyperlink(cell)?;
         style.underline_color = self.underline_color(native.underline_color, palette)?;
         Ok(style)
     }
@@ -146,6 +146,7 @@ mod tests {
             faint: true,
             strikethrough: true,
             overline: true,
+            hyperlink: false,
             underline: Underline::Curly,
             underline_color: Some([1, 2, 3]),
         };
@@ -166,8 +167,20 @@ mod tests {
                 },
             ),
             ("C", decorated(Underline::Double, Some([0x12, 0x34, 0x56]))),
-            ("D", decorated(Underline::Single, None)),
-            ("E", decorated(Underline::Dashed, None)),
+            (
+                "D",
+                CellStyle {
+                    hyperlink: true,
+                    ..CellStyle::default()
+                },
+            ),
+            (
+                "E",
+                CellStyle {
+                    hyperlink: true,
+                    ..decorated(Underline::Dashed, None)
+                },
+            ),
             ("F", CellStyle::default()),
         ];
         for (cell, expected) in screen[0][..expected.len()].iter().zip(expected) {

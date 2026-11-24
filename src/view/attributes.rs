@@ -23,16 +23,29 @@ impl Ink {
     }
 }
 
-// Spans and drawn cells both arrive in reading order, including disjoint OSC 8 labels.
-pub(super) fn link_at(spans: &mut &[CellRange], row: u32, column: u32) -> bool {
-    let point = (i64::from(row), column);
-    let coords = |p: SelectionPoint| (p.row, u32::from(p.column));
-    while spans.first().is_some_and(|span| coords(span.end) < point) {
-        *spans = &spans[1..];
+#[derive(Default)]
+pub(crate) struct LinkHighlight<'a> {
+    pub(crate) ranges: &'a [CellRange],
+    pub(crate) control: bool,
+}
+
+impl LinkHighlight<'_> {
+    // Spans and cells arrive in reading order, including disjoint OSC 8 labels.
+    pub(super) fn at(&mut self, row: u32, column: u32) -> Option<bool> {
+        let point = (i64::from(row), column);
+        let coords = |p: SelectionPoint| (p.row, u32::from(p.column));
+        while self
+            .ranges
+            .first()
+            .is_some_and(|span| coords(span.end) < point)
+        {
+            self.ranges = &self.ranges[1..];
+        }
+        self.ranges
+            .first()
+            .filter(|span| coords(span.start) <= point)
+            .map(|_| self.control)
     }
-    spans
-        .first()
-        .is_some_and(|span| coords(span.start) <= point)
 }
 
 #[derive(Default)]
@@ -60,30 +73,10 @@ impl Decorations {
         pos: [u32; 2],
         cell: &Cell,
         fg: Rgba,
-        hovered: bool,
+        hovered: Option<bool>,
     ) {
         let style = cell.style;
-        let underline = if hovered {
-            if style.underline == Underline::Single {
-                Underline::Double
-            } else {
-                Underline::Single
-            }
-        } else {
-            style.underline
-        };
-        let underline = match underline {
-            Underline::None => None,
-            Underline::Single => Some(Decoration::Single),
-            Underline::Double => Some(Decoration::Double),
-            Underline::Curly => Some(Decoration::Curly),
-            Underline::Dotted => Some(Decoration::Dotted),
-            Underline::Dashed => Some(Decoration::Dashed),
-        };
-        if let Some(mark) = underline {
-            let color = style
-                .underline_color
-                .map_or(fg, |[r, g, b]| [r, g, b, fg[3]]);
+        if let Some((mark, color)) = underline(style, fg, view.link_hint, hovered) {
             self.draw_mark(view, pos, cell.width, mark, color);
         }
         if style.overline {
@@ -123,6 +116,32 @@ impl Decorations {
     }
 }
 
+fn underline(
+    style: CellStyle,
+    fg: Rgba,
+    hint: Rgba,
+    hovered: Option<bool>,
+) -> Option<(Decoration, Rgba)> {
+    if hovered == Some(true) {
+        return Some((Decoration::Single, fg));
+    }
+    let mark = match style.underline {
+        Underline::None if style.hyperlink || hovered.is_some() => {
+            return Some((Decoration::LinkHint, hint));
+        }
+        Underline::None => return None,
+        Underline::Single => Decoration::Single,
+        Underline::Double => Decoration::Double,
+        Underline::Curly => Decoration::Curly,
+        Underline::Dotted => Decoration::Dotted,
+        Underline::Dashed => Decoration::Dashed,
+    };
+    let color = style
+        .underline_color
+        .map_or(fg, |[r, g, b]| [r, g, b, fg[3]]);
+    Some((mark, color))
+}
+
 pub(super) fn glyph_quad(
     image: AtlasGlyph,
     [x, y]: [i32; 2],
@@ -142,5 +161,40 @@ pub(super) fn glyph_quad(
         },
         cell,
         color,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CellStyle, Decoration, Underline, underline};
+
+    #[test]
+    fn link_underline_precedence() {
+        let fg = [255; 4];
+        let hint = [0, 100, 224, 128];
+        let plain = CellStyle::default();
+        let osc = CellStyle {
+            hyperlink: true,
+            ..plain
+        };
+        let app = CellStyle {
+            underline: Underline::Double,
+            underline_color: Some([255, 0, 0]),
+            ..osc
+        };
+        for (style, hovered, expected) in [
+            (osc, None, Some((Decoration::LinkHint, hint))),
+            (
+                app,
+                Some(false),
+                Some((Decoration::Double, [255, 0, 0, 255])),
+            ),
+            (plain, None, None),
+            (plain, Some(false), Some((Decoration::LinkHint, hint))),
+            (plain, Some(true), Some((Decoration::Single, fg))),
+            (app, Some(true), Some((Decoration::Single, fg))),
+        ] {
+            assert_eq!(underline(style, fg, hint, hovered), expected);
+        }
     }
 }

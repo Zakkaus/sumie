@@ -216,6 +216,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                        "== next.minimum_contrast().to_bits()"),
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("idle OSC 8 underline disappears", "test", "src/view/attributes.rs",
+              replace_once("style.hyperlink || hovered.is_some()", "hovered.is_some()"),
+              "test view::attributes::tests::link_underline_precedence ... FAILED")
         probe("Ctrl+click link opens on press", "test", "crates/sumie-core/src/mouse.rs",
               replace_once("Some(event.pixel.map(f32::to_bits))));\n                Dispatch::Ignore",
                            "Some(event.pixel.map(f32::to_bits))));\n                Dispatch::OpenLink"),

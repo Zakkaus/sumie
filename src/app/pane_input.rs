@@ -216,6 +216,7 @@ impl Session {
                 &mut self.view,
                 &mut self.routing,
                 gpu,
+                &mut self.link_pointer,
                 searching,
                 effect,
             )?,
@@ -261,6 +262,9 @@ impl Session {
                     gpu,
                     event,
                 )? {
+                    if pane.viewer.is_some() {
+                        self.link_pointer.clear_link();
+                    }
                     return Ok(());
                 }
                 let effect = pointer_effect(
@@ -277,6 +281,7 @@ impl Session {
                     &mut self.view,
                     &mut self.routing,
                     gpu,
+                    &mut self.link_pointer,
                     searching,
                     effect,
                 )
@@ -345,11 +350,15 @@ fn apply_pane_effect(
     view: &mut View,
     routing: &mut Routing,
     gpu: &mut Gpu,
+    link_pointer: &mut links::Pointer,
     searching: bool,
     effect: Effect,
 ) -> Result<()> {
     match effect {
         Effect::Search(action) => {
+            if matches!(action, SearchAction::Open) {
+                link_pointer.clear_link();
+            }
             if matches!(action, SearchAction::Open | SearchAction::Close) {
                 pane.pane.reset_pointer_gestures();
                 pane.paste_recipient = None;
@@ -359,6 +368,7 @@ fn apply_pane_effect(
         }
         Effect::Copy(serial) => pane.copy_selection(gpu, serial)?,
         Effect::ViewportChanged => {
+            link_pointer.clear_link();
             pane.frame_dirty |= searching || pane.selection.range().is_some();
             pane.clear_selection();
             pane.snapshot_dirty = true;

@@ -175,10 +175,10 @@ impl Platform {
     }
 
     /// Update the cursor for the focused pointer; repeated requests are ignored.
-    pub fn set_link_cursor(&mut self, link: bool) {
+    pub fn set_pointer_icon(&mut self, icon: crate::CursorIcon) {
         if let Some(pointer) = &mut self.state.pointer {
             let connection = Connection::from_backend(self.state.window.display.0.clone());
-            pointer.set_link_cursor(&connection, link);
+            pointer.set_icon(&connection, icon);
         }
     }
 

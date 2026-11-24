@@ -4,7 +4,7 @@ use sumie_render::{
     AtlasUpload, FrameDraw, PaneDraw, SurfaceError, SurfaceFrame, SurfaceRenderer, backends,
     instance_descriptor, wgpu,
 };
-use sumie_wayland::{CursorRect, Event, Platform, SourceHandle};
+use sumie_wayland::{CursorIcon, CursorRect, Event, Platform, SourceHandle};
 
 use crate::{Result, capture::Readback, frame_window::FrameWindow};
 
@@ -87,8 +87,8 @@ impl Gpu {
         self.window.set_input_generation(generation);
     }
 
-    pub(crate) fn set_link_cursor(&mut self, link: bool) {
-        self.window.set_link_cursor(link);
+    pub(crate) fn set_pointer_icon(&mut self, icon: CursorIcon) {
+        self.window.set_pointer_icon(icon);
     }
 
     pub(crate) fn read_clipboard(&mut self, recipient: u64) {
