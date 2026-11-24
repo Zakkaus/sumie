@@ -3,9 +3,9 @@ use sumie_core::{
     mouse::{Button, MousePhase},
 };
 use sumie_vt::Terminal;
-use sumie_wayland::{CursorIcon, Event, Modifiers, PointerPhase};
 
-use super::{Gpu, PaneState, Result, Session};
+use super::{PaneState, Result, Session, WindowOps};
+use crate::platform::{CursorIcon, Event, Modifiers, PointerPhase};
 use crate::view::LinkHighlight;
 
 #[derive(Default)]
@@ -31,10 +31,7 @@ impl Pointer {
 
     pub(super) fn record(&mut self, event: &Event) {
         match *event {
-            Event::Pointer {
-                phase: PointerPhase::Cancel,
-                ..
-            } => {
+            Event::Pointer(pointer) if matches!(pointer.phase, PointerPhase::Cancel) => {
                 self.position = None;
                 self.clear_link();
             }
@@ -46,15 +43,10 @@ impl Pointer {
                 self.modifiers = modifiers;
                 self.link_enabled = true;
             }
-            Event::Pointer {
-                phase,
-                position,
-                modifiers,
-                ..
-            } => {
-                self.position = Some(position);
-                self.modifiers = modifiers;
-                match phase {
+            Event::Pointer(pointer) => {
+                self.position = Some(pointer.position);
+                self.modifiers = pointer.modifiers;
+                match pointer.phase {
                     PointerPhase::Motion => self.link_enabled = true,
                     PointerPhase::Wheel(_) => self.clear_link(),
                     _ => (),
@@ -200,7 +192,7 @@ impl PaneState {
 impl Session {
     pub(super) fn update_link_hover(
         &mut self,
-        gpu: &mut Gpu,
+        window: &mut impl WindowOps,
         banner: bool,
         window_focused: bool,
     ) -> Result<()> {
@@ -229,7 +221,7 @@ impl Session {
             if hit.is_none() || !pane.snapshot_dirty {
                 pane.probe_link(hit, &self.host)?;
             }
-            pane.frame_dirty |= pane.hover.set_control(modifiers.ctrl);
+            pane.frame_dirty |= pane.hover.set_control(modifiers.control);
             link |= hit.is_some_and(|hit| {
                 pane.hover.uri().is_some()
                     && pane
@@ -239,7 +231,7 @@ impl Session {
                         .is_some_and(|checked| checked.hit == hit)
             });
         }
-        gpu.set_pointer_icon(if thumbnail || (link && modifiers.ctrl) {
+        window.set_pointer_icon(if thumbnail || (link && modifiers.control) {
             CursorIcon::Pointer
         } else if link {
             CursorIcon::Text

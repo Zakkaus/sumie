@@ -4,14 +4,13 @@ use std::ops::ControlFlow::{self, Break, Continue};
 use std::path::Path;
 use std::time::Instant;
 
+use crate::platform::{Event, PointerButton as Button, PointerEvent, PointerPhase as Phase};
 use sumie_core::{Pane, PaneAction, PaneCommand, Selection, TabAction, splits::Rect};
 use sumie_ui::TabHit;
 use sumie_vt::Event as TerminalEvent;
-use sumie_wayland::{Event, PointerButton as Button, PointerPhase as Phase, SourceHandle};
 
-use super::{
-    Gpu, LocalPane, PaneState, PaneTab, Result, Session, Sources, View, directory, sources,
-};
+use super::{LocalPane, PaneState, PaneTab, Result, Session, View, directory};
+use crate::platform::{PaneWatches, WindowOps};
 
 #[derive(Clone, Copy)]
 pub(super) enum Action {
@@ -93,16 +92,14 @@ impl BarPointer {
 }
 
 pub(super) struct PaneHost {
-    handle: SourceHandle,
     click_interval: Option<u32>,
     image_dimension_limit: u32,
 }
 
 impl PaneHost {
-    pub(super) fn new(handle: SourceHandle, image_dimension_limit: u32) -> Self {
+    pub(super) const fn new(image_dimension_limit: u32, click_interval: Option<u32>) -> Self {
         Self {
-            handle,
-            click_interval: sumie_wayland::double_click_interval(),
+            click_interval,
             image_dimension_limit,
         }
     }
@@ -114,6 +111,7 @@ impl PaneHost {
         view: &View,
         config: &sumie_config::Config,
         cwd: &Path,
+        watches: &mut impl PaneWatches,
     ) -> Result<PaneState> {
         let size = view.pane_size(rect);
         let mut pane = LocalPane::login(size, view.cell, config, cwd)?;
@@ -122,7 +120,11 @@ impl PaneHost {
         if let Some(millis) = self.click_interval {
             pane.set_click_interval(millis);
         }
-        let sources = Sources::new(self.handle.clone(), &pane.pty)?;
+        watches.register_pane(
+            id,
+            pane.pty.output_fd(),
+            pane.pty.exit_fd().expect("new child watcher"),
+        )?;
         Ok(PaneState {
             id,
             rect,
@@ -135,7 +137,6 @@ impl PaneHost {
             selection: Selection::default(),
             selected_text: String::new(),
             pane,
-            sources,
             directory: directory::Directory::at_spawn(cwd),
             title: String::new(),
             snapshot: None,
@@ -208,29 +209,28 @@ impl PaneState {
 
     fn service(
         &mut self,
-        gpu: &mut Gpu,
+        window: &mut impl WindowOps,
         active: bool,
         host: &[u8],
         watch_at: Option<Instant>,
         labels_changed: &mut bool,
     ) -> Result<(bool, bool)> {
-        let sources = &mut self.sources;
-        let ready = sources.take_ready();
-        if ready.exit() {
+        let ready = window.take_ready(self.id);
+        if ready.exit {
             self.pane.pty.service_child()?;
             if self.pane.pty.exit_fd().is_none() {
                 return Ok((true, false));
             }
         }
         let mut activity = false;
-        if ready.output() {
+        if ready.output {
             let batch =
                 activity::Batch::begin(&mut self.pane.terminal, watch_at, self.activity_after)?;
             let (dirty, eof) = self.pane.drain_output()?;
             self.snapshot_dirty |= dirty;
             if dirty {
                 activity = batch.changed(&mut self.pane.terminal)?;
-                sources.reset_blink();
+                window.reset_blink(self.id);
             }
             if dirty && let Some(bar) = &mut self.search {
                 bar.output(&self.pane.terminal)?;
@@ -239,7 +239,7 @@ impl PaneState {
             for event in self.pane.terminal.drain_events() {
                 match event {
                     TerminalEvent::Clipboard(bytes) if active => {
-                        gpu.write_terminal_clipboard(bytes);
+                        window.write_terminal_clipboard(bytes);
                     }
                     TerminalEvent::Clipboard(_) => (),
                     TerminalEvent::Title(title) => {
@@ -256,10 +256,10 @@ impl PaneState {
                 *labels_changed |= changed && self.title.is_empty();
             }
             if eof {
-                sources.remove_output();
+                window.stop_output(self.id);
             }
         }
-        Ok((ready.input() && !self.pane.pty.flush_input()?, activity))
+        Ok((ready.input && !self.pane.pty.flush_input()?, activity))
     }
 }
 
@@ -292,9 +292,9 @@ impl Session {
 
     pub(super) fn bar_input(&mut self, event: &Event) -> ControlFlow<Option<Action>> {
         match *event {
-            Event::Pointer {
+            Event::Pointer(PointerEvent {
                 position, phase, ..
-            } => {
+            }) => {
                 let hit = if matches!(phase, Phase::Press(..)) {
                     self.view.tab_hit(position)
                 } else {
@@ -353,14 +353,18 @@ impl Session {
         ))
     }
 
-    fn open_tab(&mut self, gpu: &mut Gpu, config: &sumie_config::Config) -> Result<()> {
+    fn open_tab(
+        &mut self,
+        window: &mut impl WindowOps,
+        config: &sumie_config::Config,
+    ) -> Result<()> {
         let count = self.tabs.as_slice().len();
         let resized = self.view.set_tab_count(count + 1);
         let prepared = resized.and_then(|resized| {
-            self.spawn_pane(self.view.content_rect(), config)
-                .map(|pane| (PaneTab::new(pane), resized))
+            self.spawn_pane(self.view.content_rect(), config, window)
+                .map(|pane| (pane, resized))
         });
-        let (tab, resized) = match prepared {
+        let (pane, resized) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.view.set_tab_count(count)?;
@@ -369,33 +373,34 @@ impl Session {
                 return Ok(());
             }
         };
-        if resized {
-            self.resize_grid()?;
+        let resize = if resized { self.resize_grid() } else { Ok(()) };
+        if resize.is_err() {
+            return resize.and(self.retire(pane, window));
         }
         let old = self.tabs.active_index().map(|i| (i, self.active().id));
-        self.tabs.open(tab);
-        self.focus_changed(old, gpu, true)
+        self.tabs.open(PaneTab::new(pane));
+        self.focus_changed(old, window, true)
     }
 
     pub(super) fn apply(
         &mut self,
         action: Action,
-        gpu: &mut Gpu,
+        window: &mut impl WindowOps,
         config: &sumie_config::Config,
     ) -> Result<()> {
         let index = self.tabs.active_index().unwrap();
         let old = self.active().id;
         match action {
-            Action::Key(TabAction::Open) => self.open_tab(gpu, config)?,
-            Action::Close(i) => self.close_tab(i, gpu)?,
-            Action::Key(TabAction::Close) => self.close_pane(index, old, gpu)?,
-            Action::Pane(command) => self.pane_action(command, old, gpu, config)?,
+            Action::Key(TabAction::Open) => self.open_tab(window, config)?,
+            Action::Close(i) => self.close_tab(i, window)?,
+            Action::Key(TabAction::Close) => self.close_pane(index, old, window)?,
+            Action::Pane(command) => self.pane_action(command, old, window, config)?,
             Action::Key(nav) if self.tabs.navigate(nav) => {
                 if matches!(nav, TabAction::MoveLeft | TabAction::MoveRight) {
                     self.view.reset_hits();
                     self.active_mut().frame_dirty = true;
                 } else {
-                    self.focus_changed(Some((index, old)), gpu, true)?;
+                    self.focus_changed(Some((index, old)), window, true)?;
                 }
             }
             Action::Key(_) => (),
@@ -406,7 +411,7 @@ impl Session {
     pub(super) fn focus_changed(
         &mut self,
         old: Option<(usize, u64)>,
-        gpu: &mut Gpu,
+        window: &mut impl WindowOps,
         tab_changed: bool,
     ) -> Result<()> {
         self.link_pointer.clear_link();
@@ -418,7 +423,7 @@ impl Session {
             }
             let tab = old_tab.get_mut(id);
             tab.frame_dirty = true;
-            tab.sources.watch_blink(false)?;
+            window.watch_blink(id, false)?;
             tab.pane.leave_tab()?;
         }
         if tab_changed {
@@ -433,79 +438,43 @@ impl Session {
             self.pane_pointer.reset();
         }
         self.routing.reset_pointer();
-        gpu.set_input_generation(self.routing.change_recipient());
+        window.set_input_generation(self.routing.change_recipient());
         self.view.reset_hits();
         self.view.preedit.clear();
         self.view.search_bar = self.active().search.as_ref().map(|_| String::new());
         self.view.search_highlights.clear();
         self.active_mut().frame_dirty = true;
-        gpu.queue_title(self.active().label(&self.shell).to_owned());
+        window.queue_title(self.active().label(&self.shell).to_owned());
         Ok(())
     }
 
-    fn close_tab(&mut self, index: usize, gpu: &mut Gpu) -> Result<()> {
+    fn close_tab(&mut self, index: usize, window: &mut impl WindowOps) -> Result<()> {
         let focused = self.tabs.active_index() == Some(index);
-        self.retire_tab(index)?;
+        self.retire_tab(index, window)?;
         let count = self.tabs.as_slice().len();
         if count != 0 {
             if self.view.set_tab_count(count)? {
                 self.resize_grid()?;
             }
             if focused {
-                self.focus_changed(None, gpu, true)?;
+                self.focus_changed(None, window, true)?;
             }
             self.active_mut().frame_dirty = true;
         }
         Ok(())
     }
 
-    fn retire_tab(&mut self, index: usize) -> Result<()> {
-        let tab = self.tabs.close(index).expect("existing tab");
-        for pane in tab.panes {
-            self.retire(pane)?;
-        }
-        Ok(())
-    }
-
-    fn retire(&mut self, mut tab: PaneState) -> Result<()> {
-        self.routing.forget_pane(tab.id);
-        tab.pane.pty.close()?;
-        if tab.pane.pty.exit_fd().is_some() {
-            tab.sources.remove_output();
-            tab.sources.watch_input(None)?;
-            tab.sources.watch_blink(false)?;
-            self.closing.push((tab.sources, tab.pane.pty));
-        }
-        Ok(())
-    }
-
-    pub(super) fn close_all(&mut self) -> Result<()> {
-        while let Some(index) = self.tabs.active_index() {
-            self.retire_tab(index)?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn reap_closed(&mut self) -> Result<()> {
-        for (sources, mut pty) in self.closing.drain(..) {
-            drop(sources);
-            sources::reap(&mut pty)?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn service_pty(&mut self, gpu: &mut Gpu) -> Result<bool> {
-        let now = Instant::now();
-        for (sources, pty) in &mut self.closing {
-            if sources.take_ready().exit() || pty.close_deadline().is_some_and(|at| at <= now) {
-                pty.service_child()?;
-            }
-        }
-        self.closing.retain(|(_, pty)| pty.exit_fd().is_some());
+    pub(super) fn service_pty(
+        &mut self,
+        now: Instant,
+        window: &mut impl WindowOps,
+    ) -> Result<bool> {
+        let Some(active_index) = self.tabs.active_index() else {
+            return Ok(false);
+        };
         let mut exited = false;
         let mut labels_changed = false;
         let active = self.active().id;
-        let active_index = self.tabs.active_index().unwrap();
         let mut activity_changed = false;
         for (index, tab) in self.tabs.as_mut_slice().iter_mut().enumerate() {
             let focused = tab.tree.focused();
@@ -513,7 +482,7 @@ impl Session {
                 let mut changed = false;
                 let watch_at = (index != active_index && !tab.activity).then_some(now);
                 let (pane_exited, activity) = pane.service(
-                    gpu,
+                    window,
                     pane.id == active,
                     self.host.as_bytes(),
                     watch_at,
@@ -530,14 +499,14 @@ impl Session {
                         (pane.id == active).then_some((
                             &mut self.view,
                             &mut self.routing,
-                            &mut *gpu,
+                            &mut *window,
                         )),
                     )?;
                 }
                 exited |= pane.exited;
                 labels_changed |= changed && pane.id == focused;
                 if changed && pane.id == active {
-                    gpu.queue_title(pane.label(&self.shell).to_owned());
+                    window.queue_title(pane.label(&self.shell).to_owned());
                 }
             }
         }
@@ -545,31 +514,31 @@ impl Session {
         Ok(exited)
     }
 
-    fn close_pane(&mut self, index: usize, id: u64, gpu: &mut Gpu) -> Result<()> {
+    fn close_pane(&mut self, index: usize, id: u64, window: &mut impl WindowOps) -> Result<()> {
         if self.tabs.as_slice()[index].panes.len() == 1 {
-            return self.close_tab(index, gpu);
+            return self.close_tab(index, window);
         }
         let current_tab = self.tabs.active_index() == Some(index);
         let tab = &mut self.tabs.as_mut_slice()[index];
         let changed = tab.tree.focused() == id;
         tab.tree.close(id);
         let pane = tab.remove(id);
-        tab.resize_grid(&self.view)?;
-        self.retire(pane)?;
+        let resize = tab.resize_grid(&self.view);
+        resize.and(self.retire(pane, window))?;
         if current_tab && changed {
-            self.focus_changed(None, gpu, false)?;
+            self.focus_changed(None, window, false)?;
         } else if changed {
             self.active_mut().frame_dirty = true;
         }
         Ok(())
     }
 
-    pub(super) fn close_exited(&mut self, gpu: &mut Gpu) -> Result<bool> {
+    pub(super) fn close_exited(&mut self, window: &mut impl WindowOps) -> Result<bool> {
         for index in (0..self.tabs.as_slice().len()).rev() {
             for leaf in (0..self.tabs.as_slice()[index].panes.len()).rev() {
                 let pane = &self.tabs.as_slice()[index].panes[leaf];
                 if pane.exited {
-                    self.close_pane(index, pane.id, gpu)?;
+                    self.close_pane(index, pane.id, window)?;
                 }
             }
         }

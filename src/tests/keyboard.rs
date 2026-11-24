@@ -1,8 +1,9 @@
+use sumie_core::TabAction;
+
 use super::{
-    KeyAction, LocalPane, Modifiers, Pane, PaneCommand, input, key_event, ready_pane,
+    K, KeyAction, L, LocalPane, Modifiers, Pane, PaneCommand, close, input, key_event, ready_pane,
     request_environment, wait_for_line,
 };
-use xkeysym::key;
 
 #[test]
 fn held_enter_never_reaches_the_next_pty() {
@@ -14,7 +15,7 @@ fn held_enter_never_reaches_the_next_pty() {
     };
     let (mut first, mut next) = (open(), open());
     let mut routing = input::Routing::default();
-    let enter = |action| key_event(28, key::Return, action, Modifiers::default());
+    let enter = |action| key_event(K::Enter, L::Enter, action, Modifiers::default());
     input::route(
         (0, 0),
         &mut first,
@@ -55,7 +56,7 @@ fn held_keys_keep_their_release_but_not_their_repeat_across_focus() {
         ),
     ];
     let mut routing = input::Routing::default();
-    let ctrl = |action| key_event(29, key::Control_L, action, Modifiers::default());
+    let ctrl = |action| key_event(K::ControlLeft, L::Other(None), action, Modifiers::default());
     input::route(
         (0, 0),
         &mut panes[0],
@@ -94,7 +95,10 @@ fn held_keys_keep_their_release_but_not_their_repeat_across_focus() {
 #[test]
 fn rerouted_release_requires_a_reported_press() {
     let mut pane = ready_pane("printf 'READY\\n'; exec cat", &request_environment());
-    for (mode, physical, symbol) in [(b"\x1b[>0u", 29, key::Control_L), (b"\x1b[>3u", 30, key::a)] {
+    for (mode, physical, symbol) in [
+        (b"\x1b[>0u", K::ControlLeft, L::Other(None)),
+        (b"\x1b[>3u", K::KeyA, L::Character('a')),
+    ] {
         pane.terminal.write(mode);
         let event = |action| key_event(physical, symbol, action, Modifiers::default());
         let mut routing = input::Routing::default();
@@ -130,13 +134,13 @@ fn unavailable_directional_chords_reach_the_pty() {
     let mut routing = input::Routing::default();
     for shift in [false, true] {
         let modifiers = Modifiers {
-            ctrl: true,
+            control: true,
             alt: true,
             shift,
             ..Modifiers::default()
         };
         for action in [KeyAction::Press, KeyAction::Repeat, KeyAction::Release] {
-            let event = key_event(105, key::Left, action, modifiers);
+            let event = key_event(K::ArrowLeft, L::Left, action, modifiers);
             let effect =
                 input::route((0, 0), &mut pane, &mut routing, false, event, false).unwrap();
             assert_eq!(effect, input::Effect::None);
@@ -149,7 +153,159 @@ fn unavailable_directional_chords_reach_the_pty() {
     close(pane);
 }
 
-fn close(mut pane: LocalPane) {
-    pane.command(PaneCommand::Close).unwrap();
-    crate::sources::reap(&mut pane.pty).unwrap();
+pub(super) fn window_shortcuts_never_reach_the_pty(
+    pane: &mut LocalPane,
+    routing: &mut input::Routing,
+) {
+    use KeyAction::{Press, Release, Repeat};
+    use input::Effect;
+    use sumie_core::FontZoom;
+
+    let plain = Modifiers::default();
+    let ctrl = Modifiers {
+        control: true,
+        ..plain
+    };
+    let ctrl_shift = Modifiers {
+        shift: true,
+        ..ctrl
+    };
+    let alt = Modifiers { alt: true, ..plain };
+    let chords = [
+        (K::KeyT, L::Character('Т'), ctrl_shift, TabAction::Open),
+        (K::KeyZ, L::Character('W'), ctrl_shift, TabAction::Close), // AZERTY
+        (K::Tab, L::Other(Some('\t')), ctrl, TabAction::Cycle(1)),
+        (K::Tab, L::Other(None), ctrl_shift, TabAction::Cycle(-1)),
+        (K::PageDown, L::Other(None), ctrl, TabAction::Cycle(1)),
+        (K::PageUp, L::Other(None), ctrl, TabAction::Cycle(-1)),
+        (K::PageUp, L::Other(None), ctrl_shift, TabAction::MoveLeft),
+        (
+            K::PageDown,
+            L::Other(None),
+            ctrl_shift,
+            TabAction::MoveRight,
+        ),
+    ];
+    let zoom = [
+        (
+            K::Minus,
+            L::Character('='),
+            ctrl,
+            Effect::Zoom(FontZoom::Increase),
+        ),
+        (
+            K::Digit9,
+            L::Character('+'),
+            ctrl_shift,
+            Effect::Zoom(FontZoom::Increase),
+        ),
+        (
+            K::Digit6,
+            L::Character('-'),
+            ctrl,
+            Effect::Zoom(FontZoom::Decrease),
+        ),
+        (
+            K::Digit0,
+            L::Character('0'),
+            ctrl_shift,
+            Effect::Zoom(FontZoom::Reset),
+        ),
+    ];
+    let tabs =
+        chords
+            .into_iter()
+            .chain(digit_chords(alt))
+            .map(|(physical, symbol, modifiers, action)| {
+                (physical, symbol, modifiers, Effect::Tab(action))
+            });
+    let panes = pane_chords(ctrl, ctrl_shift);
+    for (physical, symbol, modifiers, effect) in tabs.chain(zoom).chain(panes) {
+        for searching in [false, true] {
+            for (action, modifiers, expected) in [
+                (Press, modifiers, &effect),
+                (Repeat, plain, &Effect::None),
+                (Release, plain, &Effect::None),
+            ] {
+                let event = key_event(physical, symbol, action, modifiers);
+                let searching = searching && !matches!(action, Release);
+                assert_eq!(
+                    &input::route((0, 0), pane, routing, searching, event, true).unwrap(),
+                    expected
+                );
+                assert!(pane.pty.input_fd().is_none(), "matched key: {physical:?}");
+            }
+        }
+    }
+}
+
+fn digit_chords(alt: Modifiers) -> impl Iterator<Item = (K, L, Modifiers, TabAction)> {
+    let digits = [
+        K::Digit1,
+        K::Digit2,
+        K::Digit3,
+        K::Digit4,
+        K::Digit5,
+        K::Digit6,
+        K::Digit7,
+        K::Digit8,
+        K::Digit9,
+    ];
+    (0_u8..).zip(digits).map(move |(index, physical)| {
+        let action = if index == 8 {
+            TabAction::Last
+        } else {
+            TabAction::Select(usize::from(index))
+        };
+        (
+            physical,
+            L::Character(char::from(b'1' + index)),
+            alt,
+            action,
+        )
+    })
+}
+
+fn pane_chords(
+    ctrl: Modifiers,
+    ctrl_shift: Modifiers,
+) -> impl Iterator<Item = (K, L, Modifiers, input::Effect)> {
+    use input::Effect::Pane;
+    use sumie_core::{
+        PaneAction::{Focus, Resize, Split, Zoom},
+        splits::{
+            Axis::{Horizontal, Vertical},
+            Direction::{Down, Left, Right, Up},
+        },
+    };
+
+    let focus = Modifiers { alt: true, ..ctrl };
+    let resize = Modifiers {
+        alt: true,
+        ..ctrl_shift
+    };
+    [
+        (
+            K::KeyE,
+            L::Character('E'),
+            ctrl_shift,
+            Pane(Split(Horizontal)),
+        ),
+        (
+            K::KeyO,
+            L::Character('O'),
+            ctrl_shift,
+            Pane(Split(Vertical)),
+        ),
+        (K::KeyW, L::Character('Z'), ctrl_shift, Pane(Zoom)), // AZERTY
+        (K::ArrowLeft, L::Left, focus, Pane(Focus(Left))),
+        (K::ArrowRight, L::Right, focus, Pane(Focus(Right))),
+        (K::ArrowUp, L::Other(None), focus, Pane(Focus(Up))),
+        (K::ArrowDown, L::Other(None), focus, Pane(Focus(Down))),
+        (K::ArrowLeft, L::Left, resize, Pane(Resize(Left))),
+        (K::ArrowRight, L::Right, resize, Pane(Resize(Right))),
+        (K::ArrowUp, L::Other(None), resize, Pane(Resize(Up))),
+        (K::ArrowDown, L::Other(None), resize, Pane(Resize(Down))),
+    ]
+    .into_iter()
 }

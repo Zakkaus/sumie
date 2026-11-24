@@ -1,14 +1,10 @@
 use std::{
-    cell::Cell,
     fmt, io,
-    os::fd::AsFd as _,
-    rc::Rc,
+    os::fd::{AsFd, BorrowedFd},
     time::{Duration, Instant},
 };
 
-use calloop::{Interest, Mode, PostAction, generic::Generic};
 use sumie_config::{Config, Error, Watch};
-use sumie_wayland::SourceHandle;
 
 use crate::Result;
 
@@ -16,7 +12,6 @@ const DEBOUNCE: Duration = Duration::from_millis(100);
 
 pub(crate) struct Reload {
     watch: Option<Watch>,
-    ready: Rc<Cell<bool>>,
     pub(crate) deadline: Option<Instant>,
     pub(crate) banner: Option<String>,
 }
@@ -27,7 +22,6 @@ impl Reload {
             watch: sumie_config::user_config_path()
                 .map(Watch::new)
                 .transpose()?,
-            ready: Rc::default(),
             deadline: None,
             banner: None,
         })
@@ -40,27 +34,15 @@ impl Reload {
             .map_err(io::Error::from)
     }
 
-    pub(crate) fn register(&self, handle: &SourceHandle) -> Result<()> {
-        if let Some(watch) = &self.watch {
-            let ready = Rc::clone(&self.ready);
-            let source = Generic::new(
-                watch.as_fd().try_clone_to_owned()?,
-                Interest::READ,
-                Mode::Level,
-            );
-            handle.insert(source, move |_, _| {
-                ready.set(true);
-                Ok(PostAction::Continue)
-            })?;
-        }
-        Ok(())
+    pub(crate) fn watch_fd(&self) -> Option<BorrowedFd<'_>> {
+        self.watch.as_ref().map(AsFd::as_fd)
     }
 
-    pub(crate) fn pending(&mut self) -> Result<Option<Result<Config, Error>>> {
+    pub(crate) fn pending(&mut self, ready: bool) -> Result<Option<Result<Config, Error>>> {
         let Some(watch) = &self.watch else {
             return Ok(None);
         };
-        if self.ready.take() && watch.changed()? {
+        if ready && watch.changed()? {
             self.deadline = Some(Instant::now() + DEBOUNCE);
         }
         if self.deadline.is_some_and(|at| at <= Instant::now()) {

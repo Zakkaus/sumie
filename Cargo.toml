@@ -54,15 +54,17 @@ zeno = "0.3.3"
 [dependencies]
 sumie-config = { path = "crates/sumie-config" }
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+png.workspace = true
+pollster.workspace = true
+sumie-font = { path = "crates/sumie-font" }
+sumie-render = { path = "crates/sumie-render" }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 calloop = "0.14.5"
 nix = { workspace = true, features = ["dir", "process"] }
-png.workspace = true
-pollster.workspace = true
 sumie-core = { path = "crates/sumie-core" }
-sumie-font = { path = "crates/sumie-font" }
 sumie-pty = { path = "crates/sumie-pty" }
-sumie-render = { path = "crates/sumie-render" }
 sumie-ui = { path = "crates/sumie-ui" }
 sumie-vt = { path = "crates/sumie-vt" }
 tracing.workspace = true
@@ -76,10 +78,6 @@ rustix.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 sumie-macos.workspace = true
-png.workspace = true
-pollster.workspace = true
-sumie-font = { path = "crates/sumie-font" }
-sumie-render = { path = "crates/sumie-render" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

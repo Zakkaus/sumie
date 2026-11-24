@@ -102,6 +102,7 @@ fn presented_buttons(view: &View, close_visible: bool) -> [(f64, f64); 2] {
 }
 
 fn assert_grid_origin(view: &View, snapshot: &sumie_vt::Snapshot, top: u32) {
+    use crate::{linux::LinuxWindow, platform::WindowOps as _};
     let logical_top = f64::from(top) / 1.25;
     assert!(
         view.pointer_position((0.0, logical_top), view.content_rect())
@@ -110,9 +111,13 @@ fn assert_grid_origin(view: &View, snapshot: &sumie_vt::Snapshot, top: u32) {
             < f32::EPSILON
     );
     assert_eq!(
-        view.ime_rectangle(snapshot.cursor, view.content_rect())
-            .unwrap()
-            .y,
+        view.ime_rectangle(
+            snapshot.cursor,
+            view.content_rect(),
+            LinuxWindow::logical_rect
+        )
+        .unwrap()
+        .y,
         top.cast_signed() * 120 / 150
     );
 }

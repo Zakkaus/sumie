@@ -7,7 +7,11 @@ use sumie_render::PixelRect;
 use sumie_vt::{Snapshot, Terminal};
 
 use super::{FontSettings, LinkHighlight, PaneFocus, View};
-use crate::input::{self, SearchTarget};
+use crate::{
+    input::{self, SearchTarget},
+    linux::LinuxWindow,
+    platform::WindowOps as _,
+};
 
 fn view() -> View {
     let config = sumie_config::Config::default();
@@ -169,8 +173,13 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
         Some(SearchTarget::Field)
     ));
     assert!(view.search_hit(pos, left).is_none());
-    assert!(view.ime_rectangle(None, left).is_none());
-    let caret = view.ime_rectangle(None, right).unwrap();
+    assert!(
+        view.ime_rectangle(None, left, LinuxWindow::logical_rect)
+            .is_none()
+    );
+    let caret = view
+        .ime_rectangle(None, right, LinuxWindow::logical_rect)
+        .unwrap();
     // One inset cell, "Search: ", and one preedit cell. No space for the selected query.
     assert_eq!(
         caret.x,
@@ -192,12 +201,12 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
 
 #[test]
 fn padding_breaks_click_counts_but_clamps_an_active_selection() {
-    use sumie_core::mouse::{Dispatch, MouseModes, MouseState, SelectStep, SelectionUnit};
-    use sumie_wayland::{
+    use crate::platform::{
         Modifiers,
         PointerButton::Left,
         PointerPhase::{Motion, Press, Release},
     };
+    use sumie_core::mouse::{Dispatch, MouseModes, MouseState, SelectStep, SelectionUnit};
 
     let mut view = view();
     view.set_padding([8; 2]);

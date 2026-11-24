@@ -1,10 +1,10 @@
 use std::ops::ControlFlow;
 
-use sumie_core::splits::Layout;
-use sumie_wayland::{Event, Modifiers, PointerButton as Button, PointerPhase as Phase};
+use sumie_core::{KeyAction, splits::Layout};
 
-use super::{Gpu, PaneState, PaneTab, Result, Session, View, links, tabs};
+use super::{PaneState, PaneTab, Result, Session, View, WindowOps, links, tabs};
 use crate::input::{self, Effect, Routing, SearchAction};
+use crate::platform::{Event, PointerButton as Button, PointerEvent, PointerPhase as Phase};
 
 #[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
@@ -140,42 +140,19 @@ impl Pointer {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct PointerEvent {
-    pub(super) phase: Phase,
-    pub(super) position: (f64, f64),
-    serial: u32,
-    pub(super) modifiers: Modifiers,
-}
-
 impl Session {
     pub(super) fn input(
         &mut self,
         event: Event,
-        gpu: &mut Gpu,
+        window: &mut impl WindowOps,
         banner: bool,
     ) -> Result<Option<tabs::Action>> {
         self.link_pointer.record(&event);
         if let ControlFlow::Break(action) = self.bar_input(&event) {
             return Ok(action);
         }
-        if let Event::Pointer {
-            phase,
-            position,
-            serial,
-            modifiers,
-        } = event
-        {
-            self.pointer_input(
-                PointerEvent {
-                    phase,
-                    position,
-                    serial,
-                    modifiers,
-                },
-                gpu,
-                banner,
-            )?;
+        if let Event::Pointer(pointer) = event {
+            self.pointer_input(pointer, window, banner)?;
             return Ok(None);
         }
 
@@ -188,23 +165,25 @@ impl Session {
         let pane = &mut tab.panes[slot];
         if let Event::ModifiersChanged(modifiers) = event {
             self.pane_pointer.image_click = super::viewer::Click::default();
-            pane.pane
-                .pointer_modifiers_changed(input::key_modifiers(modifiers));
+            pane.pane.pointer_modifiers_changed(modifiers);
             return Ok(None);
         }
         if pane.viewer_presented() {
             if super::viewer::escape_pressed(&event) {
                 self.pane_pointer
                     .image_click
-                    .dismiss(pane, Some((&mut self.view, &mut self.routing, gpu)));
+                    .dismiss(pane, Some((&mut self.view, &mut self.routing, window)));
             }
             return Ok(None);
         }
         if matches!(
             event,
-            Event::Key { pressed: true, .. } | Event::ImeCommit { .. }
+            Event::Key {
+                action: KeyAction::Press | KeyAction::Repeat,
+                ..
+            } | Event::ImeCommit { .. }
         ) {
-            pane.sources.reset_blink();
+            window.reset_blink(id);
         }
         let searching = pane.search.is_some();
         match input::route(
@@ -222,7 +201,7 @@ impl Session {
                 pane,
                 &mut self.view,
                 &mut self.routing,
-                gpu,
+                window,
                 &mut self.link_pointer,
                 searching,
                 effect,
@@ -231,7 +210,12 @@ impl Session {
         Ok(None)
     }
 
-    fn pointer_input(&mut self, event: PointerEvent, gpu: &mut Gpu, banner: bool) -> Result<()> {
+    fn pointer_input(
+        &mut self,
+        event: PointerEvent,
+        window: &mut impl WindowOps,
+        banner: bool,
+    ) -> Result<()> {
         let tab = self.tabs.active_mut().expect("live window");
         let key = tab.layout_key();
         if let Some(id) = self.pane_pointer.cancel_stale_pane(key) {
@@ -252,7 +236,7 @@ impl Session {
         };
         if let Phase::Press(button, _) = event.phase {
             if let Target::Pane(id) = target {
-                self.focus_pane(id, gpu)?;
+                self.focus_pane(id, window)?;
             }
             self.pane_pointer.press(button, target);
         }
@@ -266,7 +250,7 @@ impl Session {
                     pane,
                     &mut self.view,
                     &mut self.routing,
-                    gpu,
+                    window,
                     event,
                 )? {
                     if pane.viewer.is_some() {
@@ -287,7 +271,7 @@ impl Session {
                     pane,
                     &mut self.view,
                     &mut self.routing,
-                    gpu,
+                    window,
                     &mut self.link_pointer,
                     searching,
                     effect,
@@ -347,7 +331,7 @@ fn pointer_effect(
             links::Hover::open(uri.expect("validated link release"));
             Ok(Effect::None)
         }
-        Effect::Select(step) if pane.select(step, mouse.cell)? => Ok(Effect::Copy(event.serial)),
+        Effect::Select(step) if pane.select(step, mouse.cell)? => Ok(Effect::Copy),
         effect => Ok(effect),
     }
 }
@@ -356,7 +340,7 @@ fn apply_pane_effect(
     pane: &mut PaneState,
     view: &mut View,
     routing: &mut Routing,
-    gpu: &mut Gpu,
+    window: &mut impl WindowOps,
     link_pointer: &mut links::Pointer,
     searching: bool,
     effect: Effect,
@@ -369,11 +353,11 @@ fn apply_pane_effect(
             if matches!(action, SearchAction::Open | SearchAction::Close) {
                 pane.pane.reset_pointer_gestures();
                 pane.paste_recipient = None;
-                gpu.set_input_generation(routing.change_recipient());
+                window.set_input_generation(routing.change_recipient());
             }
             pane.search_action(action, view)?;
         }
-        Effect::Copy(serial) => pane.copy_selection(gpu, serial)?,
+        Effect::Copy => pane.copy_selection(window)?,
         Effect::ViewportChanged => {
             link_pointer.clear_link();
             pane.frame_dirty |= searching || pane.selection.range().is_some();
@@ -381,7 +365,7 @@ fn apply_pane_effect(
             pane.snapshot_dirty = true;
         }
         Effect::ReadClipboard => {
-            gpu.read_clipboard(*pane.paste_recipient.get_or_insert(routing.generation));
+            window.read_clipboard(*pane.paste_recipient.get_or_insert(routing.generation));
         }
         Effect::Preedit(text) if text != view.preedit => {
             view.preedit = text;

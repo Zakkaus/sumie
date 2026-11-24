@@ -382,16 +382,14 @@ impl PaneState {
 
 #[cfg(test)]
 mod tests {
-    use sumie_core::{KeyAction::Press, Pane, PaneCommand};
-    use sumie_wayland::{Event, Modifiers};
-    use xkeysym::key;
+    use sumie_core::{KeyAction::Press, KeyCode as K};
 
     use super::*;
     use crate::{
         input,
         pane::request_environment,
-        sources,
-        tests::{key_event, ready_pane},
+        platform::{Event, LogicalKey as L, Modifiers},
+        tests::{close, key_event, ready_pane},
     };
 
     #[test]
@@ -429,13 +427,9 @@ mod tests {
         assert!(vt.at_bottom().unwrap());
     }
 
-    #[test]
-    fn search_query_editing_never_writes_to_the_pty() {
-        let mut pane = ready_pane("printf 'READY\\n'; exec cat", &request_environment());
-        let mut search = Some(Bar::open());
-        let mut routing = input::Routing::default();
+    fn editing_steps() -> impl IntoIterator<Item = (Event, &'static str)> {
         let ctrl = Modifiers {
-            ctrl: true,
+            control: true,
             ..Default::default()
         };
         let shifted = Modifiers {
@@ -447,7 +441,7 @@ mod tests {
             ..ctrl
         };
         let shift_ctrl = Modifiers {
-            ctrl: true,
+            control: true,
             ..shifted
         };
         let chord = |physical, symbol| key_event(physical, symbol, Press, ctrl);
@@ -456,32 +450,54 @@ mod tests {
             text: text.into(),
             generation: 0,
         };
-        for (event, expected) in [
+        [
             (commit("replace-me"), "replace-me"),
-            (key_event(30, key::A, Press, caps_ctrl), "replace-me"),
-            (commit("rs"), "rs"),
-            (plain(102, key::Home), "rs"),
-            (plain(106, key::Right), "rs"),
-            (commit("木\u{e0100}"), "r木\u{e0100}s"),
-            (plain(14, key::BackSpace), "rs"),
-            (plain(107, key::End), "rs"),
-            (commit(" \u{600}1"), "rs \u{600}1"),
-            (chord(14, key::BackSpace), "rs "),
-            (key_event(30, key::A, Press, shift_ctrl), "rs "),
-            (plain(14, key::BackSpace), ""),
-            (key_event(47, key::V, Press, caps_ctrl), "a b c d e f g h i"),
-            (chord(30, key::a), "a b c d e f g h i"),
-            (plain(14, key::BackSpace), ""),
             (
-                key_event(110, key::Insert, Press, shifted),
+                key_event(K::KeyA, L::Character('A'), Press, caps_ctrl),
+                "replace-me",
+            ),
+            (commit("rs"), "rs"),
+            (plain(K::Home, L::Home), "rs"),
+            (plain(K::ArrowRight, L::Right), "rs"),
+            (commit("木\u{e0100}"), "r木\u{e0100}s"),
+            (plain(K::Backspace, L::Backspace), "rs"),
+            (plain(K::End, L::End), "rs"),
+            (commit(" \u{600}1"), "rs \u{600}1"),
+            (chord(K::Backspace, L::Backspace), "rs "),
+            (
+                key_event(K::KeyA, L::Character('A'), Press, shift_ctrl),
+                "rs ",
+            ),
+            (plain(K::Backspace, L::Backspace), ""),
+            (
+                key_event(K::KeyV, L::Character('V'), Press, caps_ctrl),
                 "a b c d e f g h i",
             ),
-            (plain(47, key::v), "a b c d e f g h iv"),
+            (chord(K::KeyA, L::Character('a')), "a b c d e f g h i"),
+            (plain(K::Backspace, L::Backspace), ""),
             (
-                key_event(47, key::v, sumie_core::KeyAction::Repeat, ctrl),
+                key_event(K::Insert, L::Insert, Press, shifted),
+                "a b c d e f g h i",
+            ),
+            (plain(K::KeyV, L::Character('v')), "a b c d e f g h iv"),
+            (
+                key_event(
+                    K::KeyV,
+                    L::Character('v'),
+                    sumie_core::KeyAction::Repeat,
+                    ctrl,
+                ),
                 "a b c d e f g h iv",
             ),
-        ] {
+        ]
+    }
+
+    #[test]
+    fn search_query_editing_never_writes_to_the_pty() {
+        let mut pane = ready_pane("printf 'READY\\n'; exec cat", &request_environment());
+        let mut search = Some(Bar::open());
+        let mut routing = input::Routing::default();
+        for (event, expected) in editing_steps() {
             let mut route =
                 |event| input::route((0, 0), &mut pane, &mut routing, true, event, false).unwrap();
             let effect = match route(event) {
@@ -501,7 +517,6 @@ mod tests {
             assert_eq!(search.as_ref().unwrap().query, expected);
             assert!(pane.pty.input_fd().is_none());
         }
-        pane.command(PaneCommand::Close).unwrap();
-        sources::reap(&mut pane.pty).unwrap();
+        close(pane);
     }
 }

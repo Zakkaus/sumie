@@ -1,18 +1,21 @@
 use sumie_core::mouse::{Button, MouseEvent, MousePhase, SelectStep};
 use sumie_core::{
-    FontZoom, KeyAction, KeyModifiers, Pane, PaneAction, PaneCommand, PaneEffect, Shortcut,
-    Shortcuts, TabAction,
+    FontZoom, KeyAction, KeyModifiers, Pane, PaneAction, PaneCommand, PaneEffect, PhysicalKey,
+    Shortcut, Shortcuts, TabAction,
 };
-use sumie_wayland::Event;
 
-use crate::{Error, Result, pane::LocalPane};
+use crate::{
+    Error, Result,
+    pane::LocalPane,
+    platform::{Event, LogicalKey},
+};
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub(crate) enum Effect {
     None,
     Preedit(String),
     ReadClipboard,
-    Copy(u32),
+    Copy,
     Select(SelectStep),
     OpenLink,
     ViewportChanged,
@@ -44,7 +47,7 @@ pub(crate) enum SearchTarget {
 }
 
 struct HeldKey {
-    physical: u32,
+    physical: PhysicalKey,
     unshifted: Option<char>,
     pane: u64,
     generation: u64,
@@ -56,7 +59,7 @@ pub(crate) struct Routing {
     shortcuts: Shortcuts,
     pub(crate) generation: u64,
     terminal_presses: Vec<HeldKey>,
-    repeating_search_key: Option<u32>,
+    repeating_search_key: Option<PhysicalKey>,
     search_presses: [Option<SearchTarget>; 3],
 }
 
@@ -78,7 +81,7 @@ impl Routing {
     pub(crate) fn release_owner(&self, event: &Event) -> Option<u64> {
         let Event::Key {
             physical,
-            pressed: false,
+            action: KeyAction::Release,
             ..
         } = event
         else {
@@ -118,7 +121,7 @@ impl Routing {
         Ok(())
     }
 
-    fn terminal_key(&mut self, physical: u32, id: u64, action: KeyAction) -> bool {
+    fn terminal_key(&mut self, physical: PhysicalKey, id: u64, action: KeyAction) -> bool {
         let held = self
             .terminal_presses
             .iter()
@@ -143,8 +146,8 @@ impl Routing {
 
     fn search_key(
         &mut self,
-        physical: u32,
-        keysym: u32,
+        physical: PhysicalKey,
+        logical: LogicalKey,
         modifiers: KeyModifiers,
         text: Option<String>,
         action: KeyAction,
@@ -156,10 +159,10 @@ impl Routing {
                 match shortcut {
                     Some(Shortcut::Paste) => Effect::ReadClipboard,
                     None => {
-                        if let Some(effect) = search_shortcut(keysym, modifiers) {
+                        if let Some(effect) = search_shortcut(logical, modifiers) {
                             return effect;
                         }
-                        let effect = search_key(keysym, modifiers, text);
+                        let effect = search_key(logical, modifiers, text);
                         if matches!(&effect, Effect::Search(_)) {
                             self.repeating_search_key = Some(physical);
                         }
@@ -169,7 +172,7 @@ impl Routing {
                 }
             }
             KeyAction::Repeat if self.repeating_search_key == Some(physical) => {
-                search_key(keysym, modifiers, text)
+                search_key(logical, modifiers, text)
             }
             KeyAction::Release if self.repeating_search_key == Some(physical) => {
                 self.repeating_search_key = None;
@@ -207,23 +210,13 @@ pub(crate) fn route(
         Event::ImeCommit { ref text, .. } => PaneCommand::Text(text.as_bytes()),
         Event::ClipboardText { text, .. } => PaneCommand::Paste(text),
         Event::Key {
-            serial,
             physical,
-            keysym,
+            logical,
             utf8,
             modifiers,
-            pressed,
-            repeat,
+            action,
         } => {
-            let modifiers = key_modifiers(modifiers);
-            let action = if repeat {
-                KeyAction::Repeat
-            } else if pressed {
-                KeyAction::Press
-            } else {
-                KeyAction::Release
-            };
-            let symbol = xkeysym::Keysym::new(keysym).key_char();
+            let symbol = logical.character();
             let shortcut = routing
                 .shortcuts
                 .match_key(physical, symbol, modifiers, action, has_splits);
@@ -233,10 +226,10 @@ pub(crate) fn route(
                 Some(Shortcut::Zoom(action)) => return Ok(Effect::Zoom(action)),
                 shortcut if search_owns_key => {
                     return Ok(
-                        routing.search_key(physical, keysym, modifiers, utf8, action, shortcut)
+                        routing.search_key(physical, logical, modifiers, utf8, action, shortcut)
                     );
                 }
-                Some(Shortcut::Copy) => return Ok(Effect::Copy(serial)),
+                Some(Shortcut::Copy) => return Ok(Effect::Copy),
                 Some(Shortcut::Paste) => return Ok(Effect::ReadClipboard),
                 Some(Shortcut::Search) => return Ok(Effect::Search(SearchAction::Open)),
                 Some(Shortcut::Consume) => return Ok(Effect::None),
@@ -294,30 +287,30 @@ fn send_input(
     }
 }
 
-fn search_shortcut(keysym: u32, mods: KeyModifiers) -> Option<Effect> {
-    use xkeysym::key;
+fn search_shortcut(logical: LogicalKey, mods: KeyModifiers) -> Option<Effect> {
     if mods.alt || mods.super_key {
         return None;
     }
-    match keysym {
-        key::a | key::A if mods.control => Some(Effect::Search(SearchAction::SelectAll)),
-        key::v | key::V if mods.control => Some(Effect::ReadClipboard),
-        key::Insert | key::KP_Insert if mods.shift && !mods.control => Some(Effect::ReadClipboard),
+    match logical {
+        LogicalKey::Character('a' | 'A') if mods.control => {
+            Some(Effect::Search(SearchAction::SelectAll))
+        }
+        LogicalKey::Character('v' | 'V') if mods.control => Some(Effect::ReadClipboard),
+        LogicalKey::Insert if mods.shift && !mods.control => Some(Effect::ReadClipboard),
         _ => None,
     }
 }
 
-fn search_key(keysym: u32, modifiers: KeyModifiers, text: Option<String>) -> Effect {
-    use xkeysym::key;
+fn search_key(logical: LogicalKey, modifiers: KeyModifiers, text: Option<String>) -> Effect {
     let ctrl = modifiers.control && !modifiers.alt && !modifiers.super_key;
-    let action = match keysym {
-        key::Escape => SearchAction::Close,
-        key::Home | key::KP_Home => SearchAction::Home,
-        key::End | key::KP_End => SearchAction::End,
-        key::Left | key::KP_Left => SearchAction::Move { right: false },
-        key::Right | key::KP_Right => SearchAction::Move { right: true },
-        key::BackSpace => SearchAction::Backspace { word: ctrl },
-        key::Return | key::KP_Enter | key::F3 => SearchAction::Navigate {
+    let action = match logical {
+        LogicalKey::Escape => SearchAction::Close,
+        LogicalKey::Home => SearchAction::Home,
+        LogicalKey::End => SearchAction::End,
+        LogicalKey::Left => SearchAction::Move { right: false },
+        LogicalKey::Right => SearchAction::Move { right: true },
+        LogicalKey::Backspace => SearchAction::Backspace { word: ctrl },
+        LogicalKey::Enter | LogicalKey::NumpadEnter | LogicalKey::F3 => SearchAction::Navigate {
             newer: modifiers.shift,
         },
         _ if !modifiers.control && !modifiers.super_key => {
@@ -406,41 +399,17 @@ fn send(pane: &mut impl Pane<Error = Error>, command: PaneCommand<'_>) -> Result
     }
 }
 
-pub(crate) fn key_modifiers(modifiers: sumie_wayland::Modifiers) -> KeyModifiers {
-    KeyModifiers {
-        shift: modifiers.shift,
-        control: modifiers.ctrl,
-        alt: modifiers.alt,
-        super_key: modifiers.logo,
-        caps_lock: modifiers.caps_lock,
-        num_lock: modifiers.num_lock,
-    }
-}
-
 pub(crate) fn mouse_event(
-    phase: sumie_wayland::PointerPhase,
-    modifiers: sumie_wayland::Modifiers,
+    phase: MousePhase,
+    modifiers: KeyModifiers,
     (cell, pixel, over_grid): (sumie_core::CellPosition, [f32; 2], bool),
 ) -> MouseEvent {
-    use sumie_wayland::{PointerButton, PointerPhase};
-    let button = |b| match b {
-        PointerButton::Left => Button::Left,
-        PointerButton::Middle => Button::Middle,
-        PointerButton::Right => Button::Right,
-    };
-    let phase = match phase {
-        PointerPhase::Press(b, time) => MousePhase::Press(button(b), time),
-        PointerPhase::Release(b) => MousePhase::Release(button(b)),
-        PointerPhase::Motion => MousePhase::Motion,
-        PointerPhase::Wheel(delta) => MousePhase::Wheel(delta),
-        PointerPhase::Cancel => MousePhase::Cancel,
-    };
     MouseEvent {
         phase,
         cell,
         pixel,
         over_grid,
-        modifiers: key_modifiers(modifiers),
+        modifiers,
         link: false,
     }
 }

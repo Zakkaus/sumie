@@ -1,31 +1,6 @@
 use std::time::{Duration, Instant};
 
-use calloop::{
-    RegistrationToken,
-    timer::{TimeoutAction, Timer},
-};
-use sumie_wayland::SourceHandle;
-
-use crate::Result;
-
-pub(super) trait TimerSource {
-    type Token: Copy;
-
-    fn register(&self, at: Instant) -> Result<Self::Token>;
-    fn cancel(&self, token: Self::Token);
-}
-
-impl TimerSource for SourceHandle {
-    type Token = RegistrationToken;
-
-    fn register(&self, at: Instant) -> Result<Self::Token> {
-        Ok(self.insert(Timer::from_deadline(at), |_, ()| TimeoutAction::Drop)?)
-    }
-
-    fn cancel(&self, token: Self::Token) {
-        self.remove(token);
-    }
-}
+use crate::{Result, platform::TimerSource};
 
 pub(super) struct Wake<S: TimerSource> {
     origin: Instant,

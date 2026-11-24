@@ -16,9 +16,11 @@ use sumie_render::DrawList;
 use sumie_render::{AtlasRect, AtlasUpload, Fill, FrameDraw, PaneDraw, PixelRect, Rgba, wgpu};
 use sumie_ui::Palette;
 use sumie_vt::{Rgb, Snapshot};
-use sumie_wayland::CursorRect;
 
-use crate::Result;
+use crate::{
+    Result,
+    platform::{CaretBounds, LogicalRect},
+};
 pub(crate) use attributes::LinkHighlight;
 pub(crate) use paint::PaneFocus;
 use paint::{PanePaint, PanePainter};
@@ -421,7 +423,8 @@ impl View {
         &self,
         cursor: Option<sumie_vt::Cursor>,
         rect: Rect,
-    ) -> Option<CursorRect> {
+        project: impl FnOnce(CaretBounds) -> Option<LogicalRect>,
+    ) -> Option<LogicalRect> {
         let pane = &self.panes[self.active_pane?];
         if pane.rect != rect {
             return None;
@@ -439,29 +442,17 @@ impl View {
             i64::from(rect.x + rect.width),
             i64::from(rect.y + rect.height),
         ];
-        // Match the actual viewporter stretch, including buffers rounded at fractional scale.
-        let bounds = |axis: usize, start: i32| -> Option<(i32, i32)> {
-            let device = i64::from(self.device[axis]);
-            if device == 0 {
-                return None;
-            }
-            let logical = i64::from(self.logical[axis]);
-            let start = i64::from(start);
-            let left = start * logical / device;
-            let end = (start + i64::from(self.cell[axis])).min(ends[axis]);
-            if start >= end {
-                return None;
-            }
-            let right = (end * logical + device - 1) / device;
-            Some((left.try_into().ok()?, (right - left).try_into().ok()?))
-        };
-        let (x, width) = bounds(0, x)?;
-        let (y, height) = bounds(1, y)?;
-        Some(CursorRect {
-            x,
-            y,
-            width,
-            height,
+        let start = [x, y];
+        let end =
+            std::array::from_fn(|i| (i64::from(start[i]) + i64::from(self.cell[i])).min(ends[i]));
+        if (0..2).any(|i| i64::from(start[i]) >= end[i]) {
+            return None;
+        }
+        project(CaretBounds {
+            start,
+            end,
+            logical: self.logical,
+            device: self.device,
         })
     }
 }

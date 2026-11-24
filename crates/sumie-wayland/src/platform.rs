@@ -1,4 +1,3 @@
-use std::time::Duration;
 use std::{collections::VecDeque, fmt::Debug, ptr::NonNull, sync::Arc};
 
 use raw_window_handle::{
@@ -46,6 +45,7 @@ use crate::{
 };
 
 mod background_effects;
+mod dispatch;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
@@ -161,19 +161,6 @@ impl Platform {
             state,
             event_loop,
         })
-    }
-
-    /// Wait up to `timeout` and dispatch ready sources. `None` waits indefinitely.
-    ///
-    /// # Errors
-    /// Returns an error from calloop or the Wayland event source.
-    pub fn dispatch(&mut self, timeout: Option<Duration>) -> calloop::Result<()> {
-        self.event_loop.dispatch(timeout, &mut self.state)
-    }
-
-    /// Drain events before the next dispatch or presentation.
-    pub fn drain_events(&mut self) -> impl Iterator<Item = Event> + '_ {
-        self.state.events.drain(..)
     }
 
     /// Update the cursor for the focused pointer; repeated requests are ignored.

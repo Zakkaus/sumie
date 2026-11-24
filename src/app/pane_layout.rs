@@ -1,6 +1,7 @@
 use sumie_core::{PaneAction, splits::Axis};
 
-use super::{Gpu, Layout, PaneState, PaneTab, Rect, Result, Session, SplitTree, View};
+use super::{Layout, PaneState, PaneTab, Rect, Result, Session, SplitTree, View};
+use crate::platform::{PaneWatches, WindowOps};
 
 impl PaneTab {
     pub(super) fn new(pane: PaneState) -> Self {
@@ -64,7 +65,7 @@ impl Session {
     pub(super) fn refresh_visible(
         &mut self,
         now: Option<u64>,
-        gpu: &mut Gpu,
+        window: &mut impl WindowOps,
     ) -> Result<Option<u64>> {
         let tab = self.tabs.active_mut().expect("live window");
         let focused = tab.tree.focused();
@@ -92,7 +93,11 @@ impl Session {
                 pane.snapshot_dirty = true;
                 self.pane_pointer.image_click.refresh_viewer(
                     pane,
-                    (pane.id == focused).then_some((&mut self.view, &mut self.routing, &mut *gpu)),
+                    (pane.id == focused).then_some((
+                        &mut self.view,
+                        &mut self.routing,
+                        &mut *window,
+                    )),
                 )?;
                 pane.update_snapshot()?;
             }
@@ -114,6 +119,7 @@ impl Session {
         &mut self,
         rect: Rect,
         config: &sumie_config::Config,
+        watches: &mut impl PaneWatches,
     ) -> Result<PaneState> {
         let cwd = self
             .active()
@@ -124,12 +130,17 @@ impl Session {
             .unwrap_or(&self.home);
         let pane = self
             .spawn
-            .open(self.next_id, rect, &self.view, config, cwd)?;
+            .open(self.next_id, rect, &self.view, config, cwd, watches)?;
         self.next_id += 1;
         Ok(pane)
     }
 
-    fn split(&mut self, axis: Axis, gpu: &mut Gpu, config: &sumie_config::Config) -> Result<()> {
+    fn split(
+        &mut self,
+        axis: Axis,
+        window: &mut impl WindowOps,
+        config: &sumie_config::Config,
+    ) -> Result<()> {
         let tab = self.tabs.active().unwrap();
         let old = tab.tree.focused();
         let rect = tab.tree.split_preview(
@@ -138,7 +149,7 @@ impl Session {
             self.view.cell,
             self.view.pane_padding(),
         );
-        let pane = match self.spawn_pane(rect, config) {
+        let pane = match self.spawn_pane(rect, config, window) {
             Ok(pane) => pane,
             Err(error) => {
                 tracing::warn!(%error, "could not split pane");
@@ -149,14 +160,22 @@ impl Session {
         tab.tree.split(axis, pane.id);
         tab.panes.push(pane);
         tab.resize_grid(&self.view)?;
-        self.focus_changed(Some((self.tabs.active_index().unwrap(), old)), gpu, false)
+        self.focus_changed(
+            Some((self.tabs.active_index().unwrap(), old)),
+            window,
+            false,
+        )
     }
 
-    pub(super) fn focus_pane(&mut self, id: u64, gpu: &mut Gpu) -> Result<()> {
+    pub(super) fn focus_pane(&mut self, id: u64, window: &mut impl WindowOps) -> Result<()> {
         let tab = self.tabs.active_mut().unwrap();
         let old = tab.tree.focused();
         if tab.tree.focus(id) {
-            self.focus_changed(Some((self.tabs.active_index().unwrap(), old)), gpu, false)?;
+            self.focus_changed(
+                Some((self.tabs.active_index().unwrap(), old)),
+                window,
+                false,
+            )?;
         }
         Ok(())
     }
@@ -174,12 +193,12 @@ impl Session {
         &mut self,
         command: PaneAction,
         previous: u64,
-        gpu: &mut Gpu,
+        window: &mut impl WindowOps,
         config: &sumie_config::Config,
     ) -> Result<()> {
         let tab = self.tabs.active_mut().unwrap();
         match command {
-            PaneAction::Split(axis) => return self.split(axis, gpu, config),
+            PaneAction::Split(axis) => return self.split(axis, window, config),
             PaneAction::Focus(dir) => {
                 if !tab.tree.focus_neighbor(dir, &tab.layout) {
                     return Ok(());
@@ -189,7 +208,7 @@ impl Session {
                 }
                 return self.focus_changed(
                     Some((self.tabs.active_index().unwrap(), previous)),
-                    gpu,
+                    window,
                     false,
                 );
             }

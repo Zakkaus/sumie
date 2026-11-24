@@ -15,15 +15,15 @@ mod gpu;
 #[cfg(target_os = "linux")]
 mod input;
 #[cfg(target_os = "linux")]
-mod keycodes;
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "linux")]
 mod pane;
 #[cfg(target_os = "linux")]
-mod reload;
+mod platform;
 #[cfg(target_os = "linux")]
-mod sources;
+mod reload;
 #[cfg(target_os = "linux")]
 mod view;
 

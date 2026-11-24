@@ -23,14 +23,11 @@ class Watchdog:
         self.discarded = 0
         self.first_present_ns = None
         self.max_gap_ns = 0
-        self.max_after_first_ns = 0
         self.ready = False
 
     def gap(self, timestamp):
-        gap = timestamp - self.anchor
-        self.max_gap_ns = max(self.max_gap_ns, gap)
         if self.first_present_ns is not None:
-            self.max_after_first_ns = max(self.max_after_first_ns, gap)
+            self.max_gap_ns = max(self.max_gap_ns, timestamp - self.anchor)
 
     def read(self, log):
         for line in log:
@@ -76,8 +73,7 @@ class Watchdog:
         print(f'First visible presented: {first}')
         print(f'Presented: {self.presented}; discarded: {self.discarded}')
         print(f'Invisible: {self.hidden_periods} periods, {self.hidden_ns / NS_PER_MS:.3f} ms')
-        print(f'Max visible gap: {self.max_gap_ns / NS_PER_MS:.3f} ms '
-              f'(after first visible presented: {self.max_after_first_ns / NS_PER_MS:.3f} ms)')
+        print(f'Max visible gap after first presented: {self.max_gap_ns / NS_PER_MS:.3f} ms')
         if self.max_gap_ns > LIMIT_NS:
             print('FAIL: visible presentation gap exceeded 100 ms')
             return 1

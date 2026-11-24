@@ -13,11 +13,13 @@
 use unicode_script::{Script, UnicodeScript};
 
 pub mod graphics;
+mod keys;
 mod link;
 pub mod mouse;
 mod selection;
 pub mod splits;
 mod tabs;
+pub use keys::{KeyCode, PhysicalKey};
 pub use link::LinkUri;
 pub use selection::{CellPosition, CellRange, Selection, SelectionPoint};
 use splits::{Axis, Direction};
@@ -47,7 +49,7 @@ pub struct KeyModifiers {
 
 #[derive(Default)]
 pub struct Shortcuts {
-    consumed: Vec<u32>,
+    consumed: Vec<PhysicalKey>,
 }
 
 #[derive(Clone, Copy)]
@@ -78,9 +80,9 @@ pub enum FontZoom {
 
 impl Shortcuts {
     /// Keep a modal key's repeats and release out of the PTY after the modal closes.
-    pub fn capture(&mut self, evdev: u32) {
-        if !self.consumed.contains(&evdev) {
-            self.consumed.push(evdev);
+    pub fn capture(&mut self, physical: PhysicalKey) {
+        if !self.consumed.contains(&physical) {
+            self.consumed.push(physical);
         }
     }
 
@@ -89,13 +91,13 @@ impl Shortcuts {
     /// Directional pane bindings are reserved only in tabs with splits.
     pub fn match_key(
         &mut self,
-        evdev: u32,
+        physical: PhysicalKey,
         symbol: Option<char>,
         modifiers: KeyModifiers,
         action: KeyAction,
         has_splits: bool,
     ) -> Option<Shortcut> {
-        if let Some(index) = self.consumed.iter().position(|&held| held == evdev) {
+        if let Some(index) = self.consumed.iter().position(|&held| held == physical) {
             if !matches!(action, KeyAction::Repeat) {
                 self.consumed.swap_remove(index);
             }
@@ -107,28 +109,19 @@ impl Shortcuts {
             return None;
         }
         let shortcut = match (modifiers.control, modifiers.alt, modifiers.shift) {
-            (true, false, shift) => control_shortcut(evdev, symbol, shift),
-            (true, true, shift) if has_splits => directional_shortcut(evdev, shift),
-            (false, true, false) => alt_tab_shortcut(evdev, symbol).map(Shortcut::Tab),
+            (true, false, shift) => control_shortcut(physical, symbol, shift),
+            (true, true, shift) if has_splits => directional_shortcut(physical, shift),
+            (false, true, false) => alt_tab_shortcut(physical, symbol).map(Shortcut::Tab),
             _ => None,
         }?;
-        self.consumed.push(evdev);
+        self.consumed.push(physical);
         Some(shortcut)
     }
 }
 
-fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Shortcut> {
-    const KEY_TAB: u32 = 15;
-    const KEY_W: u32 = 17;
-    const KEY_E: u32 = 18;
-    const KEY_T: u32 = 20;
-    const KEY_O: u32 = 24;
-    const KEY_F: u32 = 33;
-    const KEY_Z: u32 = 44;
-    const KEY_C: u32 = 46;
-    const KEY_V: u32 = 47;
-    const KEY_PAGE_UP: u32 = 104;
-    const KEY_PAGE_DOWN: u32 = 109;
+fn control_shortcut(physical: PhysicalKey, symbol: Option<char>, shift: bool) -> Option<Shortcut> {
+    use KeyCode as K;
+    use PhysicalKey::Code;
 
     match symbol {
         Some('=' | '+') => return Some(Shortcut::Zoom(FontZoom::Increase)),
@@ -137,11 +130,11 @@ fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Sho
         _ => (),
     }
 
-    let action = match (evdev, shift) {
-        (KEY_TAB | KEY_PAGE_DOWN, false) => TabAction::Cycle(1),
-        (KEY_TAB, true) | (KEY_PAGE_UP, false) => TabAction::Cycle(-1),
-        (KEY_PAGE_UP, true) => TabAction::MoveLeft,
-        (KEY_PAGE_DOWN, true) => TabAction::MoveRight,
+    let action = match (physical, shift) {
+        (Code(K::Tab | K::PageDown), false) => TabAction::Cycle(1),
+        (Code(K::Tab), true) | (Code(K::PageUp), false) => TabAction::Cycle(-1),
+        (Code(K::PageUp), true) => TabAction::MoveLeft,
+        (Code(K::PageDown), true) => TabAction::MoveRight,
         (_, false) => return None,
         (_, true) => {
             // An unbound Latin key must not invoke a binding from its QWERTY position.
@@ -151,15 +144,15 @@ fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Sho
                 {
                     Some(ch)
                 }
-                _ => match evdev {
-                    KEY_C => Some('c'),
-                    KEY_E => Some('e'),
-                    KEY_F => Some('f'),
-                    KEY_O => Some('o'),
-                    KEY_V => Some('v'),
-                    KEY_T => Some('t'),
-                    KEY_W => Some('w'),
-                    KEY_Z => Some('z'),
+                _ => match physical {
+                    Code(K::KeyC) => Some('c'),
+                    Code(K::KeyE) => Some('e'),
+                    Code(K::KeyF) => Some('f'),
+                    Code(K::KeyO) => Some('o'),
+                    Code(K::KeyV) => Some('v'),
+                    Code(K::KeyT) => Some('t'),
+                    Code(K::KeyW) => Some('w'),
+                    Code(K::KeyZ) => Some('z'),
                     _ => None,
                 },
             };
@@ -179,16 +172,12 @@ fn control_shortcut(evdev: u32, symbol: Option<char>, shift: bool) -> Option<Sho
     Some(Shortcut::Tab(action))
 }
 
-fn directional_shortcut(evdev: u32, resize: bool) -> Option<Shortcut> {
-    const KEY_UP: u32 = 103;
-    const KEY_LEFT: u32 = 105;
-    const KEY_RIGHT: u32 = 106;
-    const KEY_DOWN: u32 = 108;
-    let direction = match evdev {
-        KEY_UP => Direction::Up,
-        KEY_LEFT => Direction::Left,
-        KEY_RIGHT => Direction::Right,
-        KEY_DOWN => Direction::Down,
+fn directional_shortcut(physical: PhysicalKey, resize: bool) -> Option<Shortcut> {
+    let direction = match physical {
+        PhysicalKey::Code(KeyCode::ArrowUp) => Direction::Up,
+        PhysicalKey::Code(KeyCode::ArrowLeft) => Direction::Left,
+        PhysicalKey::Code(KeyCode::ArrowRight) => Direction::Right,
+        PhysicalKey::Code(KeyCode::ArrowDown) => Direction::Down,
         _ => return None,
     };
     Some(Shortcut::Pane(if resize {
@@ -198,11 +187,17 @@ fn directional_shortcut(evdev: u32, resize: bool) -> Option<Shortcut> {
     }))
 }
 
-fn alt_tab_shortcut(evdev: u32, symbol: Option<char>) -> Option<TabAction> {
-    const KEY_1: u32 = 2;
-    const KEY_9: u32 = 10;
-    let digit = match evdev {
-        KEY_1..=KEY_9 => evdev - KEY_1 + 1,
+fn alt_tab_shortcut(physical: PhysicalKey, symbol: Option<char>) -> Option<TabAction> {
+    let digit = match physical {
+        PhysicalKey::Code(KeyCode::Digit1) => 1,
+        PhysicalKey::Code(KeyCode::Digit2) => 2,
+        PhysicalKey::Code(KeyCode::Digit3) => 3,
+        PhysicalKey::Code(KeyCode::Digit4) => 4,
+        PhysicalKey::Code(KeyCode::Digit5) => 5,
+        PhysicalKey::Code(KeyCode::Digit6) => 6,
+        PhysicalKey::Code(KeyCode::Digit7) => 7,
+        PhysicalKey::Code(KeyCode::Digit8) => 8,
+        PhysicalKey::Code(KeyCode::Digit9) => 9,
         _ => symbol?.to_digit(10)?,
     };
     match digit {
@@ -215,8 +210,7 @@ fn alt_tab_shortcut(evdev: u32, symbol: Option<char>) -> Option<TabAction> {
 /// Commands accepted by the pane owner. The view never writes to a PTY directly.
 pub enum PaneCommand<'a> {
     Key {
-        /// Physical key position in the sending platform's key code namespace.
-        physical: u32,
+        physical: PhysicalKey,
         modifiers: KeyModifiers,
         action: KeyAction,
         /// Layout-dependent printable text, without control bytes.

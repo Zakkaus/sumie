@@ -216,6 +216,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                        "== next.minimum_contrast().to_bits()"),
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("IME caret loses the right edge at fractional scale", "test", "src/linux.rs",
+              replace_once("bounds.end[i] * logical + device - 1", "bounds.end[i] * logical"),
+              "test linux::tests::caret_covers_the_cell_on_a_rounded_fractional_buffer ... FAILED")
         probe("unchanged animation deadline rearms the timer", "test", "src/app/animation.rs",
               replace_once("if next == self.timer.map(|(at, _)| at) {", "if next.is_none() && self.timer.is_none() {"),
               "test app::animation::tests::wake_keeps_an_unchanged_deadline_and_cancels_a_stopped_animation ... FAILED")
@@ -254,7 +257,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("self.terminal.encode_paste(text)?", "text.into_bytes()"),
               "test tests::bracketed_paste_fits_or_leaves_the_queue_unchanged ... FAILED")
         probe("matched shortcut falls through to encoding", "test", "src/input.rs",
-              replace_once("Some(Shortcut::Copy) => return Ok(Effect::Copy(serial)),",
+              replace_once("Some(Shortcut::Copy) => return Ok(Effect::Copy),",
                            "Some(Shortcut::Copy) => (),"),
               "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
         probe("search commit leaks to PTY", "test", "src/input.rs",

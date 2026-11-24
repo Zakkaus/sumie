@@ -12,7 +12,7 @@ use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect};
 use sumie_pty::{Command, Pty, Size, SpawnOptions};
 use sumie_vt::{KeyEncoder, KeyEvent, Snapshot, Terminal};
 
-use crate::{Result, keycodes};
+use crate::Result;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const XTVERSION: &str = concat!("sumie ", env!("CARGO_PKG_VERSION"));
@@ -154,7 +154,7 @@ impl Pane for LocalPane {
                 unshifted,
             } => {
                 let event = KeyEvent {
-                    key: keycodes::ghostty_key(physical),
+                    key: physical.ghostty_key(),
                     modifiers: modifier_bits(modifiers),
                     consumed_modifiers: 0,
                     action: match action {

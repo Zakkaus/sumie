@@ -1,6 +1,9 @@
 mod animation;
 mod directory;
+mod driver;
+pub(crate) use driver::run;
 mod highlights;
+mod lifetime;
 mod links;
 mod pane_input;
 mod pane_layout;
@@ -17,55 +20,17 @@ use sumie_core::{
 };
 use sumie_render::{SurfaceError, SurfaceFrame};
 use sumie_vt::Snapshot;
-use sumie_wayland::{Event, SourceHandle};
 
 use crate::{
     Result, capture,
     gpu::Gpu,
     input,
-    pane::{LocalPane, set_colors, set_cursor_defaults},
-    reload::Reload,
-    sources::{self, Sources},
+    pane::LocalPane,
+    platform::{PaneWatches, WindowOps},
     view::{FontSettings, PaneFocus, View},
 };
 
 const FRAME_RETRY_DELAY: Duration = Duration::from_millis(50);
-
-pub(crate) fn run(capture: capture::Options) -> Result<()> {
-    let mut reload = Reload::new()?;
-    let config = reload.load()?.unwrap_or_else(|error| {
-        reload.load_error(&error);
-        sumie_config::Config::default()
-    });
-    let gpu = Gpu::new(capture.screenshot.is_some(), config.minimum_contrast())?;
-    reload.register(&gpu.loop_handle())?;
-    let mut app = App {
-        gpu: Some(gpu),
-        capture,
-        config,
-        reload,
-        session: None,
-        focused: false,
-        suspended: false,
-        events: Vec::new(),
-    };
-    let result = app.drive();
-    let close = app.session.as_mut().map_or(Ok(()), Session::close_all);
-    drop(app.gpu.take());
-    let reap = app.session.as_mut().map_or(Ok(()), Session::reap_closed);
-    result.and(close).and(reap)
-}
-
-struct App {
-    gpu: Option<Gpu>,
-    capture: capture::Options,
-    config: sumie_config::Config,
-    reload: Reload,
-    session: Option<Session>,
-    focused: bool,
-    suspended: bool,
-    events: Vec<Event>,
-}
 
 struct Session {
     tabs: WindowTabs<PaneTab>,
@@ -78,7 +43,7 @@ struct Session {
     home: std::path::PathBuf,
     host: String,
     shell: String,
-    closing: Vec<(Sources, sumie_pty::Pty)>,
+    closing: Vec<(u64, sumie_pty::Pty)>,
     pointer: tabs::BarPointer,
     pane_pointer: pane_input::Pointer,
     link_pointer: links::Pointer,
@@ -104,7 +69,6 @@ struct PaneState {
     selection: Selection,
     selected_text: String,
     pane: LocalPane,
-    sources: Sources,
     directory: directory::Directory,
     title: String,
     snapshot: Option<Snapshot>,
@@ -114,247 +78,14 @@ struct PaneState {
     hover: links::Hover,
 }
 
-impl App {
-    fn drive(&mut self) -> Result<()> {
-        let handle = self.gpu.as_ref().unwrap().loop_handle();
-        let mut animation = animation::Wake::new(handle.clone());
-        loop {
-            let retry = self
-                .session
-                .as_ref()
-                .and_then(|session| session.frame_retry);
-            let timeout = retry
-                .into_iter()
-                .chain(self.reload.deadline)
-                .chain(
-                    self.session
-                        .iter()
-                        .flat_map(|s| s.closing.iter().filter_map(|(_, pty)| pty.close_deadline())),
-                )
-                .chain(
-                    self.session
-                        .as_ref()
-                        .filter(|s| s.active().search_pending())
-                        .map(|_| Instant::now()),
-                )
-                .min()
-                .map(|at| at.saturating_duration_since(Instant::now()));
-            self.gpu
-                .as_mut()
-                .unwrap()
-                .dispatch(&mut self.events, timeout)?;
-            let mut exited = false;
-            if let Some(session) = &mut self.session {
-                exited = session.service_pty(self.gpu.as_mut().unwrap())?;
-            }
-            // Route this dispatch's input before child exits can select another tab.
-            let mut events = std::mem::take(&mut self.events);
-            for event in events.drain(..) {
-                if self.handle_event(event, &handle)? {
-                    return Ok(());
-                }
-            }
-            self.events = events;
-            if exited
-                && let Some(session) = &mut self.session
-                && session.close_exited(self.gpu.as_mut().unwrap())?
-            {
-                return Ok(());
-            }
-            self.reload_config()?;
-            if let Some(session) = &mut self.session {
-                session.active_mut().advance_search()?;
-                for tab in session.all_panes_mut() {
-                    tab.sources.watch_input(tab.pane.pty.input_fd())?;
-                }
-                let gpu = self.gpu.as_mut().unwrap();
-                if !self.suspended && session.pane_pointer.take_frame_recovery() {
-                    gpu.recover_frame_slot();
-                }
-                let ready = !self.suspended
-                    && gpu.frame_slot_available()
-                    && session.frame_retry.is_none_or(|at| Instant::now() >= at);
-                let next = if ready {
-                    if session.view.apply_pending_resize()? {
-                        session.resize_grid()?;
-                        gpu.resize(session.view.device);
-                    }
-                    let now = session.frame_retry.is_none().then(|| animation.now_ms());
-                    session.refresh_visible(now, gpu)?
-                } else {
-                    None
-                };
-                let banner = self.reload.banner.as_deref();
-                session.update_link_hover(gpu, banner.is_some(), self.focused)?;
-                session.watch_blink(self.focused && !self.suspended, banner)?;
-                if ready && session.draw(gpu, &self.capture, banner, self.focused)? {
-                    return Ok(());
-                }
-                animation.arm(
-                    next.filter(|_| session.frame_retry.is_none() && gpu.frame_slot_available()),
-                )?;
-            }
-        }
-    }
-
-    fn reload_config(&mut self) -> Result<()> {
-        let Some(next) = self.reload.pending()? else {
-            return Ok(());
-        };
-        let next = match next {
-            Ok(next) => next,
-            Err(error) => {
-                if self.reload.load_error(&error)
-                    && let Some(session) = &mut self.session
-                {
-                    session.active_mut().frame_dirty = true;
-                }
-                return Ok(());
-            }
-        };
-        let changes = self.config.changes(&next);
-        if let Some(session) = &mut self.session {
-            let mut resize_grid = changes.padding;
-            if changes.font {
-                match session.view.set_font(next.font.clone()) {
-                    Ok(resized) => resize_grid |= resized,
-                    Err(error) => {
-                        session.active_mut().frame_dirty |=
-                            self.reload.show_error(format!("sumie.toml:1:1: {error}"));
-                        return Ok(());
-                    }
-                }
-            }
-            if changes.padding {
-                session.view.set_padding(next.window.padding());
-            }
-            if resize_grid {
-                session.resize_grid()?;
-            }
-            for tab in session.all_panes_mut() {
-                if changes.scrollback_limit {
-                    tab.pane
-                        .terminal
-                        .set_scrollback_bytes(next.scrollback_limit())?;
-                    tab.snapshot_dirty = true;
-                    if let Some(bar) = &mut tab.search {
-                        bar.output(&tab.pane.terminal)?;
-                        tab.frame_dirty = true;
-                    }
-                }
-                if changes.thumbnail_rows {
-                    tab.pane
-                        .terminal
-                        .set_thumbnail_rows(next.images.thumbnail_rows());
-                }
-                if changes.terminal_colors {
-                    set_colors(&mut tab.pane.terminal, &next.colors)?;
-                    tab.snapshot_dirty = true;
-                }
-                if changes.cursor {
-                    set_cursor_defaults(&mut tab.pane.terminal, next.cursor)?;
-                    tab.snapshot_dirty = true;
-                }
-            }
-            if changes.selection_colors {
-                session.view.set_selection_colors(&next.colors);
-            }
-            if changes.background {
-                let (alpha, effects_changed) =
-                    self.gpu.as_mut().unwrap().set_background(&next.window);
-                let opacity_changed = session.view.set_background_alpha(alpha);
-                session.active_mut().frame_dirty |= opacity_changed || effects_changed;
-            }
-            session.active_mut().frame_dirty |= changes.selection_colors
-                || changes.minimum_contrast
-                || self.reload.banner.is_some();
-        }
-        if changes.minimum_contrast {
-            self.gpu
-                .as_mut()
-                .unwrap()
-                .set_minimum_contrast(next.minimum_contrast());
-        }
-        self.reload.banner = None;
-        self.config = next;
-        Ok(())
-    }
-
-    fn handle_event(&mut self, event: Event, handle: &SourceHandle) -> Result<bool> {
-        match event {
-            Event::CloseRequested => return Ok(true),
-            Event::Presentation(feedback) => tracing::trace!(?feedback, "presentation feedback"),
-            Event::Configured {
-                activated,
-                suspended,
-                ..
-            } => {
-                if !suspended && (self.suspended || activated && !self.focused) {
-                    self.gpu.as_mut().unwrap().recover_frame_slot();
-                }
-                self.suspended = suspended;
-                if suspended && let Some(session) = &mut self.session {
-                    session.frame_retry = None;
-                }
-                if self.focused != activated {
-                    self.focused = activated;
-                    if let Some(session) = &mut self.session {
-                        session.active_mut().frame_dirty = true;
-                        if !activated {
-                            session.link_pointer.clear_link();
-                            session.view.set_tab_pointer(None);
-                        }
-                    }
-                }
-            }
-            Event::Resized {
-                device: (width, height),
-                scale,
-                logical,
-            } => {
-                let logical = logical.into();
-                let device = [width, height];
-                if let Some(session) = &mut self.session {
-                    session.view.request_resize(scale, logical, device);
-                    let tab = session.tabs.active_mut().unwrap();
-                    tab.layout_revision = tab.layout_revision.wrapping_add(1);
-                } else {
-                    let gpu = self.gpu.as_mut().unwrap();
-                    let mut session = Session::new(
-                        scale,
-                        logical,
-                        device,
-                        handle.clone(),
-                        gpu.image_dimension_limit(),
-                        &self.config,
-                    )?;
-                    let (alpha, _) = gpu.set_background(&self.config.window);
-                    session.view.set_background_alpha(alpha);
-                    gpu.resize(device);
-                    self.session = Some(session);
-                }
-            }
-            event => {
-                if let Some(session) = &mut self.session {
-                    let gpu = self.gpu.as_mut().unwrap();
-                    if let Some(action) = session.input(event, gpu, self.reload.banner.is_some())? {
-                        session.apply(action, gpu, &self.config)?;
-                        return Ok(session.tabs.active().is_none());
-                    }
-                }
-            }
-        }
-        Ok(false)
-    }
-}
-
 impl Session {
     fn new(
         scale: u32,
         logical: [u32; 2],
         device: [u32; 2],
-        handle: SourceHandle,
-        image_dimension_limit: u32,
+        watches: &mut impl PaneWatches,
+        spawn: tabs::PaneHost,
+        host: String,
         config: &sumie_config::Config,
     ) -> Result<Self> {
         let font = FontSettings::from_config(config.font.clone())?;
@@ -367,8 +98,7 @@ impl Session {
             config.window.padding(),
         )?;
         let home = std::env::home_dir().ok_or("no home directory for login shell")?;
-        let spawn = tabs::PaneHost::new(handle, image_dimension_limit);
-        let first = spawn.open(0, view.content_rect(), &view, config, &home)?;
+        let first = spawn.open(0, view.content_rect(), &view, config, &home, watches)?;
         Ok(Self {
             tabs: WindowTabs::new(PaneTab::new(first)),
             routing: input::Routing::default(),
@@ -378,9 +108,7 @@ impl Session {
             cursor_hidden: false,
             spawn,
             home,
-            host: std::fs::read_to_string("/proc/sys/kernel/hostname")?
-                .trim_end()
-                .to_owned(),
+            host,
             shell: directory::shell_name(),
             closing: Vec::new(),
             pointer: tabs::BarPointer::default(),
@@ -411,12 +139,12 @@ impl Session {
 }
 
 impl PaneState {
-    fn copy_selection(&mut self, gpu: &mut Gpu, serial: u32) -> Result<()> {
+    fn copy_selection(&mut self, window: &mut impl WindowOps) -> Result<()> {
         self.update_snapshot()?;
         if let Some(range) = self.selection.range()
             && let PaneEffect::Copied(text) = self.pane.command(PaneCommand::Copy(range))?
         {
-            gpu.write_clipboard(serial, text);
+            window.write_clipboard(text);
         }
         Ok(())
     }
@@ -485,19 +213,6 @@ impl PaneState {
 }
 
 impl Session {
-    fn watch_blink(&mut self, eligible: bool, banner: Option<&str>) -> Result<()> {
-        let tab = self.active();
-        let cursor = tab.snapshot.as_ref().and_then(|snapshot| snapshot.cursor);
-        let enabled = eligible
-            && tab.viewer.is_none()
-            && tab.search.is_none()
-            && self.view.preedit.is_empty()
-            && cursor.is_some_and(|cursor| {
-                cursor.visible && cursor.blink && (cursor.row != 0 || banner.is_none())
-            });
-        self.active_mut().sources.watch_blink(enabled)
-    }
-
     fn rebuild(&mut self, gpu: &mut Gpu, banner: Option<&str>, focused: bool) -> Result<()> {
         let tab = self.tabs.active().unwrap();
         let active = tab.focused();
@@ -531,16 +246,17 @@ impl Session {
         Ok(())
     }
 
-    fn draw(
+    fn draw<W: WindowOps>(
         &mut self,
         gpu: &mut Gpu,
+        window: &mut W,
         options: &capture::Options,
         banner: Option<&str>,
         focused: bool,
     ) -> Result<bool> {
         self.frame_retry = None;
         let tab = self.tabs.active().unwrap();
-        let cursor_hidden = tab.focused().sources.cursor_hidden();
+        let cursor_hidden = window.cursor_hidden(tab.focused().id);
         let dirty = !self.pane_pointer.layout_is_presented(tab)
             || tab
                 .layout
@@ -550,7 +266,7 @@ impl Session {
         if !dirty
             && self.cursor_hidden == cursor_hidden
             && !self.view.thumbnail_hover_dirty()
-            && !gpu.background_commit_needed()
+            && !window.background_commit_needed()
         {
             return Ok(false);
         }
@@ -565,20 +281,22 @@ impl Session {
         let capture = final_frame && options.screenshot.is_some();
         let sources =
             |id| Some(&tab.get(id).pane.terminal as &dyn sumie_core::graphics::ImageSource);
-        let frame = gpu.draw(&self.view.frame(cursor_hidden, sources), capture);
+        let frame = gpu.draw(window, &self.view.frame(cursor_hidden, sources), capture);
         if dirty
-            && let Some(rect) = self
-                .view
-                .ime_rectangle(active.snapshot.as_ref().unwrap().cursor, active.rect)
+            && let Some(rect) = self.view.ime_rectangle(
+                active.snapshot.as_ref().unwrap().cursor,
+                active.rect,
+                W::logical_rect,
+            )
         {
-            gpu.set_cursor_rectangle(rect);
+            window.set_cursor_rectangle(rect);
         }
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
                 self.view.frame_presented();
                 self.view.images_presented(gpu.presented_images());
                 self.pane_pointer.present_layout(tab);
-                self.panes_presented(gpu)?;
+                self.panes_presented(gpu, window)?;
                 self.cursor_hidden = cursor_hidden;
                 gpu.log_present();
                 if suboptimal {

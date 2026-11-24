@@ -1,8 +1,10 @@
-use sumie_core::graphics::Placement;
-use sumie_wayland::{Event, Modifiers, PointerButton as Button, PointerPhase as Phase};
+use sumie_core::{KeyAction, graphics::Placement};
 
-use super::{Gpu, PaneState, Result, Session, View, pane_input::PointerEvent};
+use super::{Gpu, PaneState, Result, Session, View, WindowOps};
 use crate::input::Routing;
+use crate::platform::{
+    Event, LogicalKey, Modifiers, PointerButton as Button, PointerEvent, PointerPhase as Phase,
+};
 
 pub(super) struct Viewer {
     pub(super) placement: Placement,
@@ -35,7 +37,7 @@ impl Click {
         pane: &mut PaneState,
         view: &mut View,
         routing: &mut Routing,
-        gpu: &mut Gpu,
+        window: &mut impl WindowOps,
         event: PointerEvent,
     ) -> Result<bool> {
         let open = pane.viewer_presented();
@@ -46,7 +48,7 @@ impl Click {
         };
         if self.clicked(event.phase, event.position, hit) {
             if open {
-                self.dismiss(pane, Some((view, routing, gpu)));
+                self.dismiss(pane, Some((view, routing, window)));
             } else {
                 let Some(mut placement) = hit.cloned() else {
                     return Ok(false);
@@ -71,7 +73,7 @@ impl Click {
     pub(super) fn refresh_viewer(
         &mut self,
         pane: &mut PaneState,
-        active: Option<(&mut View, &mut Routing, &mut Gpu)>,
+        active: Option<(&mut View, &mut Routing, &mut impl WindowOps)>,
     ) -> Result<()> {
         if pane.viewer_removed()? {
             self.dismiss(pane, active);
@@ -82,13 +84,13 @@ impl Click {
     pub(super) fn dismiss(
         &mut self,
         pane: &mut PaneState,
-        active: Option<(&mut View, &mut Routing, &mut Gpu)>,
+        active: Option<(&mut View, &mut Routing, &mut impl WindowOps)>,
     ) {
         pane.viewer = None;
         pane.frame_dirty = true;
-        if let Some((view, routing, gpu)) = active {
+        if let Some((view, routing, window)) = active {
             self.pressed = None;
-            change_recipient(pane, view, routing, gpu);
+            change_recipient(pane, view, routing, window);
         }
     }
 }
@@ -106,9 +108,9 @@ impl PaneState {
 
     pub(super) fn can_hover_thumbnail(&self, modifiers: Modifiers) -> bool {
         self.viewer.is_none()
-            && !modifiers.ctrl
+            && !modifiers.control
             && !modifiers.alt
-            && !modifiers.logo
+            && !modifiers.super_key
             && modifiers.shift == self.pane.mouse_tracking()
     }
 
@@ -135,27 +137,35 @@ impl PaneState {
     }
 }
 
-fn change_recipient(pane: &mut PaneState, view: &mut View, routing: &mut Routing, gpu: &mut Gpu) {
+fn change_recipient(
+    pane: &mut PaneState,
+    view: &mut View,
+    routing: &mut Routing,
+    window: &mut impl WindowOps,
+) {
     pane.paste_recipient = None;
     view.preedit.clear();
     routing.reset_pointer();
-    gpu.set_input_generation(routing.change_recipient());
+    window.set_input_generation(routing.change_recipient());
 }
 
 pub(super) fn escape_pressed(event: &Event) -> bool {
     matches!(
         event,
         Event::Key {
-            keysym: xkeysym::key::Escape,
-            pressed: true,
-            repeat: false,
+            logical: LogicalKey::Escape,
+            action: KeyAction::Press,
             ..
         }
     )
 }
 
 impl Session {
-    pub(super) fn panes_presented(&mut self, gpu: &mut Gpu) -> Result<()> {
+    pub(super) fn panes_presented(
+        &mut self,
+        render: &Gpu,
+        window: &mut impl WindowOps,
+    ) -> Result<()> {
         let tab = self.tabs.active_mut().expect("live window");
         let focused = tab.tree.focused();
         for pane in &mut tab.panes {
@@ -173,22 +183,19 @@ impl Session {
                 viewer.presented = false;
                 continue;
             };
-            if !gpu.viewer_presented(index) {
+            if !render.viewer_presented(index) {
                 self.pane_pointer.image_click.dismiss(
                     pane,
-                    (id == focused).then_some((&mut self.view, &mut self.routing, &mut *gpu)),
+                    (id == focused).then_some((&mut self.view, &mut self.routing, &mut *window)),
                 );
             } else if !viewer.presented {
                 viewer.presented = true;
-                self.routing.release_pane_keys(
-                    id,
-                    &mut pane.pane,
-                    crate::input::key_modifiers(self.link_pointer.modifiers),
-                )?;
+                self.routing
+                    .release_pane_keys(id, &mut pane.pane, self.link_pointer.modifiers)?;
                 if id == focused {
                     self.pane_pointer.reset();
                     pane.pane.leave_tab()?;
-                    change_recipient(pane, &mut self.view, &mut self.routing, gpu);
+                    change_recipient(pane, &mut self.view, &mut self.routing, window);
                 }
             }
         }

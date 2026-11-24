@@ -1,5 +1,5 @@
 use sumie_core::{
-    LinkUri, PaneEffect,
+    KeyCode, LinkUri, PaneEffect,
     mouse::{Button, Dispatch, MouseEvent, MouseModes, MousePhase, MouseState, WheelRoute},
 };
 use sumie_vt::{
@@ -7,7 +7,7 @@ use sumie_vt::{
 };
 
 use super::{LocalPane, modifier_bits};
-use crate::{Result, keycodes};
+use crate::Result;
 
 pub(super) struct Mouse {
     pub(super) state: MouseState,
@@ -179,11 +179,15 @@ impl LocalPane {
         let bytes = match route {
             WheelRoute::History => return self.scroll_history(steps),
             WheelRoute::Arrows => {
-                let evdev = if steps < 0 { 103 } else { 108 };
+                let key = if steps < 0 {
+                    KeyCode::ArrowUp
+                } else {
+                    KeyCode::ArrowDown
+                };
                 self.encoder.encode(
                     &self.terminal,
                     &KeyEvent {
-                        key: keycodes::ghostty_key(evdev),
+                        key: key as u8,
                         action: KeyAction::Press,
                         modifiers: 0,
                         consumed_modifiers: 0,
