@@ -80,10 +80,10 @@ impl Gpu {
         self.device.limits().max_texture_dimension_2d
     }
 
-    pub(crate) fn presented_thumbnails(
+    pub(crate) fn presented_images(
         &self,
     ) -> impl Iterator<Item = (usize, usize, sumie_render::PixelRect)> + '_ {
-        self.target.presented_thumbnail_layers()
+        self.target.presented_image_layers()
     }
 
     pub(crate) fn viewer_presented(&self, pane: usize) -> bool {

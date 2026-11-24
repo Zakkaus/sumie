@@ -1,5 +1,6 @@
 use std::num::NonZeroU64;
 
+use sumie_core::graphics::IMAGE_BUDGET;
 use sumie_core::splits::Rect;
 use wgpu::util::StagingBelt;
 
@@ -116,7 +117,7 @@ impl Renderer {
         Self {
             grid_atlas,
             chrome_atlas: None,
-            images: Images::new(format),
+            images: Images::new(format, IMAGE_BUDGET),
             panes: Vec::new(),
             staging: StagingBelt::new(device.clone(), frame.size()),
             frame,

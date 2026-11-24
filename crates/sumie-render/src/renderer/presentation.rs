@@ -127,12 +127,16 @@ impl Presentation {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::sync::mpsc;
     use std::time::Duration;
 
+    use sumie_core::graphics::{Image, ImageSource, PixelFormat, Placement};
     use sumie_core::splits::Rect;
     use wgpu::CompositeAlphaMode::{PostMultiplied, PreMultiplied};
 
+    use super::super::OFFSCREEN_FORMAT;
+    use crate::images::Images;
     use crate::{DrawList, Fill, FrameDraw, PaneDraw, PixelRect, Renderer, Rgba};
 
     #[test]
@@ -160,6 +164,7 @@ mod tests {
                 default_background: DEFAULT,
                 default_backgrounds: &[],
                 images: &[],
+                image_source: None,
                 image_exclusions: [None; 2],
                 glyphs: &[],
                 cursor: None,
@@ -215,6 +220,89 @@ mod tests {
             },
         );
         assert_eq!(read_row(&device, &queue, target.texture())[12..], [0; 4]);
+    }
+
+    #[test]
+    fn opaque_cover_culls_only_after_texture_admission() {
+        let Some((device, queue)) = test_device() else {
+            return;
+        };
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.images = Images::new(OFFSCREEN_FORMAT, 128 * 1024);
+        let target = renderer.create_offscreen([4, 1]);
+        let placement = |image_id, [w, h]: [u32; 2], x, z| Placement {
+            image: Image {
+                generation: u64::from(image_id),
+                size: [w, h],
+                format: PixelFormat::Rgb,
+            },
+            image_id,
+            placement_id: 1,
+            storage_key: [0; 3],
+            z,
+            cell: [0, 0],
+            offset: [x, 0],
+            size: [1, 1],
+            source: [0, 0, w, h],
+            thumbnail: false,
+        };
+        // The right-hand image leaves 64 KiB. The larger cover cannot fit there but
+        // the 1×1 image under it can.
+        let images = [
+            placement(1, [1, 1], 0, 0),
+            placement(2, [257, 127], 0, 0),
+            placement(3, [1, 1], 1, 1),
+        ];
+        let source = CoverPixels::default();
+        let draw = DrawList {
+            grid_size: [4, 1],
+            cell_size: [1, 1],
+            origin: [0, 0],
+            backgrounds: &[[0, 0, 0, 255]; 4],
+            default_background: [0, 0, 0, 255],
+            default_backgrounds: &[],
+            images: &images,
+            image_source: Some(&source),
+            image_exclusions: [None; 2],
+            glyphs: &[],
+            cursor: None,
+            chrome: None,
+        };
+        renderer.draw(&draw, &target);
+        assert_eq!(
+            &read_row(&device, &queue, target.texture())[..8],
+            &[255, 0, 0, 255, 0, 255, 0, 255]
+        );
+        assert_eq!(source.cover_reads.get(), 0);
+
+        renderer.images = Images::new(OFFSCREEN_FORMAT, 256 * 1024);
+        renderer.draw(&draw, &target);
+        assert_eq!(
+            &read_row(&device, &queue, target.texture())[..4],
+            &[0, 0, 255, 255]
+        );
+        assert_eq!(source.cover_reads.get(), 1);
+        assert_eq!(renderer.image_texture_count(), 2);
+    }
+
+    #[derive(Default)]
+    struct CoverPixels {
+        cover_reads: Cell<usize>,
+    }
+
+    impl ImageSource for CoverPixels {
+        fn pixels(&self, placement: &Placement) -> Option<&[u8]> {
+            static BLUE: [[u8; 3]; 257 * 127] = [[0, 0, 255]; 257 * 127];
+            match placement.image_id {
+                1 => Some(&[255, 0, 0]),
+                2 => {
+                    self.cover_reads.set(self.cover_reads.get() + 1);
+                    Some(BLUE.as_flattened())
+                }
+                3 => Some(&[0, 255, 0]),
+                _ => None,
+            }
+        }
     }
 
     fn test_device() -> Option<(wgpu::Device, wgpu::Queue)> {

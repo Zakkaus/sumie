@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use sumie_core::{
-    graphics::{Image, Placement},
+    graphics::{Image, ImageSource, PixelFormat, Placement},
     splits::Rect,
 };
 use sumie_render::{
@@ -9,7 +7,7 @@ use sumie_render::{
     PaneDraw, PixelRect, Renderer, Rgba, backends, wgpu,
 };
 
-use super::{FULL, HEIGHT, WIDTH, assert_pixel, gpu_device, readback, upload_atlas};
+use super::{FULL, HEIGHT, TestImages, WIDTH, assert_pixel, gpu_device, readback, upload_atlas};
 
 const BLACK: Rgba = [0, 0, 0, 255];
 const WHITE: Rgba = [255; 4];
@@ -22,6 +20,15 @@ const DIVIDER: Rgba = [90, 70, 50, 255];
 const LEFT_BASE: Rgba = [16, 32, 48, 255];
 const CLEAR: Rgba = [2, 4, 6, 255];
 
+const SOURCE: TestImages<'static> = TestImages(&[
+    (1, [YELLOW, RED, CYAN].as_flattened()),
+    (2, [YELLOW, BLUE, CYAN].as_flattened()),
+    (3, [YELLOW, WHITE, CYAN].as_flattened()),
+    (4, [YELLOW, BLACK, CYAN].as_flattened()),
+    (5, [YELLOW, RED, CYAN].as_flattened()),
+    (6, [YELLOW, GREEN, CYAN].as_flattened()),
+]);
+
 #[test]
 fn gpu_split_pixels() {
     check(backends());
@@ -30,6 +37,19 @@ fn gpu_split_pixels() {
 #[test]
 fn gpu_split_pixels_gl() {
     check(wgpu::Backends::GL);
+}
+
+struct CapImages;
+
+impl ImageSource for CapImages {
+    fn pixels(&self, placement: &Placement) -> Option<&[u8]> {
+        match placement.image.generation {
+            1..=4096 => Some([YELLOW, BLUE, CYAN].as_flattened()),
+            4097 => Some([YELLOW, RED, CYAN].as_flattened()),
+            4098 => Some([YELLOW, GREEN, CYAN].as_flattened()),
+            _ => None,
+        }
+    }
 }
 
 #[test]
@@ -42,12 +62,12 @@ fn gpu_viewers_precede_terminal_images_at_texture_cap() {
     let terminal: Vec<_> = (1..=4096)
         .map(|id| {
             let x = u32::try_from((id - 1).min(2)).unwrap();
-            image(id, BLUE, [x, 0], [1, 1], 0)
+            image(id, [x, 0], [1, 1], 0)
         })
         .collect();
     let viewers = [
-        image(4097, RED, [0, 0], [1, 1], 0),
-        image(4098, GREEN, [0, 0], [1, 1], 0),
+        image(4097, [0, 0], [1, 1], 0),
+        image(4098, [0, 0], [1, 1], 0),
     ];
     let mut panes = [0, 8, 16].map(|x| PaneDraw {
         rect: Rect {
@@ -60,6 +80,9 @@ fn gpu_viewers_precede_terminal_images_at_texture_cap() {
         viewer: None,
         thumbnails: None,
     });
+    for pane in &mut panes {
+        pane.draw.image_source = Some(&CapImages);
+    }
     panes[0].draw.images = &terminal;
     for open in [true, true, false] {
         for (pane, placement) in panes[1..].iter_mut().zip(&viewers) {
@@ -97,13 +120,10 @@ fn check(backend: wgpu::Backends) {
     upload_atlas(&mut renderer);
     let target = renderer.create_offscreen([WIDTH, HEIGHT]);
 
-    let mut left_images = [image(1, RED, [1, 1], [30, 22], 0)];
+    let mut left_images = [image(1, [1, 1], [30, 22], 0)];
     left_images[0].thumbnail = true;
     // Both panes use protocol image ID 1, but each image revision has a unique generation.
-    let right_images = [
-        image(2, BLUE, [1, 1], [17, 25], -1),
-        image(3, WHITE, [4, 0], [3, 3], 0),
-    ];
+    let right_images = [image(2, [1, 1], [17, 25], -1), image(3, [4, 0], [3, 3], 0)];
     let right = PaneDraw {
         rect: Rect {
             x: 17,
@@ -217,13 +237,13 @@ fn assert_thumbnail_chrome(
         Placement {
             thumbnail: true,
             cell: [-1, 0],
-            ..image(4, BLACK, [WIDTH - 1, 1], [9, 17], 0)
+            ..image(4, [WIDTH - 1, 1], [9, 17], 0)
         },
         Placement {
             thumbnail: true,
-            ..image(5, RED, [9, 1], [25, 24], 0)
+            ..image(5, [9, 1], [25, 24], 0)
         },
-        image(6, GREEN, [9, 1], [4, 3], 1),
+        image(6, [9, 1], [4, 3], 1),
     ];
     let pane = PaneDraw {
         rect: Rect {
@@ -303,6 +323,7 @@ fn grid<'a>(
         default_background,
         default_backgrounds: &[],
         images,
+        image_source: Some(&SOURCE),
         image_exclusions: [None; 2],
         glyphs: &[],
         cursor: None,
@@ -310,13 +331,13 @@ fn grid<'a>(
     }
 }
 
-fn image(generation: u64, color: Rgba, offset: [u32; 2], size: [u32; 2], z: i32) -> Placement {
+fn image(generation: u64, offset: [u32; 2], size: [u32; 2], z: i32) -> Placement {
     Placement {
-        image: Arc::new(Image {
+        image: Image {
             generation,
             size: [3, 1],
-            rgba: [YELLOW, color, CYAN].into_iter().flatten().collect(),
-        }),
+            format: PixelFormat::Rgba,
+        },
         image_id: 1,
         placement_id: 1,
         storage_key: [0; 3],

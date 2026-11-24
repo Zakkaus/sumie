@@ -106,7 +106,13 @@ impl Renderer {
     ) {
         for (pane, batch) in panes.zip(batches) {
             if let (Some(viewer), Some(candidates)) = (pane.viewer, &mut batch.candidates) {
-                images.reserve_viewer(upload, viewer.placement, candidates, remaining);
+                images.reserve_viewer(
+                    upload,
+                    viewer.placement,
+                    pane.draw.image_source,
+                    candidates,
+                    remaining,
+                );
             }
         }
     }
@@ -178,15 +184,13 @@ impl Renderer {
             .is_some_and(|pane| pane.backdrop.is_some())
     }
 
-    pub(crate) fn thumbnail_layers(&self) -> impl Iterator<Item = (usize, usize, PixelRect)> + '_ {
+    pub(crate) fn image_layers(&self) -> impl Iterator<Item = (usize, usize, PixelRect)> + '_ {
         self.panes
             .iter()
             .enumerate()
             .filter_map(|(pane, batch)| {
                 let images = &batch.layered.as_ref()?.images;
-                images
-                    .has_thumbnail
-                    .then_some((pane, images.start..images.terminal_end))
+                Some((pane, images.start..images.terminal_end))
             })
             .flat_map(|(pane, range)| {
                 self.images

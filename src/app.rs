@@ -110,7 +110,6 @@ struct PaneState {
     snapshot: Option<Snapshot>,
     snapshot_dirty: bool,
     frame_dirty: bool,
-    playback: animation::Playback,
     activity_after: Option<Instant>,
     hover: links::Hover,
 }
@@ -181,7 +180,7 @@ impl App {
                         gpu.resize(session.view.device);
                     }
                     let now = session.frame_retry.is_none().then(|| animation.now_ms());
-                    session.tabs.active_mut().unwrap().refresh_visible(now)?
+                    session.refresh_visible(now, gpu)?
                 } else {
                     None
                 };
@@ -564,7 +563,9 @@ impl Session {
             .frames
             .is_some_and(|count| count == gpu.present_count() + 1);
         let capture = final_frame && options.screenshot.is_some();
-        let frame = gpu.draw(&self.view.frame(cursor_hidden), capture);
+        let sources =
+            |id| Some(&tab.get(id).pane.terminal as &dyn sumie_core::graphics::ImageSource);
+        let frame = gpu.draw(&self.view.frame(cursor_hidden, sources), capture);
         if dirty
             && let Some(rect) = self
                 .view
@@ -575,7 +576,7 @@ impl Session {
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
                 self.view.frame_presented();
-                self.view.images_presented(gpu.presented_thumbnails());
+                self.view.images_presented(gpu.presented_images());
                 self.pane_pointer.present_layout(tab);
                 self.panes_presented(gpu)?;
                 self.cursor_hidden = cursor_hidden;

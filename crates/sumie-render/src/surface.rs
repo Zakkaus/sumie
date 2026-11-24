@@ -249,11 +249,10 @@ impl<'window> SurfaceRenderer<'window> {
         self.renderer.viewer_presented(pane_index)
     }
 
-    /// Hit layers from the last presentation, including non-thumbnail images that can cover
-    /// a thumbnail. Items give the pane index, placement index, and clipped device bounds in
-    /// draw order.
-    pub fn presented_thumbnail_layers(&self) -> impl Iterator<Item = (usize, usize, PixelRect)> {
-        self.renderer.thumbnail_layers()
+    /// Inline image layers in draw order from the last successful presentation.
+    /// Items give the pane index, placement index, and clipped device bounds.
+    pub fn presented_image_layers(&self) -> impl Iterator<Item = (usize, usize, PixelRect)> {
+        self.renderer.image_layers()
     }
 
     /// Number of image textures in this surface's renderer cache.

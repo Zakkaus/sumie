@@ -420,6 +420,15 @@ unsafe extern "C" {
         values: *mut *mut c_void,
         written: *mut usize,
     ) -> c_int;
+    pub fn sumie_kitty_graphics_animation_tick_visible(
+        graphics: KittyGraphics,
+        now_ms: u64,
+        image_ids: *const u32,
+        image_count: usize,
+        next_ms: *mut u64,
+        changed: *mut bool,
+    ) -> c_int;
+    #[cfg(test)]
     pub fn ghostty_kitty_graphics_animation_tick(
         graphics: KittyGraphics,
         now_ms: u64,

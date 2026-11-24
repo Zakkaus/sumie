@@ -1,6 +1,6 @@
-use std::{num::NonZeroU64, ops::Range};
+use std::{collections::HashSet, num::NonZeroU64, ops::Range};
 
-use sumie_core::graphics::{IMAGE_BUDGET, Image, Placement, texture_bytes};
+use sumie_core::graphics::{ImageSource, Placement, texture_bytes};
 use sumie_core::splits::Rect;
 use wgpu::util::StagingBelt;
 
@@ -19,12 +19,15 @@ const FILL_SIZE: u64 = size_of::<Instance>() as u64;
 const VIEWER_SIZE: u64 = QUAD_SIZE as u64 + FILL_SIZE;
 
 type Exclusions = [[f32; 4]; 2];
+type Footprint = (i32, [i32; 2], [u32; 2]);
 
 pub(crate) struct Images {
     format: wgpu::TextureFormat,
     pipeline: Option<BoundPipeline>,
     cache: cache::Cache<BoundTexture>,
     draws: Vec<Draw>,
+    covered: HashSet<Footprint>,
+    rgba: Vec<u8>,
 }
 
 pub(crate) struct Layers {
@@ -34,7 +37,6 @@ pub(crate) struct Layers {
     pub terminal_end: u32,
     pub end: u32,
     pub base: Option<PixelRect>,
-    pub has_thumbnail: bool,
 }
 
 pub(crate) struct Candidates {
@@ -61,10 +63,7 @@ impl Draw {
         ndc: [f64; 2],
         dimension_limit: u32,
     ) -> Option<Self> {
-        let bytes = texture_bytes(p.image.size, dimension_limit)?;
-        if p.image.rgba.len() != bytes {
-            return None;
-        }
+        texture_bytes(p.image.size, dimension_limit)?;
         let bounds = clip.intersect(origin, size)?;
         Some(Self {
             index,
@@ -76,12 +75,14 @@ impl Draw {
 }
 
 impl Images {
-    pub(crate) fn new(format: wgpu::TextureFormat) -> Self {
+    pub(crate) fn new(format: wgpu::TextureFormat, budget: usize) -> Self {
         Self {
             format,
             pipeline: None,
-            cache: cache::Cache::new(IMAGE_BUDGET),
+            cache: cache::Cache::new(budget),
             draws: Vec::new(),
+            covered: HashSet::new(),
+            rgba: Vec::new(),
         }
     }
 
@@ -159,11 +160,12 @@ impl Images {
         &mut self,
         upload: &mut Upload<'_>,
         placement: &Placement,
+        source: Option<&dyn ImageSource>,
         candidates: &mut Candidates,
         remaining: &mut u64,
     ) {
         if candidates.viewer {
-            if *remaining >= VIEWER_SIZE && self.acquire(upload, &placement.image) {
+            if *remaining >= VIEWER_SIZE && self.acquire(upload, placement, source) {
                 *remaining -= VIEWER_SIZE;
             } else {
                 candidates.range.end -= 1;
@@ -172,18 +174,33 @@ impl Images {
         }
     }
 
-    fn acquire(&mut self, upload: &mut Upload<'_>, image: &Image) -> bool {
-        self.cache
-            .acquire(image.generation, image.size, image.rgba.len(), |recycled| {
+    fn acquire(
+        &mut self,
+        upload: &mut Upload<'_>,
+        placement: &Placement,
+        source: Option<&dyn ImageSource>,
+    ) -> bool {
+        let image = &placement.image;
+        let bytes = texture_bytes(image.size, u32::MAX).expect("validated texture extent");
+        self.cache.acquire(
+            image.generation,
+            image.size,
+            bytes,
+            || {
+                let pixels = source?.pixels(placement)?;
+                (pixels.len() == bytes / 4 * image.format.channels()).then_some(pixels)
+            },
+            |pixels, recycled| {
                 let reused = recycled.is_some();
                 let bound = recycled.unwrap_or_else(|| {
                     self.pipeline
                         .get_or_insert_with(|| BoundPipeline::new(upload.device, self.format))
                         .bind_texture(upload.device, image.size)
                 });
-                upload.write(&bound.texture, image, reused);
+                upload.write(&bound.texture, image, pixels, reused, &mut self.rgba);
                 bound
-            })
+            },
+        )
     }
 
     pub(crate) fn admit(
@@ -199,20 +216,29 @@ impl Images {
         let terminal = end - usize::from(viewer);
         let mut first = terminal;
         let mut has_base = false;
+        self.covered.clear();
         for index in (candidates.range.start..terminal).rev() {
-            let placement = &list.images[self.draws[index].index];
+            let draw = self.draws[index];
+            let placement = &list.images[draw.index];
+            let footprint = (placement.z, draw.bounds.origin, draw.bounds.size);
+            if self.covered.contains(&footprint) {
+                continue;
+            }
             let needs_base = !has_base && placement.z < BELOW_BACKGROUND;
             // The base costs at most one fill; it may replace default backgrounds.
             let cost = QUAD_SIZE as u64 + u64::from(needs_base) * FILL_SIZE;
             if *remaining < cost {
                 break;
             }
-            if self.acquire(upload, &placement.image) {
+            if self.acquire(upload, placement, list.image_source) {
+                if !placement.thumbnail && placement.image.format.is_opaque() {
+                    self.covered.insert(footprint);
+                }
                 *remaining -= cost;
                 has_base |= needs_base;
                 first -= 1;
                 if first != index {
-                    self.draws[first] = self.draws[index];
+                    self.draws[first] = draw;
                 }
             }
         }
@@ -225,10 +251,6 @@ impl Images {
         };
         let below_background = boundary(BELOW_BACKGROUND);
         let below_text = boundary(0);
-        let has_thumbnail = !viewer
-            && self.draws[first..terminal]
-                .iter()
-                .any(|d| list.images[d.index].thumbnail);
         let terminal_end = start + u32::try_from(terminal - first).unwrap();
         // Pack admitted placements without touching candidates for the following panes.
         if first != start as usize {
@@ -241,7 +263,6 @@ impl Images {
             terminal_end,
             end: terminal_end + u32::from(viewer),
             base: candidates.base.filter(|_| has_base),
-            has_thumbnail,
         })
     }
 

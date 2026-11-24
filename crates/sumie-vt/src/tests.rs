@@ -1,3 +1,7 @@
+mod kitty_budget;
+
+use sumie_core::graphics::{ImageSource, PixelFormat};
+
 use super::Terminal;
 
 #[test]
@@ -143,25 +147,29 @@ fn kitty_commands_query_transmit_place_and_delete() {
         assert_eq!([caret.column, caret.row], cursor, "{command}");
         if let Some(p) = snapshot.images.first() {
             assert!(!p.thumbnail);
-            assert_eq!(&p.image.rgba[..4], &[17, 34, 51, 255]);
+            let pixels = vt.pixels(p).unwrap();
             if p.image_id == 7 {
+                assert_eq!(p.image.format, PixelFormat::Rgb);
                 assert_eq!((p.z, p.cell, p.size), (-1, [0, 0], [16, 32]));
-                assert_eq!(&p.image.rgba[4..], &[68, 85, 102, 255]);
+                assert_eq!(pixels, &[17, 34, 51, 68, 85, 102]);
+            } else {
+                assert_eq!(p.image.format, PixelFormat::Rgba);
+                assert_eq!(pixels, &[17, 34, 51, 255]);
             }
         }
     }
 }
 
 #[test]
-fn kitty_snapshot_skips_only_images_behind_an_opaque_cover() {
+fn kitty_snapshot_retains_fallback_candidates_within_the_texture_limit() {
     let mut vt = Terminal::new(6, 3).unwrap();
     vt.resize_pixels(6, 3, [8, 16]).unwrap();
     vt.set_image_dimension_limit(1);
     for (command, visible_ids) in [
         ("a=T,f=24,i=8,C=1,s=1,v=1,c=1,r=1,q=2;AAD/", &[8][..]),
-        ("a=T,f=24,i=7,C=1,s=1,v=1,c=1,r=1,q=2;/wAA", &[8]),
-        ("a=T,f=24,i=10,C=1,s=2,v=1,c=1,r=1,q=2;AAAAAAAA", &[8]),
-        ("a=T,f=32,i=9,C=1,s=1,v=1,c=1,r=1,q=2;AAAAAA==", &[8, 9]),
+        ("a=T,f=24,i=7,C=1,s=1,v=1,c=1,r=1,q=2;/wAA", &[7, 8]),
+        ("a=T,f=24,i=10,C=1,s=2,v=1,c=1,r=1,q=2;AAAAAAAA", &[7, 8]),
+        ("a=T,f=32,i=9,C=1,s=1,v=1,c=1,r=1,q=2;AAAAAA==", &[7, 8, 9]),
         ("a=d,d=I,i=8,q=2", &[7, 9]),
     ] {
         vt.write(format!("\x1b_G{command}\x1b\\").as_bytes());
@@ -181,11 +189,18 @@ const KITTY_RED: &str = "a=T,f=32,i=7,p=2,s=1,v=1,C=1;/wAA/w==";
 const KITTY_BLUE_FRAME: &str = "a=f,f=32,i=7,s=1,v=1,z=40;AAD//w==";
 
 #[test]
+fn kitty_native_animation_tick_accepts_empty_storage() {
+    let mut vt = Terminal::new(6, 3).unwrap();
+    assert_eq!(vt.animation_tick(0).unwrap(), None);
+}
+
+#[test]
 fn kitty_animation_commands_update_current_snapshot_pixels() {
     const RED: [u8; 4] = [255, 0, 0, 255];
     const GREEN: [u8; 4] = [0, 255, 0, 255];
     const BLUE: [u8; 4] = [0, 0, 255, 255];
     const YELLOW: [u8; 4] = [255, 255, 0, 255];
+    const WHITE: [u8; 4] = [255, 255, 255, 255];
     let mut vt = Terminal::new(6, 3).unwrap();
     vt.resize_pixels(6, 3, [8, 16]).unwrap();
     for (command, reply, now, next, pixel) in [
@@ -210,13 +225,21 @@ fn kitty_animation_commands_update_current_snapshot_pixels() {
         ("a=f,m=0;/w==", "i=7,r=4;OK", 1030, Some(1070), BLUE),
         ("", "", 1070, Some(1090), YELLOW),
         ("", "", 1090, None, YELLOW),
-        ("a=c,i=7,r=2,c=4", "i=7;OK", 1090, None, GREEN),
-        ("a=a,i=7,s=3", "", 1090, Some(1120), RED),
-        ("a=a,i=7,c=2,s=1", "", 1120, None, GREEN),
+        ("", "", 1120, None, YELLOW),
+        (
+            "a=f,f=32,i=7,s=1,v=1,z=25;/////w==",
+            "i=7,r=5;OK",
+            1140,
+            Some(1165),
+            WHITE,
+        ),
+        ("a=c,i=7,r=2,c=5", "i=7;OK", 1141, Some(1165), GREEN),
+        ("a=a,i=7,s=3", "", 1165, Some(1195), RED),
+        ("a=a,i=7,c=2,s=1", "", 1195, None, GREEN),
         (
             "a=d,d=I,i=7\x1b\\\x1b_Ga=T,f=32,i=7,p=2,s=1,v=1,C=1;AAD//w==",
             "i=7,p=2;OK",
-            1120,
+            1195,
             None,
             BLUE,
         ),
@@ -235,27 +258,90 @@ fn kitty_animation_commands_update_current_snapshot_pixels() {
                 "{command}"
             );
         }
-        assert_eq!(vt.animation_tick(now).unwrap(), next, "{command} at {now}");
         let snapshot = vt.render_snapshot().unwrap();
+        let (changed, deadline) = vt
+            .animation_tick_visible(now, snapshot.images.iter(), None)
+            .unwrap();
+        assert_eq!(deadline, next, "{command} at {now}");
+        let snapshot = if changed {
+            vt.render_snapshot().unwrap()
+        } else {
+            snapshot
+        };
         assert_eq!(snapshot.images.len(), 1, "{command} at {now}");
-        assert_eq!(snapshot.images[0].image.rgba, pixel, "{command} at {now}");
+        assert_eq!(
+            vt.pixels(&snapshot.images[0]).unwrap(),
+            pixel.as_slice(),
+            "{command} at {now}"
+        );
     }
 }
 
-#[test]
-fn kitty_viewer_refreshes_offscreen_frames_until_placement_is_replaced() {
+fn two_playing_images() -> (Terminal, super::Snapshot) {
     let mut vt = Terminal::new(6, 3).unwrap();
     vt.resize_pixels(6, 3, [8, 16]).unwrap();
-    vt.write(format!("\x1b_G{KITTY_RED}\x1b\\\x1b_G{KITTY_BLUE_FRAME}\x1b\\").as_bytes());
+    let red_9 = KITTY_RED.replace("i=7", "i=9");
+    let blue_9 = KITTY_BLUE_FRAME.replace("i=7", "i=9");
+    vt.write(
+        format!(
+            "\x1b_G{KITTY_RED}\x1b\\\x1b_G{KITTY_BLUE_FRAME}\x1b\\\
+             \x1b[1;2H\x1b_Ga=p,i=7,p=3,C=1\x1b\\\x1b[1;3H\x1b_G{red_9}\x1b\\\x1b_G{blue_9}\x1b\\\
+             \x1b_Ga=a,i=7,r=1,z=50,s=3\x1b\\\x1b_Ga=a,i=9,r=1,z=60,s=3\x1b\\"
+        )
+        .as_bytes(),
+    );
+    let initial = vt.render_snapshot().unwrap();
+    assert_eq!(initial.images.len(), 3);
+    assert_eq!(
+        vt.animation_tick_visible(100, initial.images.iter(), None)
+            .unwrap(),
+        (false, Some(150))
+    );
+    assert_eq!(
+        vt.animation_tick_visible(157, initial.images.iter(), None)
+            .unwrap(),
+        (true, Some(160))
+    );
     let snapshot = vt.render_snapshot().unwrap();
-    let mut viewer = snapshot.images[0].clone();
-    vt.write(b"A\r\nB\r\nC\r\nD\r\n\x1b_Ga=a,i=7,c=2\x1b\\");
-    assert!(vt.render_snapshot().unwrap().images.is_empty());
-    assert!(!vt.has_image_placement(&viewer));
-    assert!(vt.refresh_viewer(&mut viewer).unwrap());
-    assert!(vt.has_image_placement(&viewer));
-    assert_eq!(viewer.image.rgba, [0, 0, 255, 255]);
-    assert_eq!(snapshot.images[0].image.rgba, [255, 0, 0, 255]);
+    for placement in snapshot.images.iter() {
+        let expected = if placement.image_id == 7 {
+            [0, 0, 255, 255]
+        } else {
+            [255, 0, 0, 255]
+        };
+        assert_eq!(vt.pixels(placement).unwrap(), expected.as_slice());
+    }
+    (vt, snapshot)
+}
+
+#[test]
+fn kitty_animation_ticks_viewport_and_offscreen_viewer_only() {
+    let (mut vt, snapshot) = two_playing_images();
+    let original = snapshot.images.iter().find(|p| p.image_id == 7).unwrap();
+    let mut viewer = original.clone();
+
+    vt.write(b"A\r\nB\r\nC\r\nD\r\n\x1b_Ga=T,f=32,i=8,s=1,v=1,C=1;/wAA/w==\x1b\\");
+    let viewport = vt.render_snapshot().unwrap();
+    assert_eq!(viewport.images.len(), 1);
+    assert_eq!(viewport.images[0].image_id, 8);
+    assert_eq!(
+        vt.animation_tick_visible(190, viewport.images.iter(), None)
+            .unwrap(),
+        (false, None)
+    );
+    assert!(snapshot.images.iter().all(|p| vt.has_image_placement(p)));
+
+    for (now, next, pixels) in [(190, 240, [255, 0, 0, 255]), (350, 370, [0, 0, 255, 255])] {
+        assert_eq!(
+            vt.animation_tick_visible(now, viewport.images.iter(), Some(&viewer))
+                .unwrap(),
+            (true, Some(next))
+        );
+        assert!(!vt.has_image_placement(&viewer));
+        assert!(vt.refresh_viewer(&mut viewer).unwrap());
+        assert_eq!(vt.pixels(&viewer).unwrap(), pixels.as_slice());
+    }
+    assert!(vt.pixels(original).is_none());
 
     vt.write(format!("\x1b_G{KITTY_RED}\x1b\\").as_bytes());
     assert!(!vt.refresh_viewer(&mut viewer).unwrap());

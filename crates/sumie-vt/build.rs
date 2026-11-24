@@ -3,14 +3,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "build/clock.rs"]
+mod clock_patch;
+#[path = "build/kitty.rs"]
+mod kitty_patch;
+
 const GHOSTTY_COMMIT: &str = "108cacb17ed8990840cd14abfce43d8ed8503ca1";
 const GHOSTTY_ARCHIVE_SHA256: &str =
     "2c276d3e62cb15fb38f0d7f621f199029d1d4df86538096c6bec2a107cad7159";
 // Bump when changing patches already applied to a cached extraction.
-const GHOSTTY_PATCH_LEVEL: u32 = 2;
+const GHOSTTY_PATCH_LEVEL: u32 = 3;
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=build");
     println!("cargo::rerun-if-changed=src/search/grid.zig");
     println!("cargo::rerun-if-changed=src/selection.zig");
     println!("cargo::rerun-if-changed=src/image_file.zig");
@@ -37,12 +43,13 @@ fn main() {
     install_search_bridge(&source);
     install_selection_bridge(&source);
     install_screen_bridge(&source);
-    install_graphics_policy(&source);
+    kitty_patch::install(&source);
     preserve_chunked_animation_frames(&source);
     install_thumbnail_policy(&source);
     expose_thumbnail_flag(&source.join("src/terminal"));
     install_placement_lifetime(&source);
     install_screen_clear_epoch(&source);
+    clock_patch::install(&source);
     let prefix = out.join("ghostty-install");
     let mut build = Command::new(zig);
     build
@@ -148,37 +155,6 @@ fn install_screen_bridge(source: &Path) {
         "comptime { @import(\"sumie_selection.zig\").install(); }\n",
         "comptime { @import(\"sumie_screen.zig\").install(); }\n",
     );
-}
-
-fn install_graphics_policy(source: &Path) {
-    // Wuffs is already linked for pixel operations. Select Ghostty's bounded PNG decoder
-    // at build time instead of mutating its process-wide callback after startup.
-    insert_once(
-        &source.join("src/terminal/sys.zig"),
-        "pub var decode_png: ?DecodePngFn = png: {\n",
-        "    if (build_options.kitty_graphics) break :png &decodePngWuffs;\n",
-    );
-    let kitty = source.join("src/terminal/kitty");
-    fs::write(
-        kitty.join("sumie_file.zig"),
-        include_str!("src/image_file.zig"),
-    )
-    .expect("install confined image file reader");
-    // Keep the pinned parser and decoder, but replace the file reader's body.
-    // Anchor outside that body so fresh and previously patched trees converge.
-    let path = kitty.join("graphics_image.zig");
-    let mut text = fs::read_to_string(&path).expect("read pinned image loader");
-    let anchor = "            else => @compileError(\"readFile only supports file and temporary_file\"),\n        }\n";
-    let start = text.find(anchor).expect("find pinned file reader") + anchor.len();
-    let end = start
-        + text[start..]
-            .find("\n    }\n")
-            .expect("find end of pinned file reader");
-    let replacement = "\n        assert(self.data.items.len == 0);\n        self.data = try @import(\"sumie_file.zig\").read(io, alloc, path, medium == .temporary_file, t.offset, t.size);";
-    if text[start..end] != *replacement {
-        text.replace_range(start..end, replacement);
-        fs::write(path, text).expect("confine Ghostty file transports");
-    }
 }
 
 fn install_thumbnail_policy(source: &Path) {

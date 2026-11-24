@@ -185,7 +185,7 @@ fn assert_padded_grid(renderer: &mut Renderer, device: &wgpu::Device, queue: &wg
     view.build(&snapshot, None, &[], None, true);
     renderer.upload_atlas(&view.atlas());
     let target = renderer.create_offscreen(DEVICE);
-    let frame = view.frame(true);
+    let frame = view.frame(true, |_| Some(&terminal));
     assert_eq!(
         frame.panes.clone().next().unwrap().draw.origin,
         ORIGIN.map(u32::cast_signed)
@@ -223,27 +223,24 @@ fn assert_image_sampling(
     queue: &wgpu::Queue,
     target: &OffscreenTarget,
 ) {
-    use std::sync::Arc;
-    use sumie_core::graphics::{Image, Placement};
+    use sumie_core::graphics::{Image, PixelFormat, Placement};
 
     let green = [0, 255, 0, 255];
     let red = [255, 0, 0, 255];
     let transparent_blue = [0, 0, 255, 0];
+    let pixels = [
+        [green, green, green, green],
+        [green, red, transparent_blue, green],
+        [green, transparent_blue, transparent_blue, green],
+        [green, green, green, green],
+    ];
+    let source = TestImages(&[(u64::MAX, pixels.as_flattened().as_flattened())]);
     let scaled = Placement {
-        image: Arc::new(Image {
+        image: Image {
             generation: u64::MAX,
             size: [4, 4],
-            rgba: [
-                [green, green, green, green],
-                [green, red, transparent_blue, green],
-                [green, transparent_blue, transparent_blue, green],
-                [green, green, green, green],
-            ]
-            .into_iter()
-            .flatten()
-            .flatten()
-            .collect(),
-        }),
+            format: PixelFormat::Rgba,
+        },
         image_id: 1,
         placement_id: 1,
         storage_key: [0; 3],
@@ -270,6 +267,7 @@ fn assert_image_sampling(
             default_background: [0; 4],
             default_backgrounds: &[],
             images: &[scaled, native],
+            image_source: Some(&source),
             image_exclusions: [None; 2],
             glyphs: &[],
             cursor: None,
@@ -285,6 +283,18 @@ fn assert_image_sampling(
     assert_pixel(&pixels, 8, 8, [0; 4], 0);
     assert_pixel(&pixels, 10, 1, red, 0);
     assert_pixel(&pixels, 11, 1, [0; 4], 0);
+}
+
+#[cfg(target_os = "linux")]
+struct TestImages<'a>(&'a [(u64, &'a [u8])]);
+
+#[cfg(target_os = "linux")]
+impl sumie_core::graphics::ImageSource for TestImages<'_> {
+    fn pixels(&self, placement: &sumie_core::graphics::Placement) -> Option<&[u8]> {
+        self.0.iter().find_map(|&(revision, pixels)| {
+            (revision == placement.image.generation).then_some(pixels)
+        })
+    }
 }
 
 fn upload_atlas(renderer: &mut Renderer) {
@@ -338,6 +348,7 @@ const GRID: DrawList<'static> = DrawList {
     origin: [2, 1],
     cell_size: CELL,
     images: &[],
+    image_source: None,
     image_exclusions: [None; 2],
     default_background: [0, 0, 0, 255],
     default_backgrounds: &[],
@@ -432,6 +443,7 @@ fn assert_cursor_shapes(
                 cell_size: SIZE,
                 origin: [2, 1],
                 images: &[],
+                image_source: None,
                 image_exclusions: [None; 2],
                 default_background: BACKGROUND,
                 default_backgrounds: &[],

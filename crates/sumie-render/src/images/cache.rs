@@ -46,12 +46,13 @@ impl<T> Cache<T> {
         }
     }
 
-    pub(super) fn acquire(
+    pub(super) fn acquire<P>(
         &mut self,
         key: u64,
         size: [u32; 2],
         bytes: usize,
-        upload: impl FnOnce(Option<T>) -> T,
+        load: impl FnOnce() -> Option<P>,
+        upload: impl FnOnce(P, Option<T>) -> T,
     ) -> bool {
         if let Some(entry) = self.entries.get_mut(&key) {
             if entry.used < self.first_use {
@@ -66,6 +67,9 @@ impl<T> Cache<T> {
         if bytes > self.budget - self.pinned_bytes || self.pinned_count == MAX_TEXTURES {
             return false;
         }
+        let Some(pixels) = load() else {
+            return false;
+        };
         let recycled = self.recycle(size);
         if recycled.is_none() {
             self.make_room(bytes);
@@ -74,7 +78,7 @@ impl<T> Cache<T> {
         self.entries.insert(
             key,
             Entry {
-                value: upload(recycled),
+                value: upload(pixels, recycled),
                 size,
                 bytes,
                 used: self.clock,
@@ -91,16 +95,13 @@ impl<T> Cache<T> {
         if self.entries.len() == self.pinned_count {
             return None;
         }
-        // A later pane or viewer may still need a visible generation we have not pinned yet.
+        // Prefer offscreen revisions, but a not-yet-admitted candidate can be
+        // superseded by an opaque cover. If needed later it can be uploaded again.
         let oldest = self
             .entries
             .iter()
-            .filter(|(_, entry)| {
-                entry.size == size
-                    && entry.used < self.first_use
-                    && entry.visible_frame != self.first_use
-            })
-            .min_by_key(|(_, entry)| entry.used)
+            .filter(|(_, entry)| entry.size == size && entry.used < self.first_use)
+            .min_by_key(|(_, entry)| (entry.visible_frame == self.first_use, entry.used))
             .map(|(&key, _)| key)?;
         Some(self.entries.remove(&oldest).unwrap().value)
     }
@@ -132,52 +133,72 @@ impl<T> Cache<T> {
 mod tests {
     use super::{Cache, MAX_TEXTURES, MIN_CHARGE};
 
+    impl<T> Cache<T> {
+        fn acquire_with(
+            &mut self,
+            key: u64,
+            size: [u32; 2],
+            bytes: usize,
+            upload: impl FnOnce(Option<T>) -> T,
+        ) -> bool {
+            self.acquire(key, size, bytes, || Some(()), |(), texture| upload(texture))
+        }
+    }
+
     #[test]
     fn evicts_least_recently_used_image_within_budget() {
         let mut cache = Cache::new(2 * MIN_CHARGE);
         cache.begin_frame([1, 2]);
-        assert!(cache.acquire(1, [1, 1], 4, |_| 10));
-        assert!(cache.acquire(2, [1, 1], 4, |_| 20));
+        assert!(cache.acquire_with(1, [1, 1], 4, |_| 10));
+        assert!(cache.acquire_with(2, [1, 1], 4, |_| 20));
         cache.begin_frame([2, 3]);
-        assert!(cache.acquire(2, [1, 1], 4, |_| panic!("cache hit uploaded again")));
+        assert!(cache.acquire_with(2, [1, 1], 4, |_| panic!("cache hit uploaded again")));
         cache.begin_frame([1, 3]);
-        assert!(cache.acquire(3, [1, 2], 8, |_| 30));
+        assert!(cache.acquire_with(3, [1, 2], 8, |_| 30));
         assert_eq!(cache.bytes, 2 * MIN_CHARGE);
         assert_eq!(cache.get(1), &10);
         assert_eq!(cache.get(3), &30);
         assert!(!cache.entries.contains_key(&2));
-        assert!(!cache.acquire(4, [256, 128], 2 * MIN_CHARGE, |_| {
+        assert!(!cache.acquire_with(4, [256, 128], 2 * MIN_CHARGE, |_| {
             panic!("would evict a pinned image")
         }));
     }
 
     #[test]
-    fn reuses_only_matching_textures_absent_from_the_frame() {
+    fn reuses_matching_textures_without_overwriting_pinned_draws() {
         let mut cache = Cache::new(4 * MIN_CHARGE);
         let size = [1, 2];
         cache.begin_frame([1, 2, 3]);
         for (key, extent) in [(1, size), (2, size), (3, [2, 1])] {
-            assert!(cache.acquire(key, extent, 8, |_| key * 10));
+            assert!(cache.acquire_with(key, extent, 8, |_| key * 10));
         }
 
         cache.begin_frame([4, 2, 5]);
-        assert!(cache.acquire(4, size, 8, |texture| texture.unwrap()));
-        assert!(cache.acquire(5, size, 8, |texture| {
+        assert!(cache.acquire_with(2, size, 8, |_| panic!("cache hit uploaded again")));
+        assert!(cache.acquire_with(4, size, 8, |texture| texture.unwrap()));
+        assert!(cache.acquire_with(5, size, 8, |texture| {
             assert!(texture.is_none());
             50
         }));
-        assert!(cache.acquire(2, size, 8, |_| panic!("later pane lost its texture")));
         assert_eq!(cache.get(4), &10);
         assert_eq!(cache.get(2), &20);
         assert_eq!(cache.get(3), &30);
         assert!(!cache.entries.contains_key(&1));
+    }
 
-        for generation in 6..120 {
-            cache.begin_frame([generation, 2, 5]);
-            assert!(cache.acquire(generation, size, 8, |texture| texture.unwrap()));
+    #[test]
+    fn reuses_one_texture_for_anonymous_video_with_older_fallback_candidates() {
+        let size = [640, 480];
+        let bytes = 640 * 480 * 4;
+        let mut cache = Cache::new(4 * bytes);
+        cache.begin_frame([1]);
+        assert!(cache.acquire_with(1, size, bytes, |_| 10));
+        for generation in 2..=300 {
+            cache.begin_frame(1..=generation);
+            assert!(cache.acquire_with(generation, size, bytes, |texture| texture.unwrap()));
             assert_eq!(cache.get(generation), &10);
-            assert_eq!(cache.len(), 4);
-            assert_eq!(cache.bytes, 4 * MIN_CHARGE);
+            assert_eq!(cache.len(), 1);
+            assert_eq!(cache.bytes, bytes);
         }
     }
 
@@ -186,13 +207,13 @@ mod tests {
         let mut cache = Cache::new((MAX_TEXTURES + 1) * MIN_CHARGE);
         cache.begin_frame([]);
         for key in 0..MAX_TEXTURES as u64 {
-            assert!(cache.acquire(key, [1, 1], 4, |_| ()));
+            assert!(cache.acquire_with(key, [1, 1], 4, |_| ()));
         }
-        assert!(!cache.acquire(MAX_TEXTURES as u64, [1, 1], 4, |_| {
+        assert!(!cache.acquire_with(MAX_TEXTURES as u64, [1, 1], 4, |_| {
             panic!("all textures pinned")
         }));
         cache.begin_frame([MAX_TEXTURES as u64]);
-        assert!(cache.acquire(MAX_TEXTURES as u64, [1, 2], 8, |_| ()));
+        assert!(cache.acquire_with(MAX_TEXTURES as u64, [1, 2], 8, |_| ()));
         assert_eq!(cache.len(), MAX_TEXTURES);
         assert!(!cache.entries.contains_key(&0));
     }

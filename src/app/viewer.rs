@@ -68,6 +68,17 @@ impl Click {
         Ok(open)
     }
 
+    pub(super) fn refresh_viewer(
+        &mut self,
+        pane: &mut PaneState,
+        active: Option<(&mut View, &mut Routing, &mut Gpu)>,
+    ) -> Result<()> {
+        if pane.viewer_removed()? {
+            self.dismiss(pane, active);
+        }
+        Ok(())
+    }
+
     pub(super) fn dismiss(
         &mut self,
         pane: &mut PaneState,
@@ -101,7 +112,7 @@ impl PaneState {
             && modifiers.shift == self.pane.mouse_tracking()
     }
 
-    pub(super) fn viewer_removed(&mut self) -> Result<bool> {
+    fn viewer_removed(&mut self) -> Result<bool> {
         let Some(viewer) = &mut self.viewer else {
             return Ok(false);
         };

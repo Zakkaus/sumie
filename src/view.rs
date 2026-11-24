@@ -7,6 +7,7 @@ use std::{
     mem::{Discriminant, discriminant},
 };
 
+use sumie_core::graphics::ImageSource;
 use sumie_core::splits::Rect;
 use sumie_core::{CellRange, FontZoom};
 use sumie_font::{FontError, FontStyle, FontSystem};
@@ -346,21 +347,26 @@ impl View {
         collect_dirty(&self.font, &mut self.atlas_dirty);
     }
 
-    pub(crate) fn frame(
-        &self,
+    pub(crate) fn frame<'a>(
+        &'a self,
         cursor_hidden: bool,
-    ) -> FrameDraw<'_, impl Clone + Iterator<Item = PaneDraw<'_>>> {
+        image_source: impl Clone + Fn(u64) -> Option<&'a dyn ImageSource>,
+    ) -> FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>> {
         let backdrop = self.palette.overlay;
         FrameDraw {
             background: self.frame_background,
-            panes: self.panes[..self.pane_count]
-                .iter()
-                .map(move |pane| PaneDraw {
+            panes: self.panes[..self.pane_count].iter().map(move |pane| {
+                let mut draw = pane.draw_list(self.cell, cursor_hidden);
+                if !draw.images.is_empty() || pane.viewer.is_some() {
+                    draw.image_source = pane.id.and_then(&image_source);
+                }
+                PaneDraw {
                     rect: pane.rect,
-                    draw: pane.draw_list(self.cell, cursor_hidden),
+                    draw,
                     thumbnails: self.thumbnail_chrome(pane),
                     viewer: pane.viewer.as_ref().map(|viewer| viewer.draw(backdrop)),
-                }),
+                }
+            }),
             fills: &self.fills,
             chrome: self.tabs.layer(),
         }

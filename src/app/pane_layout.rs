@@ -58,32 +58,51 @@ impl PaneTab {
         }
         Ok(())
     }
-
-    pub(super) fn refresh_visible(&mut self, now: Option<u64>) -> Result<Option<u64>> {
-        let mut next = None;
-        for i in 0..self.layout.panes.len() {
-            let pane = self.get_mut(self.layout.panes[i].0);
-            if let Some(now) = now {
-                let changed = pane.playback.tick(&mut pane.pane.terminal, now)?;
-                pane.snapshot_dirty |= changed;
-                if changed && pane.viewer.is_some() {
-                    // A clock tick cannot remove a placement. Refresh its viewer even
-                    // when scrolling has moved the inline image out of the viewport.
-                    pane.viewer_removed()?;
-                }
-            }
-            pane.update_snapshot()?;
-            if (pane.viewer.is_some() || !pane.snapshot.as_ref().unwrap().images.is_empty())
-                && let Some(at) = pane.playback.next_ms
-            {
-                next = Some(next.map_or(at, |earliest: u64| earliest.min(at)));
-            }
-        }
-        Ok(now.and(next))
-    }
 }
 
 impl Session {
+    pub(super) fn refresh_visible(
+        &mut self,
+        now: Option<u64>,
+        gpu: &mut Gpu,
+    ) -> Result<Option<u64>> {
+        let tab = self.tabs.active_mut().expect("live window");
+        let focused = tab.tree.focused();
+        let mut next = None;
+        for i in 0..tab.layout.panes.len() {
+            let pane = tab.get_mut(tab.layout.panes[i].0);
+            pane.update_snapshot()?;
+            let Some(now) = now else { continue };
+            let images = &pane
+                .snapshot
+                .as_ref()
+                .expect("visible pane snapshot")
+                .images;
+            let visible = self.view.visible_placements(pane.id, images);
+            let viewer = pane
+                .viewer
+                .as_ref()
+                .filter(|_| pane.viewer_presented())
+                .map(|v| &v.placement);
+            let (changed, deadline) = pane
+                .pane
+                .terminal
+                .animation_tick_visible(now, visible, viewer)?;
+            if changed {
+                pane.snapshot_dirty = true;
+                self.pane_pointer.image_click.refresh_viewer(
+                    pane,
+                    (pane.id == focused).then_some((&mut self.view, &mut self.routing, &mut *gpu)),
+                )?;
+                pane.update_snapshot()?;
+            }
+            if let Some(at) = deadline {
+                next = Some(next.map_or(at, |earliest: u64| earliest.min(at)));
+            }
+        }
+        Ok(next)
+    }
+
     pub(super) fn all_panes_mut(&mut self) -> impl Iterator<Item = &mut PaneState> {
         self.tabs
             .as_mut_slice()

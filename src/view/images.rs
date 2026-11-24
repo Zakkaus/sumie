@@ -110,7 +110,7 @@ impl PresentedImages {
 }
 
 impl View {
-    /// Publish thumbnail hit layers in draw order after their surface presentation.
+    /// Publish the placements eligible for hit testing and animation after presentation.
     pub(crate) fn images_presented(
         &mut self,
         admitted: impl Iterator<Item = (usize, usize, PixelRect)>,
@@ -135,6 +135,24 @@ impl View {
             presented.bounds.push((image_index, bounds));
             presented.panes.last_mut().unwrap().hits.end = next + 1;
         }
+    }
+
+    pub(crate) fn visible_placements(
+        &self,
+        id: u64,
+        current: &Arc<Vec<Placement>>,
+    ) -> impl Iterator<Item = &Placement> {
+        let presented = &self.presented_images;
+        presented
+            .panes
+            .iter()
+            .find(|pane| pane.id == id && Arc::ptr_eq(&pane.images, current))
+            .into_iter()
+            .flat_map(|pane| {
+                presented.bounds[pane.hits.clone()]
+                    .iter()
+                    .map(|&(i, _)| &pane.images[i])
+            })
     }
 
     /// Find a thumbnail only if it is the foremost image at this logical window position.

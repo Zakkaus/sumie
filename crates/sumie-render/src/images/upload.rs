@@ -1,7 +1,7 @@
 use std::num::NonZeroU64;
 
-use sumie_core::graphics::Image;
-use wgpu::util::StagingBelt;
+use sumie_core::graphics::{Image, PixelFormat};
+use wgpu::{WriteOnly, util::StagingBelt};
 
 const CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -34,13 +34,32 @@ impl<'a> Upload<'a> {
         }
     }
 
-    pub(super) fn write(&mut self, texture: &wgpu::Texture, image: &Image, recycled: bool) {
-        if recycled && self.stage(texture, image) {
+    pub(super) fn write(
+        &mut self,
+        texture: &wgpu::Texture,
+        image: &Image,
+        pixels: &[u8],
+        recycled: bool,
+        rgba: &mut Vec<u8>,
+    ) {
+        if (recycled || image.format != PixelFormat::Rgba) && self.stage(texture, image, pixels) {
             return;
         }
+        let pixels = if image.format == PixelFormat::Rgba {
+            pixels
+        } else {
+            let len = pixels.len() / image.format.channels() * 4;
+            if len > rgba.len() {
+                rgba.reserve_exact(len - rgba.len());
+                rgba.resize(len, 0);
+            }
+            let out = &mut rgba[..len];
+            write_rgba(WriteOnly::from_mut(out), pixels, image.format);
+            out
+        };
         self.queue.write_texture(
             texture.as_image_copy(),
-            &image.rgba,
+            pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(image.size[0] * 4),
@@ -50,7 +69,7 @@ impl<'a> Upload<'a> {
         );
     }
 
-    fn stage(&mut self, texture: &wgpu::Texture, image: &Image) -> bool {
+    fn stage(&mut self, texture: &wgpu::Texture, image: &Image, pixels: &[u8]) -> bool {
         let row = image.size[0] * 4;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let stride = row.next_multiple_of(alignment);
@@ -74,11 +93,12 @@ impl<'a> Upload<'a> {
             .get_mapped_range_mut()
             .unwrap();
         if row == stride || image.size[1] == 1 {
-            dst.copy_from_slice(&image.rgba);
+            write_rgba(dst.slice(..), pixels, image.format);
         } else {
-            for (i, src) in image.rgba.chunks_exact(row as usize).enumerate() {
+            let src_row = image.size[0] as usize * image.format.channels();
+            for (i, src) in pixels.chunks_exact(src_row).enumerate() {
                 let start = i * stride as usize;
-                dst.slice(start..start + row as usize).copy_from_slice(src);
+                write_rgba(dst.slice(start..start + row as usize), src, image.format);
             }
         }
         drop(dst);
@@ -96,5 +116,29 @@ impl<'a> Upload<'a> {
             texture.size(),
         );
         true
+    }
+}
+
+fn write_rgba(mut dst: WriteOnly<'_, [u8]>, pixels: &[u8], format: PixelFormat) {
+    match format {
+        PixelFormat::Rgba => dst.copy_from_slice(pixels),
+        PixelFormat::Rgb => dst.into_chunks::<4>().0.write_iter(
+            pixels
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|&[r, g, b]| [r, g, b, 255]),
+        ),
+        PixelFormat::Gray => dst
+            .into_chunks::<4>()
+            .0
+            .write_iter(pixels.iter().map(|&gray| [gray, gray, gray, 255])),
+        PixelFormat::GrayAlpha => dst.into_chunks::<4>().0.write_iter(
+            pixels
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&[gray, alpha]| [gray, gray, gray, alpha]),
+        ),
     }
 }

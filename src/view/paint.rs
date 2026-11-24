@@ -66,6 +66,7 @@ impl PanePaint {
             origin: self.glyphs.offset,
             backgrounds: &self.backgrounds,
             images: self.images.as_ref().map_or(&[], |images| images.as_slice()),
+            image_source: None,
             default_background: self.default_background,
             default_backgrounds: &self.default_backgrounds,
             image_exclusions: self.image_exclusions,

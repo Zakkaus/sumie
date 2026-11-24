@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sumie_core::graphics::{Image, Placement};
+use sumie_core::graphics::{Image, PixelFormat, Placement};
 use sumie_core::splits::Rect;
 use sumie_core::{CellPosition, CellRange};
 use sumie_render::PixelRect;
@@ -113,7 +113,7 @@ fn background_opacity_respects_vt_colors_and_opaque_overlays() {
         );
         view.end_frame();
 
-        let mut frame = view.frame(false);
+        let mut frame = view.frame(false, |_| None);
         let draw = frame.panes.next().unwrap().draw;
         assert_eq!(frame.background, [18, 18, 18, alpha]);
         assert_eq!(draw.default_background, frame.background);
@@ -155,7 +155,7 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     view.end_frame();
     view.frame_presented();
 
-    let frame = view.frame(true);
+    let frame = view.frame(true, |_| None);
     let mut draws = frame.panes;
     let left_draw = draws.next().unwrap().draw;
     assert_eq!(left_draw.image_exclusions, [None; 2]);
@@ -254,11 +254,11 @@ fn thumbnail_snapshot(view: &View) -> Snapshot {
     let [w, h] = view.cell;
     let mut snapshot = snapshot(view, view.content_rect());
     let thumbnail = Placement {
-        image: Arc::new(Image {
+        image: Image {
             generation: 1,
             size: [1, 1],
-            rgba: vec![255; 4],
-        }),
+            format: PixelFormat::Rgba,
+        },
         image_id: 1,
         placement_id: 1,
         storage_key: [0; 3],

@@ -140,7 +140,6 @@ impl PaneHost {
             title: String::new(),
             snapshot: None,
             snapshot_dirty: true,
-            playback: super::animation::Playback::default(),
             frame_dirty: true,
             activity_after: None,
             hover: super::links::Hover::default(),
@@ -525,15 +524,15 @@ impl Session {
                     tab.activity = true;
                     activity_changed = true;
                 }
-                if pane.snapshot_dirty && pane.viewer_removed()? {
-                    self.pane_pointer.image_click.dismiss(
+                if pane.snapshot_dirty {
+                    self.pane_pointer.image_click.refresh_viewer(
                         pane,
                         (pane.id == active).then_some((
                             &mut self.view,
                             &mut self.routing,
                             &mut *gpu,
                         )),
-                    );
+                    )?;
                 }
                 exited |= pane.exited;
                 labels_changed |= changed && pane.id == focused;

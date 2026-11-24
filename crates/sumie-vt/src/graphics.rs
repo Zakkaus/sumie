@@ -1,11 +1,13 @@
-//! Copies pixels and placement geometry from the live terminal into owned snapshots.
+//! Snapshots placement geometry and lends live pixels for admitted GPU uploads.
 
 use crate::{Error, Terminal, check, ffi};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
 use std::ptr::{from_mut, from_ref, null, null_mut};
 use std::sync::Arc;
-use sumie_core::graphics::{IMAGE_BUDGET, Image, Placement, texture_bytes};
+use sumie_core::graphics::{
+    IMAGE_BUDGET, Image, ImageSource, PixelFormat, Placement, texture_bytes,
+};
 
 pub(super) const PLACEHOLDER: char = '\u{10eeee}';
 
@@ -38,6 +40,7 @@ const IMAGE_WIDTH: c_int = 3;
 const IMAGE_HEIGHT: c_int = 4;
 const IMAGE_FORMAT: c_int = 5;
 const IMAGE_PIXELS: c_int = 7;
+const IMAGE_GENERATION: c_int = 9;
 const FORMAT_RGB: c_int = 0;
 const FORMAT_RGBA: c_int = 1;
 const FORMAT_GRAY_ALPHA: c_int = 3;
@@ -47,24 +50,15 @@ pub(super) struct Graphics {
     iter: ffi::RenderStateImageIterator,
     images: HashMap<u32, CachedImage>,
     geometries: Vec<(usize, Geometry)>,
-    covered: HashSet<Footprint>,
+    animation_ids: Vec<u32>,
     generation: Option<u64>,
     max_dimension: u32,
     placements: Arc<Vec<Placement>>,
 }
 
 struct CachedImage {
-    image: Arc<Image>,
-    opaque: bool,
+    image: Image,
     visible: bool,
-}
-
-#[derive(Eq, Hash, PartialEq)]
-struct Footprint {
-    z: i32,
-    cell: [i32; 2],
-    offset: [u32; 2],
-    size: [u32; 2],
 }
 
 #[derive(Default)]
@@ -81,27 +75,6 @@ struct Geometry {
     thumbnail: bool,
 }
 
-impl Geometry {
-    const fn footprint(&self) -> Footprint {
-        Footprint {
-            z: self.z,
-            cell: self.cell,
-            offset: self.offset,
-            size: self.size,
-        }
-    }
-
-    fn can_cover(&self, image: &Image) -> bool {
-        // Keep decorated thumbnails out of occlusion and match the renderer's crop validation.
-        !self.thumbnail
-            && (0..2).all(|i| {
-                self.source[i]
-                    .checked_add(self.source[2 + i])
-                    .is_some_and(|end| end <= image.size[i])
-            })
-    }
-}
-
 impl Graphics {
     pub(super) fn new() -> Result<Self, Error> {
         let mut iter = null_mut();
@@ -111,7 +84,7 @@ impl Graphics {
             iter,
             images: HashMap::new(),
             geometries: Vec::new(),
-            covered: HashSet::new(),
+            animation_ids: Vec::new(),
             generation: Some(0),
             max_dimension: u32::MAX,
             placements: Arc::default(),
@@ -179,14 +152,48 @@ impl Drop for Graphics {
 }
 
 impl Terminal {
-    /// Advance Kitty animations by at most one frame each on the active screen.
-    /// Use milliseconds from the same monotonic clock throughout this terminal's lifetime.
-    /// Returns the next frame deadline on that clock, or `None` when no tick is needed.
-    /// Call before taking the snapshot for a frame.
+    /// Tick the supplied current viewport placements and the optional live viewer source.
+    /// Returns whether pixels changed and the next deadline, in monotonic milliseconds.
+    /// Use the same clock for every call. Refresh the snapshot when pixels change.
     ///
     /// # Errors
-    /// Returns an error if Ghostty cannot access or advance its Kitty graphics storage.
-    pub fn animation_tick(&mut self, now_ms: u64) -> Result<Option<u64>, Error> {
+    /// Returns an error if Ghostty cannot access its Kitty graphics storage.
+    pub fn animation_tick_visible<'a>(
+        &mut self,
+        now_ms: u64,
+        placements: impl IntoIterator<Item = &'a Placement>,
+        viewer: Option<&Placement>,
+    ) -> Result<(bool, Option<u64>), Error> {
+        let viewer_id = viewer.and_then(|p| self.placement_image_generation(p).map(|_| p.image_id));
+        let ids = &mut self.graphics.animation_ids;
+        ids.clear();
+        ids.extend(placements.into_iter().map(|p| p.image_id));
+        ids.extend(viewer_id);
+        if ids.is_empty() {
+            return Ok((false, None));
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let storage = self.kitty_graphics()?;
+        let ids = &self.graphics.animation_ids;
+        let mut next_ms = 0;
+        let mut changed = false;
+        // SAFETY: The storage and ID slice remain live during the call, and both outputs are writable.
+        check(unsafe {
+            ffi::sumie_kitty_graphics_animation_tick_visible(
+                storage,
+                now_ms,
+                ids.as_ptr(),
+                ids.len(),
+                &raw mut next_ms,
+                &raw mut changed,
+            )
+        })?;
+        Ok((changed, (next_ms != 0).then_some(next_ms)))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn animation_tick(&mut self, now_ms: u64) -> Result<Option<u64>, Error> {
         let storage = self.kitty_graphics()?;
         let mut next_ms = 0;
         // SAFETY: Storage belongs to this exclusively borrowed terminal, and the output is a u64.
@@ -214,7 +221,7 @@ impl Terminal {
         self.placement_image_generation(placement) == Some(placement.image.generation)
     }
 
-    /// Update a viewer's pixels from the same placement, even outside the viewport.
+    /// Update a viewer's pixel revision from the same placement, even outside the viewport.
     /// Returns `false` if the placement or image was removed or replaced, or its pixels do not fit.
     ///
     /// # Errors
@@ -224,7 +231,7 @@ impl Terminal {
             return Ok(false);
         };
         if generation != placement.image.generation {
-            let Some((image, _)) =
+            let Some(image) =
                 self.cache_image(placement.image_id, generation, &mut null_mut(), false)?
             else {
                 return Ok(false);
@@ -257,7 +264,7 @@ impl Terminal {
         unsafe { ffi::sumie_screen_clear_epoch(self.raw) }
     }
 
-    /// Omit images too large for the target device before allocating snapshot pixels.
+    /// Omit placements whose images are too large for the target device.
     pub fn set_image_dimension_limit(&mut self, limit: u32) {
         if self.graphics.max_dimension != limit {
             self.graphics.max_dimension = limit;
@@ -266,7 +273,7 @@ impl Terminal {
         }
     }
 
-    pub(super) fn configure_graphics(&self) -> Result<(), Error> {
+    pub(super) fn configure_graphics(&mut self) -> Result<(), Error> {
         const LIMIT: u64 = IMAGE_BUDGET as u64;
         // SAFETY: The terminal is live. The option reads a u64 during this call.
         check(unsafe {
@@ -312,19 +319,15 @@ impl Terminal {
 
     fn collect_images(&mut self) -> Result<Vec<Placement>, Error> {
         let mut geometries = std::mem::take(&mut self.graphics.geometries);
-        let mut covered = std::mem::take(&mut self.graphics.covered);
-        let result = self.copy_uncovered_images(&mut geometries, &mut covered);
+        let result = self.read_placements(&mut geometries);
         geometries.clear();
-        covered.clear();
         self.graphics.geometries = geometries;
-        self.graphics.covered = covered;
         result
     }
 
-    fn copy_uncovered_images(
+    fn read_placements(
         &mut self,
         geometries: &mut Vec<(usize, Geometry)>,
-        covered: &mut HashSet<Footprint>,
     ) -> Result<Vec<Placement>, Error> {
         // SAFETY: IMAGE_ITERATOR fills the existing iterator from the just-updated render state.
         check(unsafe {
@@ -345,21 +348,14 @@ impl Terminal {
         }
         // Use the renderer's painter order, including native iterator order for ties.
         geometries.sort_unstable_by_key(|(index, g)| (g.z, g.image_id, g.placement_id, *index));
-        let mut placements = Vec::new();
+        let mut placements = Vec::with_capacity(geometries.len());
         let mut storage = null_mut();
-        for (_, geometry) in geometries.drain(..).rev() {
-            let footprint = geometry.footprint();
-            if covered.contains(&footprint) {
-                continue;
-            }
-            let Some((image, opaque)) =
+        for (_, geometry) in geometries.drain(..) {
+            let Some(image) =
                 self.cache_image(geometry.image_id, geometry.generation, &mut storage, true)?
             else {
                 continue;
             };
-            if opaque && geometry.can_cover(&image) {
-                covered.insert(footprint);
-            }
             placements.push(Placement {
                 image,
                 image_id: geometry.image_id,
@@ -373,7 +369,6 @@ impl Terminal {
                 thumbnail: geometry.thumbnail,
             });
         }
-        placements.reverse();
         Ok(placements)
     }
 
@@ -383,32 +378,26 @@ impl Terminal {
         generation: u64,
         storage: &mut ffi::KittyGraphics,
         visible: bool,
-    ) -> Result<Option<(Arc<Image>, bool)>, Error> {
+    ) -> Result<Option<Image>, Error> {
         if let Some(cached) = self.graphics.images.get_mut(&id)
             && cached.image.generation == generation
         {
             cached.visible |= visible;
-            return Ok(Some((Arc::clone(&cached.image), cached.opaque)));
+            return Ok(Some(cached.image));
         }
         if storage.is_null() {
             *storage = self.kitty_graphics()?;
         }
         // SAFETY: Storage belongs to this terminal, which is unchanged during image extraction.
-        let Some((image, opaque)) =
+        let Some(image) =
             (unsafe { read_image(*storage, id, generation, self.graphics.max_dimension) })?
         else {
             return Ok(None);
         };
-        let image = Arc::new(image);
-        self.graphics.images.insert(
-            id,
-            CachedImage {
-                image: Arc::clone(&image),
-                opaque,
-                visible,
-            },
-        );
-        Ok(Some((image, opaque)))
+        self.graphics
+            .images
+            .insert(id, CachedImage { image, visible });
+        Ok(Some(image))
     }
 
     fn kitty_graphics(&self) -> Result<ffi::KittyGraphics, Error> {
@@ -425,26 +414,58 @@ impl Terminal {
     }
 }
 
-// `storage` must remain valid until the copy finishes. No borrowed pixels escape this function.
+impl ImageSource for Terminal {
+    fn pixels(&self, placement: &Placement) -> Option<&[u8]> {
+        let image = &placement.image;
+        let expected =
+            texture_bytes(image.size, self.graphics.max_dimension)? / 4 * image.format.channels();
+        let storage = self.kitty_graphics().ok()?;
+        let mut generation = 0_u64;
+        let mut pixels = ffi::Str {
+            ptr: null(),
+            len: 0,
+        };
+        let keys = [IMAGE_GENERATION, IMAGE_PIXELS];
+        let mut outputs = [
+            from_mut(&mut generation).cast(),
+            from_mut(&mut pixels).cast(),
+        ];
+        // SAFETY: Storage is live and both output slots match the getter's keys.
+        unsafe {
+            let handle = ffi::ghostty_kitty_graphics_image(storage, placement.image_id);
+            check(ffi::ghostty_kitty_graphics_image_get_multi(
+                handle,
+                keys.len(),
+                keys.as_ptr(),
+                outputs.as_mut_ptr(),
+                null_mut(),
+            ))
+            .ok()?;
+        }
+        if generation != image.generation || pixels.ptr.is_null() || pixels.len != expected {
+            return None;
+        }
+        // SAFETY: This image revision provides initialized bytes. Its storage can only
+        // change via a mutable terminal borrow, which cannot overlap the resulting slice.
+        Some(unsafe { std::slice::from_raw_parts(pixels.ptr, pixels.len) })
+    }
+}
+
+// `storage` must remain valid for the duration of this metadata query.
 unsafe fn read_image(
     storage: ffi::KittyGraphics,
     id: u32,
     generation: u64,
     max_dimension: u32,
-) -> Result<Option<(Image, bool)>, Error> {
+) -> Result<Option<Image>, Error> {
     let mut size = [0_u32; 2];
     let [width, height] = &mut size;
     let mut format: c_int = 0;
-    let mut pixels = ffi::Str {
-        ptr: null(),
-        len: 0,
-    };
-    let keys = [IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_FORMAT, IMAGE_PIXELS];
+    let keys = [IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_FORMAT];
     let mut outputs = [
         from_mut(width).cast(),
         from_mut(height).cast(),
         from_mut(&mut format).cast(),
-        from_mut(&mut pixels).cast(),
     ];
     // SAFETY: Storage is live. The keys match the initialized output slots, and a missing
     // image is passed as null, which the getter rejects.
@@ -458,54 +479,16 @@ unsafe fn read_image(
             null_mut(),
         ))?;
     }
-    let channels = match format {
-        FORMAT_RGBA => 4,
-        FORMAT_RGB => 3,
-        FORMAT_GRAY_ALPHA => 2,
-        FORMAT_GRAY => 1,
+    let format = match format {
+        FORMAT_RGBA => PixelFormat::Rgba,
+        FORMAT_RGB => PixelFormat::Rgb,
+        FORMAT_GRAY_ALPHA => PixelFormat::GrayAlpha,
+        FORMAT_GRAY => PixelFormat::Gray,
         _ => return Err(Error(ffi::INVALID_VALUE)),
     };
-    let Some(rgba_len) = texture_bytes(size, max_dimension) else {
-        return Ok(None);
-    };
-    if pixels.ptr.is_null() || pixels.len != rgba_len / 4 * channels {
-        return Err(Error(ffi::INVALID_VALUE));
-    }
-    // SAFETY: The getter lends initialized terminal memory until the next mutation. The
-    // non-null buffer has exactly the expected byte length, bounded by IMAGE_BUDGET.
-    let pixels = unsafe { std::slice::from_raw_parts(pixels.ptr, pixels.len) };
-    Ok(Some((
-        Image {
-            generation,
-            size,
-            rgba: to_rgba(pixels, channels, rgba_len),
-        },
-        matches!(format, FORMAT_RGB | FORMAT_GRAY),
-    )))
-}
-
-fn to_rgba(pixels: &[u8], channels: usize, rgba_len: usize) -> Vec<u8> {
-    if channels == 4 {
-        return pixels.to_vec();
-    }
-    let mut rgba = Vec::with_capacity(rgba_len);
-    match channels {
-        3 => {
-            for &[r, g, b] in pixels.as_chunks::<3>().0 {
-                rgba.extend_from_slice(&[r, g, b, 255]);
-            }
-        }
-        2 => {
-            for &[gray, alpha] in pixels.as_chunks::<2>().0 {
-                rgba.extend_from_slice(&[gray, gray, gray, alpha]);
-            }
-        }
-        1 => {
-            for &gray in pixels {
-                rgba.extend_from_slice(&[gray, gray, gray, 255]);
-            }
-        }
-        _ => unreachable!(),
-    }
-    rgba
+    Ok(texture_bytes(size, max_dimension).map(|_| Image {
+        generation,
+        size,
+        format,
+    }))
 }

@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use sumie_core::graphics::Placement;
+use sumie_core::graphics::{ImageSource, Placement};
 use sumie_core::splits::Rect;
 
 use crate::{AtlasRect, AtlasUpload};
@@ -119,6 +119,8 @@ pub struct DrawList<'a> {
     /// an empty slice means no holes.
     pub default_backgrounds: &'a [bool],
     pub images: &'a [Placement],
+    /// Supplies live pixels for admitted image and viewer revisions missing from the GPU cache.
+    pub image_source: Option<&'a dyn ImageSource>,
     /// Terminal UI rectangles that images must not cover, in device pixels.
     pub image_exclusions: [Option<PixelRect>; 2],
     pub glyphs: &'a [GlyphQuad],

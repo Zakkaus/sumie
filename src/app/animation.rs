@@ -4,36 +4,40 @@ use calloop::{
     RegistrationToken,
     timer::{TimeoutAction, Timer},
 };
-use sumie_vt::Terminal;
 use sumie_wayland::SourceHandle;
 
 use crate::Result;
 
-#[derive(Default)]
-pub(super) struct Playback {
-    pub(super) next_ms: Option<u64>,
+pub(super) trait TimerSource {
+    type Token: Copy;
+
+    fn register(&self, at: Instant) -> Result<Self::Token>;
+    fn cancel(&self, token: Self::Token);
 }
 
-impl Playback {
-    /// A due tick may change the final frame even when playback has no next deadline.
-    pub(super) fn tick(&mut self, vt: &mut Terminal, now: u64) -> Result<bool> {
-        let previous = self.next_ms;
-        self.next_ms = vt.animation_tick(now)?;
-        Ok(previous.is_some_and(|at| now >= at) || previous != self.next_ms)
+impl TimerSource for SourceHandle {
+    type Token = RegistrationToken;
+
+    fn register(&self, at: Instant) -> Result<Self::Token> {
+        Ok(self.insert(Timer::from_deadline(at), |_, ()| TimeoutAction::Drop)?)
+    }
+
+    fn cancel(&self, token: Self::Token) {
+        self.remove(token);
     }
 }
 
-pub(super) struct Wake {
+pub(super) struct Wake<S: TimerSource> {
     origin: Instant,
-    handle: SourceHandle,
-    timer: Option<(u64, RegistrationToken)>,
+    source: S,
+    timer: Option<(u64, S::Token)>,
 }
 
-impl Wake {
-    pub(super) fn new(handle: SourceHandle) -> Self {
+impl<S: TimerSource> Wake<S> {
+    pub(super) fn new(source: S) -> Self {
         Self {
             origin: Instant::now(),
-            handle,
+            source,
             timer: None,
         }
     }
@@ -52,11 +56,12 @@ impl Wake {
             return Ok(());
         }
         if let Some((_, token)) = self.timer.take() {
-            self.handle.remove(token);
+            self.source.cancel(token);
         }
         if let Some(ms) = next {
-            let timer = Timer::from_deadline(self.origin + Duration::from_millis(ms));
-            let token = self.handle.insert(timer, |_, ()| TimeoutAction::Drop)?;
+            let token = self
+                .source
+                .register(self.origin + Duration::from_millis(ms))?;
             self.timer = Some((ms, token));
         }
         Ok(())
@@ -66,20 +71,57 @@ impl Wake {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use sumie_vt::Terminal;
+
+    #[derive(Default)]
+    struct Clock {
+        alarm: Cell<Option<Instant>>,
+        registrations: Cell<u32>,
+    }
+
+    impl TimerSource for Clock {
+        type Token = Instant;
+
+        fn register(&self, at: Instant) -> Result<Instant> {
+            assert!(self.alarm.replace(Some(at)).is_none());
+            self.registrations.set(self.registrations.get() + 1);
+            Ok(at)
+        }
+
+        fn cancel(&self, token: Instant) {
+            assert_eq!(self.alarm.take(), Some(token));
+        }
+    }
 
     #[test]
-    fn playback_deadline_survives_early_wakes_and_disarms_on_stop() {
+    fn wake_keeps_an_unchanged_deadline_and_cancels_a_stopped_animation() {
         let mut vt = Terminal::new(8, 4).unwrap();
         vt.resize_pixels(8, 4, [8, 16]).unwrap();
-        let mut playback = Playback::default();
         vt.write(b"\x1b_Ga=T,i=7,f=24,s=1,v=1;AAAA\x1b\\\x1b_Ga=f,i=7,f=24,s=1,v=1,z=30;////\x1b\\\x1b_Ga=a,i=7,r=1,z=50,s=3\x1b\\");
-        for (now, changed, deadline) in [(100, true, 150), (149, false, 150), (157, true, 187)] {
-            assert_eq!(playback.tick(&mut vt, now).unwrap(), changed);
-            assert_eq!(playback.next_ms, Some(deadline));
+        let snapshot = vt.render_snapshot().unwrap();
+        let mut wake = Wake::new(Clock::default());
+        for (now, advanced, deadline, registrations) in [
+            (100, false, 150, 1),
+            (149, false, 150, 1),
+            (157, true, 180, 2),
+        ] {
+            let (changed, next) = vt
+                .animation_tick_visible(now, snapshot.images.iter(), None)
+                .unwrap();
+            assert_eq!(changed, advanced);
+            wake.arm(next).unwrap();
+            assert_eq!(
+                wake.source.alarm.get(),
+                Some(wake.origin + Duration::from_millis(deadline))
+            );
+            assert_eq!(wake.source.registrations.get(), registrations);
         }
         vt.write(b"\x1b_Ga=a,i=7,s=1\x1b\\");
-        playback.tick(&mut vt, 160).unwrap();
-        assert_eq!(playback.next_ms, None);
-        assert!(!playback.tick(&mut vt, 187).unwrap());
+        let (_, next) = vt
+            .animation_tick_visible(160, snapshot.images.iter(), None)
+            .unwrap();
+        wake.arm(next).unwrap();
+        assert_eq!(wake.source.alarm.get(), None);
     }
 }
