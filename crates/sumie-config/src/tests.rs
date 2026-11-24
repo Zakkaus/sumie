@@ -111,7 +111,7 @@ fn assert_font(font: Font, family: &str, px: f32, weight: u16, hinting: Hinting)
 
 fn assert_defaults(config: Config) {
     assert_eq!(config.minimum_contrast().to_bits(), 1.1_f32.to_bits());
-    assert_eq!(config.window.padding(), [12, 6]);
+    assert_eq!(config.window.padding(), [8, 6]);
     assert_eq!(config.colors.foreground(), [0xff; 3]);
     assert_eq!(config.colors.background(), [0x12, 0x27, 0x38]);
     assert_eq!(config.colors.cursor(), Some([0xff; 3]));

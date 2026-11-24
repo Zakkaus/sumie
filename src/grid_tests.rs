@@ -160,7 +160,7 @@ fn assert_padded_grid(renderer: &mut Renderer, device: &wgpu::Device, queue: &wg
     use crate::view::{FontSettings, View};
 
     const DEVICE: [u32; 2] = [200, 150];
-    const ORIGIN: [u32; 2] = [15, 8];
+    const ORIGIN: [u32; 2] = [10, 8];
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
     let mut view = View::new(
@@ -173,7 +173,7 @@ fn assert_padded_grid(renderer: &mut Renderer, device: &wgpu::Device, queue: &wg
     )
     .unwrap();
     let size = view.size();
-    assert_eq!([size.width_px, size.height_px], [170, 134]);
+    assert_eq!([size.width_px, size.height_px], [180, 134]);
     let mut terminal = sumie_vt::Terminal::new(size.cols, size.rows).unwrap();
     terminal
         .resize_pixels(size.cols, size.rows, view.cell)

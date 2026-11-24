@@ -127,7 +127,7 @@ impl Window {
 }
 
 const fn default_padding_x() -> u16 {
-    12
+    8
 }
 
 const fn default_padding_y() -> u16 {

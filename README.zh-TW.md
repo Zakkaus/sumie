@@ -50,7 +50,7 @@ minimum-contrast = 1.1 # 設為 1.0 可停用文字對比校正
 scrollback-limit = 50000000
 
 [window]
-padding-x = 12
+padding-x = 8
 padding-y = 6
 
 [font]
@@ -75,7 +75,7 @@ blink = true
 
 | `[window]` 設定 | 預設值 | 內距（邏輯像素） |
 | --- | ---: | --- |
-| `padding-x` | `12` | 每個終端機窗格左側與右側的內距 |
+| `padding-x` | `8` | 每個終端機窗格左側與右側的內距 |
 | `padding-y` | `6` | 每個終端機窗格上方與下方的內距 |
 
 將任一項設為 `0` 即可取消該方向的內距。
