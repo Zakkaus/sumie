@@ -137,21 +137,39 @@ impl View {
         }
     }
 
-    pub(crate) fn visible_placements(
+    pub(crate) fn visible_placements<'a>(
         &self,
         id: u64,
-        current: &Arc<Vec<Placement>>,
-    ) -> impl Iterator<Item = &Placement> {
+        current: &'a Arc<Vec<Placement>>,
+    ) -> impl Iterator<Item = &'a Placement> {
         let presented = &self.presented_images;
         presented
             .panes
             .iter()
-            .find(|pane| pane.id == id && Arc::ptr_eq(&pane.images, current))
+            .find(|pane| pane.id == id)
             .into_iter()
-            .flat_map(|pane| {
+            .flat_map(move |pane| {
+                let unchanged = Arc::ptr_eq(&pane.images, current);
                 presented.bounds[pane.hits.clone()]
                     .iter()
-                    .map(|&(i, _)| &pane.images[i])
+                    .filter_map(move |&(i, _)| {
+                        if unchanged {
+                            return Some(&current[i]);
+                        }
+                        let drawn = &pane.images[i];
+                        if drawn.storage_key == [0; 3] {
+                            return None;
+                        }
+                        // VT snapshots are sorted in draw order. Kitty IDs can be reused;
+                        // the storage key distinguishes the actual transmission and placement.
+                        let order = |p: &Placement| (p.z, p.image_id, p.placement_id);
+                        let key = order(drawn);
+                        let start = current.partition_point(|p| order(p) < key);
+                        current[start..]
+                            .iter()
+                            .take_while(|p| order(p) == key)
+                            .find(|p| p.storage_key == drawn.storage_key)
+                    })
             })
     }
 

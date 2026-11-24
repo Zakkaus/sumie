@@ -284,6 +284,29 @@ fn thumbnail_snapshot(view: &View) -> Snapshot {
 }
 
 #[test]
+fn visible_animation_survives_neighbor_replacement() {
+    let mut view = view();
+    let mut snapshot = thumbnail_snapshot(&view);
+    let images = Arc::make_mut(&mut snapshot.images);
+    images[0].storage_key = [1, 2, 3];
+    images[1].storage_key = [2, 4, 5];
+    view.build(&snapshot, None, &[], None, true);
+    let bounds = PixelRect {
+        origin: [0; 2],
+        size: [1; 2],
+    };
+    view.images_presented([(0, 0, bounds), (0, 1, bounds)].into_iter());
+
+    let images = Arc::make_mut(&mut snapshot.images);
+    images[0].storage_key[2] += 1;
+    images[1].image.generation += 1;
+    assert!(
+        view.visible_placements(0, &snapshot.images)
+            .eq([&snapshot.images[1]])
+    );
+}
+
+#[test]
 fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
     let mut view = view();
     let rect = view.pane_grid(view.content_rect());
