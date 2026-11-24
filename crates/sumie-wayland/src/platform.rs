@@ -7,7 +7,7 @@ use raw_window_handle::{
 };
 use smithay_client_toolkit::reexports::csd_frame::WindowState;
 use smithay_client_toolkit::{
-    compositor::{CompositorHandler, CompositorState, FrameCallbackData},
+    compositor::{CompositorHandler, CompositorState},
     data_device_manager::DataDeviceManagerState,
     delegate_dispatch2, delegate_registry,
     output::{OutputHandler, OutputState},
@@ -15,9 +15,9 @@ use smithay_client_toolkit::{
         calloop::{self, EventLoop, EventSource, LoopHandle, RegistrationToken},
         calloop_wayland_source::WaylandSource,
         client::{
-            Connection, Proxy, QueueHandle,
+            Connection, Dispatch, Proxy, QueueHandle,
             globals::{self, BindError},
-            protocol::{wl_output, wl_shm, wl_surface::WlSurface},
+            protocol::{wl_callback::WlCallback, wl_output, wl_shm, wl_surface::WlSurface},
         },
     },
     registry::{ProvidesRegistryState, RegistryState},
@@ -251,12 +251,22 @@ impl Platform {
         self.state.can_present()
     }
 
+    /// Stop waiting for a callback that may have been withheld while the surface was hidden.
+    /// Call on visibility recovery or when input needs a fresh layout.
+    pub fn recover_frame_slot(&mut self) {
+        self.state.frame_pending = None;
+    }
+
     /// Arm the frame callback and optional presentation feedback, and stage buffer geometry.
     /// Call only when a buffer is ready, immediately before presenting it. A successful
     /// call must be followed by a buffer commit before dispatching or changing IME state.
     #[must_use]
     pub fn begin_frame(&mut self) -> bool {
-        self.state.begin_frame()
+        if !self.can_present() {
+            return false;
+        }
+        self.state.arm_frame();
+        true
     }
 
     /// Update the IME anchor. The latest rectangle is retained across focus changes.
@@ -321,7 +331,7 @@ pub(crate) struct State {
     pub(crate) events: VecDeque<Event>,
     logical: (u32, u32),
     configured: bool,
-    frame_pending: bool,
+    frame_pending: Option<WlCallback>,
     pending_title: Option<String>,
     geometry_dirty: bool,
 }
@@ -390,7 +400,7 @@ impl State {
             events: VecDeque::new(),
             logical: (800, 600),
             configured: false,
-            frame_pending: false,
+            frame_pending: None,
             pending_title: None,
             geometry_dirty: true,
         })
@@ -401,15 +411,7 @@ impl State {
     }
 
     fn can_present(&self) -> bool {
-        self.configured && !self.frame_pending
-    }
-
-    fn begin_frame(&mut self) -> bool {
-        if !self.can_present() {
-            return false;
-        }
-        self.arm_frame();
-        true
+        self.configured && self.frame_pending.is_none()
     }
 
     fn arm_frame(&mut self) {
@@ -421,11 +423,10 @@ impl State {
             self.geometry_dirty = false;
         }
         let surface = self.window.wl_surface();
-        surface.frame(&self.qh, FrameCallbackData(surface.clone()));
+        self.frame_pending = Some(surface.frame(&self.qh, ()));
         if let Some(presentation) = &mut self.presentation {
             presentation.request(surface);
         }
-        self.frame_pending = true;
     }
 
     pub(crate) fn emit_resize(&mut self) {
@@ -526,10 +527,7 @@ impl CompositorHandler for State {
         }
     }
 
-    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: u32) {
-        self.frame_pending = false;
-        self.events.push_back(Event::FrameReady);
-    }
+    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlSurface, _: u32) {}
 
     fn transform_changed(
         &mut self,
@@ -554,6 +552,22 @@ impl CompositorHandler for State {
         _: &WlSurface,
         _: &wl_output::WlOutput,
     ) {
+    }
+}
+
+impl Dispatch<WlCallback, ()> for State {
+    fn event(
+        state: &mut Self,
+        callback: &WlCallback,
+        _: <WlCallback as Proxy>::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if state.frame_pending.as_ref() == Some(callback) {
+            state.frame_pending = None;
+            state.events.push_back(Event::FrameReady);
+        }
     }
 }
 

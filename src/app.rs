@@ -163,6 +163,9 @@ impl App {
                     tab.sources.watch_input(tab.pane.pty.input_fd())?;
                 }
                 let gpu = self.gpu.as_mut().unwrap();
+                if !self.suspended && session.pane_pointer.take_frame_recovery() {
+                    gpu.recover_frame_slot();
+                }
                 let ready = !self.suspended
                     && gpu.frame_slot_available()
                     && session.frame_retry.is_none_or(|at| Instant::now() >= at);
@@ -261,6 +264,9 @@ impl App {
                 suspended,
                 ..
             } => {
+                if !suspended && (self.suspended || activated && !self.focused) {
+                    self.gpu.as_mut().unwrap().recover_frame_slot();
+                }
                 self.suspended = suspended;
                 if suspended && let Some(session) = &mut self.session {
                     session.frame_retry = None;

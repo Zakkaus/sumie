@@ -38,6 +38,8 @@ Two edges are deliberately closed:
 
 The window uses the same layout for PTY sizing and drawing. Pointer hits must agree with the presented geometry. `view` composes pane-local grids and overlays with a shared font atlas; `sumie-render` clips each grid and image to its own rectangle and presents the window once. Split chrome uses the Astryx palette from `sumie-ui`. The event loop dispatches queued input before retiring exited panes. A focus change drops repeats for held PTY keys, ends reported pointer drags and resets IME composition. A reported key press pairs with a release in its original pane while that pane exists. Pending clipboard reads also stay with their original pane. Directional focus and resize shortcuts reach the PTY only in a single-pane tab.
 
+Restoring or activating a visible window releases a stalled frame slot. A press blocked by pending pane geometry also releases the slot, but is not replayed onto the new layout. A late callback from the replaced slot cannot release the new slot. Pane, search and thumbnail hit geometry still advance only after a successful buffer submission.
+
 The tab bar uses the `TabList` divider and selected indicator. `python3 scripts/astryx-tokens.py` exports its dimensions, label style and two palettes from the pinned Astryx CLI; Cargo builds use the checked-in constants. The renderer draws bar fills and labels after the terminal in the same pass, using a separate label atlas at the token's font size. A frame retains its hit targets only after presentation.
 
 `sumie-config` keeps cursor and image settings in private `cursor` and `images` modules. They supply defaults and merge included settings; the VT and renderer apply them.

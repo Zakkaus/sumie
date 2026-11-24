@@ -126,6 +126,10 @@ impl Gpu {
         self.window.frame_slot_available()
     }
 
+    pub(crate) fn recover_frame_slot(&mut self) {
+        self.window.recover_frame_slot();
+    }
+
     pub(crate) fn draw<'a>(
         &mut self,
         list: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,

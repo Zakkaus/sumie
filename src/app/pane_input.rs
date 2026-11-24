@@ -53,6 +53,7 @@ pub(super) struct Pointer {
     held: [bool; 3],
     presented: Option<LayoutKey>,
     pressed_layout: Option<LayoutKey>,
+    recover_frame: bool,
     pub(super) image_click: super::viewer::Click,
 }
 
@@ -63,6 +64,10 @@ impl Pointer {
 
     pub(super) fn layout_is_presented(&self, tab: &PaneTab) -> bool {
         self.presented == Some(tab.layout_key())
+    }
+
+    pub(super) fn take_frame_recovery(&mut self) -> bool {
+        std::mem::take(&mut self.recover_frame)
     }
 
     pub(super) fn reset(&mut self) {
@@ -92,9 +97,11 @@ impl Pointer {
         let hit = || (presented == Some(layout)).then(hit).flatten();
         let pane_hit = |target: &Target| matches!(target, Target::Pane(_));
         match phase {
-            Phase::Press(button, _) => self
-                .motion(hit)
-                .filter(|target| pane_hit(target) || button == Button::Left),
+            Phase::Press(button, _) => {
+                self.recover_frame |= presented != Some(layout);
+                self.motion(hit)
+                    .filter(|target| pane_hit(target) || button == Button::Left)
+            }
             Phase::Motion => self.motion(|| hit().filter(pane_hit)),
             Phase::Wheel(_) => hit().filter(pane_hit),
             Phase::Release(button) => self.release(button),
@@ -433,6 +440,7 @@ mod tests {
         tree.layout(bounds, [1; 2], &mut layout);
         let hit = || Target::at(&layout, [39.9, 20.0], [81, 100]);
         assert_eq!(pointer.route(press, PENDING, hit), None);
+        assert!(pointer.take_frame_recovery());
         pointer.presented = Some(PENDING);
         assert_eq!(pointer.route(press, PENDING, hit), Some(Target::Pane(2)));
     }
