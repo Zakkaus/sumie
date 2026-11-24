@@ -1,6 +1,6 @@
 use skrifa::Font;
 
-use crate::{FontError, MAX_PPEM};
+use crate::FontError;
 
 /// Grid geometry in physical pixels. The baseline is measured down from the cell top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +59,7 @@ impl CellMetrics {
             .into_iter()
             .find_map(|ch| advance(font, ch, 1.0))
             .map_or(primary_ppem, |advance| 2.0 * self.width as f32 / advance);
-        let mut ppem = width_ppem.min(2.0 * primary_ppem).min(MAX_PPEM);
+        let mut ppem = primary_ppem.min(width_ppem);
         if let Some((ascender, descender)) = fallback_extents(font, 1.0) {
             ppem = ppem.min(self.height as f32 / (ascender - descender));
         }

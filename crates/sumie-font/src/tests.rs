@@ -132,6 +132,7 @@ mod linux {
             return;
         }
         let face_ppem = fonts.faces[first.face().0].ppem.to_bits();
+        assert_eq!(face_ppem, fonts.faces[0].ppem.to_bits());
         assert_eq!(run.glyphs.len(), 8);
         for glyph in run.glyphs {
             assert_eq!(glyph.key.face(), first.face());
@@ -165,22 +166,6 @@ mod linux {
         assert_eq!((full.key.face(), stop.key.face()), (id, id));
         assert_eq!((small.y, stop.y), (full.y, full.y));
         let metrics = fonts.metrics();
-        let face = &fonts.faces[id.0];
-        if let Some(water) = face.font.charmap().map_unicode('水') {
-            let advance = face
-                .font
-                .glyph_metrics()
-                .scaled_f32(face.ppem)
-                .h_advance(water);
-            let slot = f32::from(u16::try_from(2 * metrics.width).unwrap());
-            let max_ppem = crate::MAX_PPEM.min(2.0 * fonts.faces[0].ppem);
-            let ic_width = face.font.glyph_metrics().scaled_f32(1.0).h_advance(water);
-            let expected = slot.min(ic_width * max_ppem);
-            assert!(
-                (advance - expected).abs() < 0.001,
-                "water advance: {advance}, expected: {expected}"
-            );
-        }
         let mask = fonts.rasterize(stop.key).unwrap();
         let cell_width = metrics.width.cast_signed();
         let right = stop.x - stop.column.cast_signed() * cell_width
