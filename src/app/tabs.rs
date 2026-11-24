@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use sumie_core::{Pane, PaneAction, PaneCommand, Selection, TabAction, splits::Rect};
+use sumie_ui::TabHit;
 use sumie_vt::Event as TerminalEvent;
 use sumie_wayland::{Event, PointerButton as Button, PointerPhase as Phase, SourceHandle};
 
@@ -27,7 +28,7 @@ pub(super) struct BarPointer {
 impl BarPointer {
     pub(super) fn route(
         &mut self,
-        hit: Option<usize>,
+        hit: Option<TabHit>,
         over: bool,
         phase: Phase,
     ) -> ControlFlow<Option<Action>> {
@@ -51,10 +52,12 @@ impl BarPointer {
             }
             Phase::Press(button, _) if over => {
                 self.captured[button as usize] = true;
-                Break(hit.and_then(|i| match button {
-                    Button::Left => Some(Action::Key(TabAction::Select(i))),
-                    Button::Middle => Some(Action::Close(i)),
-                    Button::Right => None,
+                Break(hit.and_then(|hit| match (button, hit) {
+                    (Button::Left, TabHit::Tab(i)) => Some(Action::Key(TabAction::Select(i))),
+                    (Button::Left, TabHit::New) => Some(Action::Key(TabAction::Open)),
+                    (Button::Left, TabHit::Close(i))
+                    | (Button::Middle, TabHit::Tab(i) | TabHit::Close(i)) => Some(Action::Close(i)),
+                    _ => None,
                 }))
             }
             Phase::Press(button, _) => {
@@ -201,17 +204,19 @@ impl PaneState {
         active: bool,
         host: &[u8],
         labels_changed: &mut bool,
-    ) -> Result<bool> {
+    ) -> Result<(bool, bool)> {
         let sources = &mut self.sources;
         let ready = sources.take_ready();
         if ready.exit() {
             self.pane.pty.service_child()?;
             if self.pane.pty.exit_fd().is_none() {
-                return Ok(true);
+                return Ok((true, false));
             }
         }
+        let mut output = false;
         if ready.output() {
             let (dirty, eof) = self.pane.drain_output()?;
+            output = dirty;
             self.snapshot_dirty |= dirty;
             if dirty {
                 sources.reset_blink();
@@ -243,7 +248,7 @@ impl PaneState {
                 sources.remove_output();
             }
         }
-        Ok(ready.input() && !self.pane.pty.flush_input()?)
+        Ok((ready.input() && !self.pane.pty.flush_input()?, output))
     }
 }
 
@@ -256,17 +261,38 @@ impl Session {
     }
 
     pub(super) fn bar_input(&mut self, event: &Event) -> ControlFlow<Option<Action>> {
-        let Event::Pointer {
-            position, phase, ..
-        } = event
-        else {
-            return Continue(());
+        match *event {
+            Event::Pointer {
+                position, phase, ..
+            } => {
+                let hit = if matches!(phase, Phase::Press(..)) {
+                    self.view.tab_hit(position)
+                } else {
+                    None
+                };
+                let routed = self
+                    .pointer
+                    .route(hit, self.view.over_tab_bar(position), phase);
+                self.update_tab_hover((!matches!(phase, Phase::Cancel)).then_some(position));
+                routed
+            }
+            Event::PointerEntered { position, .. } => {
+                self.update_tab_hover(Some(position));
+                Continue(())
+            }
+            _ => Continue(()),
+        }
+    }
+
+    fn update_tab_hover(&mut self, position: Option<(f64, f64)>) {
+        let hit = if self.pointer.grid.contains(&true) || self.pointer.captured.contains(&true) {
+            None
+        } else {
+            position.and_then(|position| self.view.tab_hover_hit(position))
         };
-        self.pointer.route(
-            self.view.tab_hit(*position),
-            self.view.over_tab_bar(*position),
-            *phase,
-        )
+        if self.view.set_tab_hover(hit) {
+            self.active_mut().frame_dirty = true;
+        }
     }
 
     pub(super) fn input_target(&self, event: &Event) -> Option<(usize, u64, u64)> {
@@ -370,7 +396,9 @@ impl Session {
             tab.pane.leave_tab()?;
         }
         if tab_changed {
-            for pane in &mut self.tabs.active_mut().expect("live window").panes {
+            let tab = self.tabs.active_mut().expect("live window");
+            tab.activity = false;
+            for pane in &mut tab.panes {
                 pane.hide_viewer();
             }
             self.pointer.change_recipient();
@@ -451,12 +479,19 @@ impl Session {
         let mut exited = false;
         let mut labels_changed = false;
         let active = self.active().id;
-        for tab in self.tabs.as_mut_slice() {
+        let active_index = self.tabs.active_index().unwrap();
+        let mut activity_changed = false;
+        for (index, tab) in self.tabs.as_mut_slice().iter_mut().enumerate() {
             let focused = tab.tree.focused();
             for pane in &mut tab.panes {
                 let mut changed = false;
-                pane.exited |=
+                let (pane_exited, output) =
                     pane.service(gpu, pane.id == active, self.host.as_bytes(), &mut changed)?;
+                pane.exited |= pane_exited;
+                if output && index != active_index && !tab.activity {
+                    tab.activity = true;
+                    activity_changed = true;
+                }
                 if pane.snapshot_dirty && pane.viewer_removed() {
                     self.pane_pointer.image_click.dismiss(
                         pane,
@@ -474,7 +509,7 @@ impl Session {
                 }
             }
         }
-        self.active_mut().frame_dirty |= labels_changed;
+        self.active_mut().frame_dirty |= labels_changed || activity_changed;
         Ok(exited)
     }
 

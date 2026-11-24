@@ -15,7 +15,9 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 點選窗格即可輸入，也可按 Ctrl+Alt+方向鍵切換到相鄰窗格。拖曳分隔線或按 Ctrl+Shift+Alt+方向鍵可調整大小。按 Ctrl+Shift+Z 可讓目前窗格填滿分頁，再按一次即可還原。按 Ctrl+Shift+W 或結束 shell 會關閉目前窗格，原來的空間由同一次分割的另一側接手。關閉最後一個窗格時會關閉分頁，關閉最後一個分頁時會關閉視窗。
 
-按 Ctrl+Tab 或 Ctrl+PageDown 切換到下一個分頁，按 Ctrl+Shift+Tab 或 Ctrl+PageUp 切換到上一個。Alt+1 至 Alt+8 依位置選取分頁，Alt+9 選取最後一個。按 Ctrl+Shift+PageUp 或 Ctrl+Shift+PageDown 可將目前分頁向左或向右移動。開啟第二個分頁後才會顯示分頁列。按左鍵選取分頁，按中鍵關閉分頁，在分頁列上捲動滾輪可切換分頁。
+按 Ctrl+Tab 或 Ctrl+PageDown 切換到下一個分頁，按 Ctrl+Shift+Tab 或 Ctrl+PageUp 切換到上一個。Alt+1 至 Alt+8 依位置選取分頁，Alt+9 選取最後一個。按 Ctrl+Shift+PageUp 或 Ctrl+Shift+PageDown 可將目前分頁向左或向右移動。
+
+開啟第二個分頁後才會顯示分頁列。按 **+** 可新增分頁。點選分頁或在分頁列上捲動滾輪可切換分頁。標題旁的圓點表示該分頁在背景收到輸出，切換到該分頁後圓點便會消失。按中鍵可關閉分頁，也可按目前分頁或指標所在分頁上的 **×**。
 
 按 Ctrl+= 或 Ctrl++ 可放大終端機字型，按 Ctrl+- 可縮小，每次調整 1 pt，範圍為 4 至 200 pt。同一視窗的所有分頁共用字型大小；字元網格會重新排列，視窗尺寸不變。按 Ctrl+0 或修改設定檔中的 `[font].size` 可還原為設定值。
 

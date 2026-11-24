@@ -40,7 +40,7 @@ The window uses the same layout for PTY sizing and drawing. Pointer hits must ag
 
 Restoring or activating a visible window releases a stalled frame slot. A press blocked by pending pane geometry also releases the slot, but is not replayed onto the new layout. A late callback from the replaced slot cannot release the new slot. Pane, search and thumbnail hit geometry still advance only after a successful buffer submission.
 
-The tab bar uses the `TabList` divider and selected indicator. `python3 scripts/astryx-tokens.py` exports its dimensions, label style and two palettes from the pinned Astryx CLI; Cargo builds use the checked-in constants. The renderer draws bar fills and labels after the terminal in the same pass, using a separate label atlas at the token's font size. A frame retains its hit targets only after presentation.
+`sumie-ui::TabLayout` divides the strip in device pixels, reserving its right edge for the new-tab button. The renderer draws the tab backgrounds, indicators, geometric controls and labels after the terminal in the same pass. `python3 scripts/astryx-tokens.py` exports dimensions, label style and both palettes from the pinned Astryx CLI; Cargo uses the checked-in constants. Labels use a separate font atlas. Only a presented layout supplies click targets, including the hovered tab's close button. A background tab records activity when any pane drains PTY output, not when its grid needs repainting.
 
 `sumie-config` keeps cursor and image settings in private `cursor` and `images` modules. They supply defaults and merge included settings; the VT and renderer apply them.
 

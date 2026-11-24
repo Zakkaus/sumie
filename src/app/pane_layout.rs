@@ -12,6 +12,7 @@ impl PaneTab {
             layout,
             layout_revision: 0,
             panes: vec![pane],
+            activity: false,
         }
     }
 

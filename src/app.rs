@@ -88,6 +88,7 @@ struct PaneTab {
     layout: Layout,
     layout_revision: u64,
     panes: Vec<PaneState>,
+    activity: bool,
 }
 
 struct PaneState {
@@ -495,7 +496,7 @@ impl Session {
             self.tabs
                 .as_slice()
                 .iter()
-                .map(|t| t.focused().label(&self.shell)),
+                .map(|t| (t.focused().label(&self.shell), t.activity)),
             self.tabs.active_index().unwrap(),
             active.snapshot.as_ref().unwrap().background,
         );

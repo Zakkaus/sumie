@@ -37,11 +37,16 @@ def rgba(value):
         channels += b"\xff"
     if len(channels) != 4:
         raise ValueError(f"unsupported color {value}")
-    return str(list(channels))
+    return list(channels)
+
+
+def mix(base, color, opacity):
+    # Match the CSS mockup's sRGB tints when drawn in the linear blend pipeline.
+    return [round(b + (c - b) * opacity) for b, c in zip(base[:3], color[:3])] + [255]
 
 
 def main():
-    categories = "size spacing border typography text-size type-scale font-weight color"
+    categories = "size spacing border radius typography text-size type-scale font-weight color"
     tokens = {key: vals for c in categories.split() for key, *vals in tables(c)}
 
     def scalar(name):
@@ -51,11 +56,17 @@ def main():
 
     lines = [f"//! Astryx {CLI_VERSION}; exported by `python3 scripts/astryx-tokens.py`. Do not edit.", "",
              "use super::Palette;", ""]
-    sizes = {"TAB_HEIGHT": "size-element-md", "PADDING": "spacing-3",
-             "RAIL_GAP": "spacing-1", "RULE": "border-width", "INDICATOR": "spacing-0-5",
-             "THUMBNAIL_CHIP": "spacing-4"}
+    sizes = {"TAB_HEIGHT": "size-element-md", "PLUS_WIDTH": "size-element-lg",
+             "PADDING_LEFT": "spacing-3", "PADDING_RIGHT": "spacing-1-5",
+             "ITEM_GAP": "spacing-2", "DIVIDER_INSET": "spacing-2", "RAIL_GAP": "spacing-1",
+             "RULE": "border-width", "INDICATOR": "spacing-0-5", "CLOSE_RADIUS": "radius-inner",
+             "CLOSE_MARK": "spacing-2", "PLUS_MARK": "spacing-3", "DOT_SIZE": "spacing-1-5",
+             "DOT_PULL": "spacing-0-5", "THUMBNAIL_CHIP": "spacing-4"}
     for key, token in sizes.items():
         lines.append(f"pub(super) const {key}: u32 = {pixels(scalar(token))};")
+    # The native tab close box adds the smallest spacing step to a 16px icon slot.
+    close_size = pixels(scalar("spacing-4")) + pixels(scalar("spacing-0-5"))
+    lines.append(f"pub(super) const CLOSE_SIZE: u32 = {close_size};")
     lines.append(f"pub const IMAGE_VIEWER_MARGIN: u32 = {pixels(scalar('spacing-4'))};")
     lines += [f"pub const LABEL_PX: u16 = {pixels(scalar('text-label-size'))};",
               f"pub const LABEL_WEIGHT: u16 = {int(scalar('text-label-weight'))};"]
@@ -63,12 +74,19 @@ def main():
     family = scalar("font-family-code").rsplit(",", 1)[-1].strip()
     lines.append(f"pub const LABEL_FAMILY: &str = {json.dumps(family)};")
     colors = {"surface": "background-body", "label": "text-secondary", "selected": "text-primary",
-              "accent": "accent", "on_accent": "on-accent", "rule": "border",
-              "inactive_pane": "background-muted", "overlay": "overlay"}
+              "accent": "accent", "active_number": "text-accent", "on_accent": "on-accent",
+              "rule": "border", "inactive_pane": "background-muted", "overlay": "overlay"}
     for i, mode in enumerate(("LIGHT", "DARK")):
+        palette = {field: rgba(tokens["--color-" + token][i]) for field, token in colors.items()}
+        surface = palette["surface"]
+        tint = [{"black": 0, "white": 255}[tokens["--color-tint-hover"][i]]] * 3
+        palette.update(muted=mix(surface, palette["label"], 0.55),
+                       active=mix(mix(surface, tint, 0.035), palette["accent"], 0.05),
+                       hover=mix(surface, tint, 0.04),
+                       close_hover=[*tint, round(255 * 0.12)])
         lines += ["", f"pub(super) const {mode}: Palette = Palette {{"]
-        for field, token in colors.items():
-            lines.append(f"    {field}: {rgba(tokens['--color-' + token][i])},")
+        for field, value in palette.items():
+            lines.append(f"    {field}: {value},")
         lines.append("};")
     OUTPUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
