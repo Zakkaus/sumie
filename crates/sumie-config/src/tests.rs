@@ -8,20 +8,26 @@ impl Drop for Scratch {
     }
 }
 
+impl Scratch {
+    fn new() -> Self {
+        let dir = env::temp_dir().join(format!("sumie-config-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        Self(dir)
+    }
+}
+
 #[test]
 fn load_configuration() {
     type Case<'a> = (&'a str, Result<fn(Config), (usize, usize, &'static str)>);
 
-    let dir = env::temp_dir().join(format!("sumie-config-{}", std::process::id()));
-    fs::create_dir(&dir).unwrap();
-    let scratch = Scratch(dir);
+    let scratch = Scratch::new();
     let main = scratch.0.join("sumie.toml");
     fs::write(
         scratch.0.join("shared.toml"),
         "minimum-contrast = 7.0\nscrollback-limit = 104857600\n\
          [font]\nfamily = 'Iosevka'\nsize = 12\nweight = 500\n\
          hinting = 'off'\n[colors]\nforeground = '#AB12EF'\nbackground = '#123456'\n\
-         [window]\npadding-x = 4\npadding-y = 9\nbackground-blur = true\n",
+         [window]\npadding-x = 4\npadding-y = 9\n",
     )
     .unwrap();
 
@@ -32,7 +38,7 @@ fn load_configuration() {
          background = '#fedcba'\ncursor = '#123456'\nselection-foreground = '#abcdef'\n\
          selection-background = '#654321'\npalette = {palette:?}\n"
     );
-    let cases: [Case<'_>; 13] = [
+    let cases: [Case<'_>; 14] = [
         (
             "[font]\nfamily = 'Monospace'\nsize = 18\nweight = 600\nhinting = 'normal'\n",
             Ok(|config| {
@@ -54,8 +60,15 @@ fn load_configuration() {
             }),
         ),
         (
-            "include = ['shared.toml']\n[window]\npadding-x = 0\nbackground-opacity = 0.5\n",
-            Ok(|config| assert_window(&config)),
+            "include = ['shared.toml']\n[window]\npadding-x = 0\n",
+            Ok(|config| {
+                assert_eq!(config.window.padding(), [0, 9]);
+                assert!(Config::default().changes(&config).padding);
+            }),
+        ),
+        (
+            "[window]\nbackground-opacity = 0.5\nbackground-blur = true\n",
+            Ok(|config| assert_background(&config)),
         ),
         (
             "[font]\nhinting = 'strong'\n",
@@ -110,10 +123,8 @@ fn assert_font(font: Font, family: &str, px: f32, weight: u16, hinting: Hinting)
     assert_eq!(font.into_family(), family);
 }
 
-fn assert_window(config: &Config) {
-    let changes = Config::default().changes(config);
-    assert!(changes.padding && changes.background);
-    assert_eq!(config.window.padding(), [0, 9]);
+fn assert_background(config: &Config) {
+    assert!(Config::default().changes(config).background);
     assert!(config.window.background_blur());
     assert_eq!(
         config.window.background_opacity().to_bits(),

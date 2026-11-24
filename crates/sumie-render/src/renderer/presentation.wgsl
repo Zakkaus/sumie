@@ -28,7 +28,10 @@ fn straight(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
 @fragment
 fn premultiplied(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
     let color = textureLoad(scene, vec2<i32>(pixel.xy), 0);
-    if color.a == 0.0 || color.a == 1.0 {
+    if color.a == 0.0 {
+        return vec4<f32>(0.0);
+    }
+    if color.a == 1.0 {
         return color;
     }
     // The compositor expects its stored sRGB channels multiplied by alpha. The render attachment

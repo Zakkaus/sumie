@@ -140,21 +140,9 @@ mod tests {
         const DEFAULT: Rgba = [64, 128, 192, 128];
         const EXPLICIT: Rgba = [0, 255, 0, 255];
 
-        let instance = wgpu::Instance::new(crate::instance_descriptor(
-            wgpu::InstanceDescriptor::new_without_display_handle(),
-            crate::backends(),
-        ));
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()));
-        let Ok(adapter) = adapter else {
-            assert_ne!(std::env::var("SUMIE_REQUIRE_GPU").as_deref(), Ok("1"));
+        let Some((device, queue)) = test_device() else {
             return;
         };
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
-            ..Default::default()
-        }))
-        .unwrap();
         let mut renderer = Renderer::new(&device, &queue);
         let target = renderer.create_offscreen([4, 1]);
         let pane = PaneDraw {
@@ -215,6 +203,38 @@ mod tests {
                 );
             }
         }
+        // At this coverage, sRGB8 retains nonzero white ink but the alpha channel rounds to zero.
+        renderer.set_surface_alpha(Some(PreMultiplied));
+        renderer.draw_view(
+            &pane.draw,
+            &target.view,
+            [4, 1],
+            wgpu::Color {
+                a: 0.001,
+                ..wgpu::Color::WHITE
+            },
+        );
+        assert_eq!(read_row(&device, &queue, target.texture())[12..], [0; 4]);
+    }
+
+    fn test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(crate::instance_descriptor(
+            wgpu::InstanceDescriptor::new_without_display_handle(),
+            crate::backends(),
+        ));
+        let adapter =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()));
+        let Ok(adapter) = adapter else {
+            assert_ne!(std::env::var("SUMIE_REQUIRE_GPU").as_deref(), Ok("1"));
+            return None;
+        };
+        Some(
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                ..Default::default()
+            }))
+            .unwrap(),
+        )
     }
 
     fn read_row(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> [u8; 16] {

@@ -13,6 +13,7 @@ use super::{Platform, State};
 pub(super) struct BackgroundEffects {
     transparent: bool,
     blur: bool,
+    commit_needed: bool,
     opaque_region: Option<(u32, u32)>,
     ext: BackgroundEffectState,
     ext_surface: Option<(ExtBackgroundEffectSurfaceV1, (u32, u32))>,
@@ -28,6 +29,12 @@ impl Platform {
         effects.transparent = transparent;
         effects.blur = blur;
         changed
+    }
+
+    /// Whether a compositor capability change needs a commit of the current frame.
+    #[must_use]
+    pub fn background_commit_needed(&self) -> bool {
+        self.state.background_effects.commit_needed
     }
 }
 
@@ -48,6 +55,7 @@ impl BackgroundEffects {
         Self {
             transparent: false,
             blur: false,
+            commit_needed: false,
             opaque_region: None,
             ext: BackgroundEffectState::new(globals, qh),
             ext_surface: None,
@@ -58,6 +66,10 @@ impl BackgroundEffects {
         self.ext
             .capabilities()
             .is_some_and(|flags| flags.contains(Capability::Blur))
+    }
+
+    fn blur_enabled(&self) -> bool {
+        self.transparent && self.blur && self.supports_blur()
     }
 
     fn apply(
@@ -74,11 +86,12 @@ impl BackgroundEffects {
             self.opaque_region = opaque;
         }
 
-        if self.transparent && self.blur && self.supports_blur() {
+        if self.blur_enabled() {
             self.apply_blur(surface, logical, compositor, qh);
         } else if let Some((effect, _)) = self.ext_surface.take() {
             effect.destroy();
         }
+        self.commit_needed = false;
     }
 
     fn apply_blur(
@@ -134,6 +147,7 @@ impl BackgroundEffectHandler for State {
     }
 
     fn update_capabilities(&mut self) {
-        // Read the new capabilities when staging the next buffer, not in a separate commit.
+        let effects = &mut self.background_effects;
+        effects.commit_needed = effects.blur_enabled() != effects.ext_surface.is_some();
     }
 }

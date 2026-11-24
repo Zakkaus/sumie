@@ -207,14 +207,7 @@ impl View {
         self.invalidate_paint();
     }
 
-    /// Apply validated window opacity on the next composition; return whether alpha changed.
-    pub(crate) fn set_background_opacity(&mut self, opacity: f32) -> bool {
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "validated opacity in 0..=1, rounded to an RGBA8 channel"
-        )]
-        let alpha = (opacity * 255.0).round() as u8;
+    pub(crate) fn set_background_alpha(&mut self, alpha: u8) -> bool {
         if alpha == self.background_alpha {
             return false;
         }

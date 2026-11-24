@@ -248,9 +248,9 @@ impl App {
                 session.view.set_selection_colors(&next.colors);
             }
             if changes.background {
-                let (opacity, effects_changed) =
+                let (alpha, effects_changed) =
                     self.gpu.as_mut().unwrap().set_background(&next.window);
-                let opacity_changed = session.view.set_background_opacity(opacity);
+                let opacity_changed = session.view.set_background_alpha(alpha);
                 session.active_mut().frame_dirty |= opacity_changed || effects_changed;
             }
             session.active_mut().frame_dirty |= changes.selection_colors
@@ -314,8 +314,8 @@ impl App {
                         gpu.image_dimension_limit(),
                         &self.config,
                     )?;
-                    let (opacity, _) = gpu.set_background(&self.config.window);
-                    session.view.set_background_opacity(opacity);
+                    let (alpha, _) = gpu.set_background(&self.config.window);
+                    session.view.set_background_alpha(alpha);
                     self.session = Some(session);
                 }
                 self.gpu.as_mut().unwrap().resize(device);
@@ -538,7 +538,11 @@ impl Session {
                 .panes
                 .iter()
                 .any(|&(id, _)| tab.get(id).frame_dirty);
-        if !dirty && self.cursor_hidden == cursor_hidden && !self.view.thumbnail_hover_dirty() {
+        if !dirty
+            && self.cursor_hidden == cursor_hidden
+            && !self.view.thumbnail_hover_dirty()
+            && !gpu.background_commit_needed()
+        {
             return Ok(false);
         }
         if dirty {

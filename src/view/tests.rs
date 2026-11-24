@@ -80,8 +80,16 @@ fn background_opacity_respects_vt_colors_and_opaque_overlays() {
     let mut focus = focus(1, true);
     focus.dirty = false;
 
-    for (opacity, alpha, changed) in [(1.0, 255, false), (0.5, 128, true), (1.0, 255, true)] {
-        assert_eq!(view.set_background_opacity(opacity), changed);
+    for (opacity, alpha, changed) in [
+        (1.0, 255, false),
+        (0.999, 255, false),
+        (0.5, 128, true),
+        (1.0, 255, true),
+    ] {
+        assert_eq!(
+            view.set_background_alpha(crate::gpu::background_alpha(opacity)),
+            changed
+        );
         view.begin_frame([], snapshot.background);
         view.build_pane(
             rect,

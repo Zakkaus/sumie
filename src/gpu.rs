@@ -8,6 +8,17 @@ use sumie_wayland::{CursorIcon, CursorRect, Event, Platform, SourceHandle};
 
 use crate::{Result, capture::Readback, frame_window::FrameWindow};
 
+pub(crate) fn background_alpha(opacity: f32) -> u8 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "validated opacity in 0..=1, rounded to an RGBA8 channel"
+    )]
+    {
+        (opacity * 255.0).round() as u8
+    }
+}
+
 impl FrameWindow for Platform {
     type Context = str;
 
@@ -159,13 +170,17 @@ impl Gpu {
         self.target.set_minimum_contrast(ratio);
     }
 
-    pub(crate) fn set_background(&mut self, settings: &sumie_config::Window) -> (f32, bool) {
-        let opacity = settings.background_opacity();
-        let transparent = self.target.set_transparent(opacity < 1.0);
+    pub(crate) fn set_background(&mut self, settings: &sumie_config::Window) -> (u8, bool) {
+        let alpha = background_alpha(settings.background_opacity());
+        let transparent = self.target.set_transparent(alpha != u8::MAX);
         let changed = self
             .window
             .set_background_effects(transparent, transparent && settings.background_blur());
-        (if transparent { opacity } else { 1.0 }, changed)
+        (if transparent { alpha } else { u8::MAX }, changed)
+    }
+
+    pub(crate) fn background_commit_needed(&self) -> bool {
+        self.window.background_commit_needed()
     }
 
     pub(crate) const fn present_count(&self) -> u64 {
