@@ -84,6 +84,9 @@ def main():
                        active=mix(mix(surface, tint, 0.035), palette["accent"], 0.05),
                        hover=mix(surface, tint, 0.04),
                        close_hover=[*tint, round(255 * 0.12)])
+        palette["affordance"] = (
+            rgba(tokens["--color-icon-secondary"][0]) if mode == "LIGHT" else palette["muted"]
+        )
         lines += ["", f"pub(super) const {mode}: Palette = Palette {{"]
         for field, value in palette.items():
             lines.append(f"    {field}: {value},")

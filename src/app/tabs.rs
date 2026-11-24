@@ -1,3 +1,5 @@
+mod activity;
+
 use std::ops::ControlFlow::{self, Break, Continue};
 use std::path::Path;
 use std::time::Instant;
@@ -137,6 +139,7 @@ impl PaneHost {
             snapshot: None,
             snapshot_dirty: true,
             frame_dirty: true,
+            activity_after: None,
             hover: super::links::Hover::default(),
         })
     }
@@ -168,6 +171,7 @@ impl PaneState {
             px: [size.width_px, size.height_px],
             cell_px: view.cell,
         })?;
+        self.activity_after = Some(Instant::now() + activity::RESIZE_QUIET);
         if let Some(bar) = &mut self.search {
             bar.resized();
         }
@@ -203,6 +207,7 @@ impl PaneState {
         gpu: &mut Gpu,
         active: bool,
         host: &[u8],
+        watch_at: Option<Instant>,
         labels_changed: &mut bool,
     ) -> Result<(bool, bool)> {
         let sources = &mut self.sources;
@@ -213,12 +218,14 @@ impl PaneState {
                 return Ok((true, false));
             }
         }
-        let mut output = false;
+        let mut activity = false;
         if ready.output() {
+            let batch =
+                activity::Batch::begin(&mut self.pane.terminal, watch_at, self.activity_after)?;
             let (dirty, eof) = self.pane.drain_output()?;
-            output = dirty;
             self.snapshot_dirty |= dirty;
             if dirty {
+                activity = batch.changed(&mut self.pane.terminal)?;
                 sources.reset_blink();
             }
             if dirty && let Some(bar) = &mut self.search {
@@ -248,7 +255,7 @@ impl PaneState {
                 sources.remove_output();
             }
         }
-        Ok((ready.input() && !self.pane.pty.flush_input()?, output))
+        Ok((ready.input() && !self.pane.pty.flush_input()?, activity))
     }
 }
 
@@ -485,10 +492,16 @@ impl Session {
             let focused = tab.tree.focused();
             for pane in &mut tab.panes {
                 let mut changed = false;
-                let (pane_exited, output) =
-                    pane.service(gpu, pane.id == active, self.host.as_bytes(), &mut changed)?;
+                let watch_at = (index != active_index && !tab.activity).then_some(now);
+                let (pane_exited, activity) = pane.service(
+                    gpu,
+                    pane.id == active,
+                    self.host.as_bytes(),
+                    watch_at,
+                    &mut changed,
+                )?;
                 pane.exited |= pane_exited;
-                if output && index != active_index && !tab.activity {
+                if activity {
                     tab.activity = true;
                     activity_changed = true;
                 }

@@ -20,6 +20,7 @@ pub(super) fn assert_tab_bar(renderer: &mut Renderer, device: &wgpu::Device, que
     for (count, light, hover) in [
         (1, false, None),
         (2, false, None),
+        (2, true, None),
         (2, false, Some(TabHit::Close(0))),
         (2, true, Some(TabHit::New)),
         (1, true, None),
@@ -91,20 +92,7 @@ fn assert_chrome(
     palette: Palette,
     hover: Option<TabHit>,
 ) {
-    // At 1.25× the fixed 45px plus leaves 275px, split at x = 137.
-    let accent = pixel(137, top - 2);
-    assert_eq!(pixel(136, top - 2), palette.surface);
-    assert_ne!(accent, palette.surface, "selected rail");
-    assert_eq!(pixel(274, top - 2), accent, "full-width selected rail");
-    assert_ne!(accent, pixel(137, top - 1), "rule below selected rail");
-    assert!(
-        (25..48).any(|x| pixel(x, 20) == accent),
-        "inactive activity dot"
-    );
-    assert!(
-        !(165..192).any(|x| pixel(x, 20) == accent),
-        "active tab has no dot"
-    );
+    assert_indicators(&pixel, top, palette.surface);
 
     let ink = |xs: Range<u32>, background| {
         (10..30).any(|y| xs.clone().any(|x| pixel(x, y) != background))
@@ -112,8 +100,11 @@ fn assert_chrome(
     let inactive = pixel(5, 20);
     let active = pixel(140, 20);
     let plus = pixel(280, 20);
+    assert!(contrast(pixel(250, 14), active) >= 3.0, "active close");
+    assert!(contrast(pixel(297, 19), plus) >= 3.0, "new tab");
     assert_eq!(inactive != palette.surface, hover == Some(TabHit::Close(0)));
     assert_ne!(active, palette.surface, "raised tab fill");
+    assert_eq!(pixel(137, top - 5), active, "fill meets the selected rail");
     assert_eq!(plus != palette.surface, hover == Some(TabHit::New));
     assert!(
         ink(15..25, inactive) && ink(49..102, inactive),
@@ -127,4 +118,37 @@ fn assert_chrome(
     );
     assert!(ink(247..265, active), "selected close ink");
     assert!(ink(289..305, plus), "plus ink");
+}
+
+fn assert_indicators(pixel: &impl Fn(u32, u32) -> Rgba, top: u32, surface: Rgba) {
+    // At 1.25× the fixed 45px plus leaves 275px, split at x = 137.
+    let accent = pixel(137, top - 2);
+    assert_eq!(pixel(136, top - 2), surface);
+    assert_ne!(accent, surface, "selected rail");
+    assert_eq!(pixel(274, top - 2), accent, "full-width selected rail");
+    assert_ne!(accent, pixel(137, top - 1), "rule below selected rail");
+    assert!(
+        (25..48).any(|x| pixel(x, 20) == accent),
+        "inactive activity dot"
+    );
+    assert!(
+        !(165..192).any(|x| pixel(x, 20) == accent),
+        "active tab has no dot"
+    );
+}
+
+fn contrast(a: Rgba, b: Rgba) -> f64 {
+    let luminance = |[r, g, b, _]: Rgba| {
+        let [r, g, b] = [r, g, b].map(|channel| {
+            let srgb = f64::from(channel) / 255.0;
+            if srgb <= 0.04045 {
+                srgb / 12.92
+            } else {
+                ((srgb + 0.055) / 1.055).powf(2.4)
+            }
+        });
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+    };
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }

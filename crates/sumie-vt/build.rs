@@ -12,6 +12,7 @@ fn main() {
     println!("cargo::rerun-if-changed=src/search/grid.zig");
     println!("cargo::rerun-if-changed=src/selection.zig");
     println!("cargo::rerun-if-changed=src/image_file.zig");
+    println!("cargo::rerun-if-changed=src/screen.zig");
     for var in [
         "ZIG",
         "PATH",
@@ -33,6 +34,7 @@ fn main() {
     resolve_cursor_default_at_snapshot(&source);
     install_search_bridge(&source);
     install_selection_bridge(&source);
+    install_screen_bridge(&source);
     install_graphics_policy(&source);
     install_thumbnail_policy(&source);
     expose_thumbnail_flag(&source.join("src/terminal"));
@@ -132,6 +134,16 @@ fn install_selection_bridge(source: &Path) {
         }
     }
 "#,
+    );
+}
+
+fn install_screen_bridge(source: &Path) {
+    let bridge = source.join("src/sumie_screen.zig");
+    fs::write(bridge, include_str!("src/screen.zig")).expect("write Zig screen bridge");
+    insert_once(
+        &source.join("src/lib_vt.zig"),
+        "comptime { @import(\"sumie_selection.zig\").install(); }\n",
+        "comptime { @import(\"sumie_screen.zig\").install(); }\n",
     );
 }
 

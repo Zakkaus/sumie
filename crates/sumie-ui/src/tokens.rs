@@ -37,6 +37,7 @@ pub(super) const LIGHT: Palette = Palette {
     active: [221, 228, 237, 255],
     hover: [231, 234, 237, 255],
     close_hover: [0, 0, 0, 31],
+    affordance: [78, 96, 111, 255],
 };
 
 pub(super) const DARK: Palette = Palette {
@@ -53,4 +54,5 @@ pub(super) const DARK: Palette = Palette {
     active: [24, 29, 36, 255],
     hover: [27, 27, 27, 255],
     close_hover: [255, 255, 255, 31],
+    affordance: [104, 107, 111, 255],
 };

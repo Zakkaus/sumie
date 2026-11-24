@@ -108,6 +108,7 @@ struct PaneState {
     snapshot: Option<Snapshot>,
     snapshot_dirty: bool,
     frame_dirty: bool,
+    activity_after: Option<Instant>,
     hover: links::Hover,
 }
 
@@ -278,6 +279,7 @@ impl App {
                         session.active_mut().frame_dirty = true;
                         if !activated {
                             session.link_pointer.clear_link();
+                            session.view.set_tab_hover(None);
                         }
                     }
                 }

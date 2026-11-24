@@ -13,6 +13,7 @@ pub struct Palette {
     pub selected: Rgba,
     pub muted: Rgba,
     pub active_number: Rgba,
+    pub(crate) affordance: Rgba,
     pub(crate) active: Rgba,
     pub(crate) hover: Rgba,
     pub(crate) close_hover: Rgba,
@@ -302,18 +303,6 @@ impl TabLayout {
         fill(out, rect(0, rule_y, self.width, self.rule), rule);
 
         if self.slots != 0 {
-            let active = self.tab(self.active);
-            let indicator = self.px(tokens::INDICATOR).min(rule_y - self.tab_height);
-            fill(
-                out,
-                rect(
-                    active.origin[0].cast_unsigned(),
-                    rule_y - indicator,
-                    active.size[0],
-                    indicator,
-                ),
-                palette.accent,
-            );
             let hovered = match hover {
                 Some(TabHit::Tab(index) | TabHit::Close(index)) => Some(index),
                 _ => None,
@@ -321,7 +310,7 @@ impl TabLayout {
             self.paint_tab(
                 out,
                 palette,
-                active,
+                self.tab(self.active),
                 true,
                 hover == Some(TabHit::Close(self.active)),
             );
@@ -361,11 +350,18 @@ impl TabLayout {
         close_hover: bool,
     ) {
         let background = if active {
+            let rule_y = self.height - self.rule;
+            let indicator = self.px(tokens::INDICATOR).min(rule_y - self.tab_height);
+            let rail_y = rule_y - indicator;
+            let x = tab.origin[0].cast_unsigned();
+            let width = tab.size[0];
+            fill(out, rect(x, 0, width, rail_y), palette.active);
+            fill(out, rect(x, rail_y, width, indicator), palette.accent);
             palette.active
         } else {
+            fill(out, tab, palette.hover);
             palette.hover
         };
-        fill(out, tab, background);
         if let Some(close) = self.close(tab) {
             let color = if close_hover {
                 rounded(
@@ -375,6 +371,8 @@ impl TabLayout {
                     blend(background, palette.close_hover),
                 );
                 palette.selected
+            } else if active {
+                palette.affordance
             } else {
                 palette.muted
             };
@@ -413,7 +411,7 @@ impl TabLayout {
             fill(out, plus, palette.hover);
             palette.selected
         } else {
-            palette.muted
+            palette.affordance
         };
         if left != 0 {
             fill(out, rect(left, 0, self.rule.min(width), height), rule);

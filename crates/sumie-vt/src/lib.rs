@@ -56,6 +56,13 @@ pub struct Snapshot {
     pub background: Rgb,
 }
 
+/// Viewport contents for change detection, excluding cursor and terminal metadata.
+#[derive(PartialEq, Eq)]
+pub struct ScreenContents {
+    grid: u64,
+    images: Option<std::sync::Arc<Vec<Placement>>>,
+}
+
 struct Colors {
     foreground: Rgb,
     background: Rgb,
@@ -174,6 +181,25 @@ impl Terminal {
     pub fn write(&mut self, bytes: &[u8]) {
         // SAFETY: The terminal is live and exclusive. Ghostty reads the slice during the call.
         unsafe { ffi::ghostty_terminal_vt_write(self.raw, bytes.as_ptr(), bytes.len()) };
+    }
+
+    /// Fingerprint the cells in place and share any visible image placements.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot update or read visible image placements.
+    pub fn screen_contents(&mut self) -> Result<ScreenContents, Error> {
+        let mut has_placements = false;
+        // SAFETY: The terminal is live and exclusive; the bridge only reads its grid.
+        let grid = unsafe { ffi::sumie_screen_stamp(self.raw, &raw mut has_placements) };
+        let images = if has_placements {
+            // SAFETY: Both handles are live and exclusively borrowed.
+            check(unsafe { ffi::ghostty_render_state_update(self.render, self.raw) })?;
+            let images = self.snapshot_images()?;
+            (!images.is_empty()).then_some(images)
+        } else {
+            None
+        };
+        Ok(ScreenContents { grid, images })
     }
 
     /// Consume protocol replies after writes or resizes, on the terminal owner thread.
