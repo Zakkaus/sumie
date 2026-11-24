@@ -11,6 +11,9 @@ sumie-core = { path = "../sumie-core" }
 thiserror.workspace = true
 wgpu.workspace = true
 
+[dev-dependencies]
+pollster.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 wgpu = { workspace = true, features = ["vulkan", "gles"] }
 

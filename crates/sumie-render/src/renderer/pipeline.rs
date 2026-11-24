@@ -104,16 +104,116 @@ fn bindings(
     })
 }
 
+pub(super) struct AlphaPipelines {
+    pub(super) replace: wgpu::RenderPipeline,
+    pub(super) tint: wgpu::RenderPipeline,
+}
+
+impl AlphaPipelines {
+    pub(super) fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        grid: &wgpu::RenderPipeline,
+    ) -> Self {
+        let module = shader(device);
+        let layout = pipeline_layout(device, &grid.get_bind_group_layout(0));
+        // A tint changes straight RGB without increasing the existing opacity.
+        let tint = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::DstAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent::REPLACE,
+        };
+        Self {
+            replace: create_pipeline(
+                device,
+                format,
+                &module,
+                &layout,
+                None,
+                wgpu::ColorWrites::ALL,
+            ),
+            tint: create_pipeline(
+                device,
+                format,
+                &module,
+                &layout,
+                Some(tint),
+                wgpu::ColorWrites::COLOR,
+            ),
+        }
+    }
+}
+
 pub(super) fn pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let bindings = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sumie grid bindings layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(FRAME_SIZE),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    create_pipeline(
+        device,
+        format,
+        &shader(device),
+        &pipeline_layout(device, &bindings),
+        Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        wgpu::ColorWrites::ALL,
+    )
+}
+
+fn shader(device: &wgpu::Device) -> wgpu::ShaderModule {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("sumie grid shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("../grid.wgsl").into()),
-    });
+    })
+}
+
+fn pipeline_layout(
+    device: &wgpu::Device,
+    bindings: &wgpu::BindGroupLayout,
+) -> wgpu::PipelineLayout {
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("sumie grid pipeline layout"),
+        bind_group_layouts: &[Some(bindings)],
+        immediate_size: 0,
+    })
+}
+
+fn create_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    blend: Option<wgpu::BlendState>,
+    write_mask: wgpu::ColorWrites,
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sumie grid pipeline"),
-        layout: None,
+        layout: Some(layout),
         vertex: wgpu::VertexState {
-            module: &module,
+            module,
             entry_point: Some("vertex"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             buffers: &[Some(wgpu::VertexBufferLayout {
@@ -129,13 +229,13 @@ pub(super) fn pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wg
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
-            module: &module,
+            module,
             entry_point: Some("fragment"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
-                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
+                blend,
+                write_mask,
             })],
         }),
         multiview_mask: None,

@@ -9,6 +9,7 @@ mod images;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[cfg_attr(target_os = "macos", path = "watch_macos.rs")]
 mod watch;
+mod window;
 
 pub use changes::Changes;
 pub use cursor::{Cursor, CursorStyle};
@@ -17,6 +18,7 @@ pub use images::Images;
 pub use watch::Watch;
 #[cfg(target_os = "macos")]
 pub use watch::WatchEvent;
+pub use window::Window;
 
 use std::{
     borrow::Cow,
@@ -56,7 +58,7 @@ pub struct Config {
     pub images: Images,
     /// Interactive login shell settings.
     pub shell: Shell,
-    /// Padding around each terminal pane.
+    /// Pane padding and window background settings.
     pub window: Window,
     /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
     #[serde(deserialize_with = "deserialize_contrast")]
@@ -97,41 +99,6 @@ impl Config {
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
         self.scrollback_limit = file.scrollback_limit.or(self.scrollback_limit);
     }
-}
-
-/// Padding in logical pixels on each side of a pane.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
-pub struct Window {
-    /// Left and right padding. Set to 0 to remove it.
-    #[schemars(with = "u16", default = "default_padding_x")]
-    padding_x: Option<u16>,
-    /// Top and bottom padding. Set to 0 to remove it.
-    #[schemars(with = "u16", default = "default_padding_y")]
-    padding_y: Option<u16>,
-}
-
-impl Window {
-    #[must_use]
-    pub fn padding(&self) -> [u16; 2] {
-        [
-            self.padding_x.unwrap_or_else(default_padding_x),
-            self.padding_y.unwrap_or_else(default_padding_y),
-        ]
-    }
-
-    fn overlay(&mut self, file: &Self) {
-        self.padding_x = file.padding_x.or(self.padding_x);
-        self.padding_y = file.padding_y.or(self.padding_y);
-    }
-}
-
-const fn default_padding_x() -> u16 {
-    8
-}
-
-const fn default_padding_y() -> u16 {
-    6
 }
 
 const fn default_contrast() -> f64 {

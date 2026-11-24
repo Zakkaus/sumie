@@ -1866,6 +1866,7 @@ name = "sumie-render"
 version = "0.0.0"
 dependencies = [
  "bytemuck",
+ "pollster",
  "sumie-core",
  "thiserror 2.0.21",
  "wgpu",

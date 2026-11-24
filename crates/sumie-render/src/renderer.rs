@@ -11,8 +11,10 @@ use crate::{
 
 mod panes;
 mod pipeline;
+mod presentation;
 
-use pipeline::{BoundAtlas, frame_buffer, pipeline};
+use pipeline::{AlphaPipelines, BoundAtlas, frame_buffer, pipeline};
+use presentation::Presentation;
 
 const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const FRAME_SIZE: u64 = size_of::<Frame>() as u64;
@@ -25,7 +27,7 @@ const INITIAL_INSTANCES: u32 = 256;
 struct Frame {
     size: [u32; 2],
     minimum_contrast: f32,
-    padding: u32,
+    nominal_background: u32,
 }
 
 struct LayeredFrame {
@@ -38,6 +40,7 @@ struct PaneBatch {
     rect: Rect,
     base: Option<Fill>,
     backdrop: Option<Fill>,
+    backgrounds: u32,
     start: u32,
     count: u32,
     candidates: Option<Candidates>,
@@ -51,6 +54,7 @@ struct Batches {
     chrome: u32,
     images: u32,
     exclusions: u32,
+    translucent: bool,
 }
 
 impl Batches {
@@ -83,6 +87,9 @@ pub struct Renderer {
     frame_limit: u32,
     minimum_contrast: f32,
     pipeline: wgpu::RenderPipeline,
+    alpha_pipelines: Option<AlphaPipelines>,
+    presentation: Option<Presentation>,
+    format: wgpu::TextureFormat,
     staging: StagingBelt,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
@@ -116,6 +123,9 @@ impl Renderer {
             frame_limit,
             minimum_contrast: 1.1,
             pipeline,
+            alpha_pipelines: None,
+            presentation: None,
+            format,
             device: device.clone(),
             queue: queue.clone(),
         }
@@ -125,6 +135,10 @@ impl Renderer {
     /// Defaults to `1.1`; `1.0` disables correction.
     pub fn set_minimum_contrast(&mut self, minimum_contrast: f32) {
         self.minimum_contrast = minimum_contrast;
+    }
+
+    pub(crate) fn set_surface_alpha(&mut self, mode: Option<wgpu::CompositeAlphaMode>) {
+        self.presentation = mode.map(|mode| Presentation::new(&self.device, self.format, mode));
     }
 
     /// Create an offscreen target of the given nonzero device-pixel size.
@@ -199,8 +213,13 @@ impl Renderer {
         list: &DrawList<'_>,
         view: &wgpu::TextureView,
         size: [u32; 2],
-        clear: wgpu::Color,
+        mut clear: wgpu::Color,
     ) {
+        if self.presentation.is_some() {
+            clear.r *= clear.a;
+            clear.g *= clear.a;
+            clear.b *= clear.a;
+        }
         let frame = FrameDraw {
             background: [0; 4],
             panes: std::iter::once(PaneDraw {
@@ -230,6 +249,16 @@ impl Renderer {
             });
         let full = full_rect(size);
         let batches = self.prepare(frame, full, draw_bases);
+        if batches.translucent && self.alpha_pipelines.is_none() {
+            self.alpha_pipelines = Some(AlphaPipelines::new(
+                &self.device,
+                self.format,
+                &self.pipeline,
+            ));
+        }
+        if let Some(presentation) = &mut self.presentation {
+            presentation.resize(&self.device, size);
+        }
         if batches.image_offset() > FRAME_SIZE {
             self.stage_instances(&mut encoder, frame, size, &batches);
         }
@@ -251,7 +280,7 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sumie grid"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
+                    view: self.presentation.as_ref().map_or(view, Presentation::view),
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -263,17 +292,24 @@ impl Renderer {
             });
             self.draw_pass(&mut pass, &batches, full);
         }
+        if let Some(presentation) = &self.presentation {
+            presentation.encode(&mut encoder, view);
+        }
         self.staging.finish_and_recall_on_submit(&encoder);
         self.queue.submit([encoder.finish()]);
     }
 
-    fn bind_grid(&self, pass: &mut wgpu::RenderPass<'_>) {
-        pass.set_pipeline(&self.pipeline);
+    fn bind_grid(&self, pass: &mut wgpu::RenderPass<'_>, pipeline: &wgpu::RenderPipeline) {
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.grid_atlas.bindings, &[]);
         pass.set_vertex_buffer(0, self.frame.slice(FRAME_SIZE..));
     }
 
     fn draw_pass(&self, pass: &mut wgpu::RenderPass<'_>, batches: &Batches, full: Rect) {
+        let alpha = self
+            .alpha_pipelines
+            .as_ref()
+            .filter(|_| batches.translucent);
         let mut last = full;
         let mut bound = false;
         for pane in &self.panes {
@@ -286,14 +322,10 @@ impl Renderer {
                 last = scissor;
             }
             if let Some(layers) = &pane.layered {
-                self.draw_layered(pass, pane, layers, batches.image_offset());
+                self.draw_layered(pass, pane, layers, batches.image_offset(), alpha);
                 bound = false;
             } else {
-                if !bound {
-                    self.bind_grid(pass);
-                    bound = true;
-                }
-                pass.draw(0..4, pane.start..pane.start + pane.count);
+                bound = self.draw_grid_pane(pass, pane, alpha, bound);
             }
         }
         if batches.fills == 0 && batches.chrome == 0 {
@@ -302,14 +334,23 @@ impl Renderer {
         if last != full {
             pass.set_scissor_rect(full.x, full.y, full.width, full.height);
         }
-        self.draw_overlays(pass, batches, bound);
+        self.draw_overlays(pass, batches, alpha, bound);
     }
 
-    fn draw_overlays(&self, pass: &mut wgpu::RenderPass<'_>, batches: &Batches, mut bound: bool) {
+    fn draw_overlays(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        batches: &Batches,
+        alpha: Option<&AlphaPipelines>,
+        mut bound: bool,
+    ) {
         let chrome_start = batches.grid + batches.fills;
         if batches.fills != 0 {
-            if !bound {
-                self.bind_grid(pass);
+            if let Some(alpha) = alpha {
+                self.bind_grid(pass, &alpha.tint);
+                bound = false;
+            } else if !bound {
+                self.bind_grid(pass, &self.pipeline);
                 bound = true;
             }
             pass.draw(0..4, batches.grid..chrome_start);
@@ -335,6 +376,7 @@ impl Renderer {
             fills: u32::try_from(frame.fills.len()).expect("too many fills"),
             chrome: self.prepare_chrome(frame.chrome.as_ref()),
             exclusions: 1,
+            translucent: self.presentation.is_some() || (draw_bases && frame.background[3] != 255),
             ..Batches::default()
         };
         self.panes.clear();
@@ -347,21 +389,21 @@ impl Renderer {
                 rect,
                 base: None,
                 backdrop: None,
+                backgrounds: 0,
                 start: batches.grid,
                 count: 0,
                 candidates: None,
                 layered: None,
             };
             if rect.width != 0 && rect.height != 0 {
-                let [r, g, b, _] = pane.draw.default_background;
-                let color = [r, g, b, 255];
-                if draw_bases && color != frame.background {
-                    batch.base = Some(Fill {
-                        rect: pixel_rect(rect),
-                        color,
-                    });
+                if draw_bases {
+                    batch.set_base(&pane, frame.background, batches.translucent);
                 }
                 batch.count = pane.draw.grid_instances() + u32::from(batch.base.is_some());
+                if batches.translucent {
+                    batch.backgrounds = u32::from(batch.base.is_some())
+                        + u32::try_from(pane.draw.backgrounds.len()).expect("too many cells");
+                }
                 let open = pane.viewer.is_some();
                 if !pane.draw.images.is_empty() || open {
                     batch.candidates =
@@ -420,7 +462,7 @@ impl Renderer {
         header.copy_from_slice(bytemuck::bytes_of(&Frame {
             size,
             minimum_contrast: self.minimum_contrast,
-            padding: 0,
+            nominal_background: u32::from(batches.translucent),
         }));
         let stride = size_of::<Instance>();
         for (pane, batch) in frame.panes.clone().zip(&self.panes) {
@@ -440,7 +482,12 @@ impl Renderer {
                 bytes = rest;
             }
             if let Some(layers) = &batch.layered {
-                pane.draw.write_layered(bytes, &layers.grid);
+                pane.draw.write_layered(
+                    bytes,
+                    &layers.grid,
+                    batches.translucent,
+                    batch.backdrop.is_some(),
+                );
             } else {
                 pane.draw.write_instances(bytes);
             }

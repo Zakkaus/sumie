@@ -39,7 +39,8 @@ pub struct Cell {
     pub wide_wrap_spacer: bool,
     pub foreground: Rgb,
     pub background: Rgb,
-    /// Whether the cell uses the terminal background without a cell-level reverse or override.
+    /// Whether the cell uses the effective terminal background, including screen-wide reverse video.
+    /// An explicit background or cell-level reverse video does not qualify, even at the same RGB.
     pub default_background: bool,
     pub style: CellStyle,
 }

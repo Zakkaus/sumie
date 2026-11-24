@@ -1,7 +1,7 @@
 struct Frame {
     size: vec2<u32>,
     minimum_contrast: f32,
-    padding: u32,
+    nominal_background: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -65,7 +65,9 @@ fn vertex(
     out.glyph = u32(atlas_origin.x != 0xffffffffu);
     var fg = linear_rgb(color.rgb);
     if out.glyph != 0u {
-        let bg_luma = dot(linear_rgb(background.rgb) * background.a, LUMINANCE);
+        // The desktop color is unknown; use the terminal's nominal RGB for translucent cells.
+        let bg_alpha = select(background.a, 1.0, frame.nominal_background != 0u);
+        let bg_luma = dot(linear_rgb(background.rgb) * bg_alpha, LUMINANCE);
         let fg_luma = dot(fg, LUMINANCE);
         var adjusted_luma = fg_luma;
         if frame.minimum_contrast > 1.0 && (atlas_origin.x & CURSOR_GLYPH) == 0u {

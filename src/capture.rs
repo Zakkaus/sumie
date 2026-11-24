@@ -51,6 +51,7 @@ pub(crate) struct Readback {
     extent: wgpu::Extent3d,
     stride: u32,
     bgra: bool,
+    premultiplied: bool,
 }
 
 impl Readback {
@@ -58,6 +59,7 @@ impl Readback {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &wgpu::Texture,
+        premultiplied: bool,
     ) -> Result<Self> {
         let format = frame.format();
         let bgra = match format {
@@ -109,6 +111,7 @@ impl Readback {
             extent,
             stride,
             bgra,
+            premultiplied,
         })
     }
 
@@ -120,6 +123,7 @@ impl Readback {
             extent,
             stride,
             bgra,
+            premultiplied,
         } = self;
         device.poll(wgpu::PollType::Wait {
             submission_index: Some(submission),
@@ -137,19 +141,31 @@ impl Readback {
         encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
         let mut writer = encoder.write_header()?;
         let mut stream = writer.stream_writer()?;
-        let mut rgba = vec![0; if bgra { row_bytes } else { 0 }];
+        let convert = bgra || premultiplied;
+        let mut rgba = vec![0; if convert { row_bytes } else { 0 }];
         for row in pixels
             .chunks_exact(stride as usize)
             .map(|row| &row[..row_bytes])
         {
-            if bgra {
-                for (dst, &[b, g, r, a]) in rgba
+            if convert {
+                for (dst, &src) in rgba
                     .as_chunks_mut::<4>()
                     .0
                     .iter_mut()
                     .zip(row.as_chunks::<4>().0)
                 {
-                    *dst = [r, g, b, a];
+                    *dst = src;
+                    if bgra {
+                        dst.swap(0, 2);
+                    }
+                    let alpha = u16::from(dst[3]);
+                    if premultiplied && (1..255).contains(&alpha) {
+                        for channel in &mut dst[..3] {
+                            *channel =
+                                u8::try_from((u16::from(*channel) * 255 + alpha / 2) / alpha)
+                                    .unwrap_or(255);
+                        }
+                    }
                 }
                 stream.write_all(&rgba)?;
             } else {

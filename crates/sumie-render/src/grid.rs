@@ -113,7 +113,7 @@ pub struct DrawList<'a> {
     pub origin: [i32; 2],
     /// One background per cell, in row-major order.
     pub backgrounds: &'a [Rgba],
-    /// Terminal default color; its RGB is used as the opaque base for below-background images.
+    /// Terminal default color for pane padding and below-background images.
     pub default_background: Rgba,
     /// One flag per row-major cell. `true` lets below-background images show through;
     /// an empty slice means no holes.
@@ -162,9 +162,11 @@ pub struct PaneDraw<'a> {
 
 /// A window's terminal grids and overlays. Panes must be disjoint and the iterator repeatable.
 pub struct FrameDraw<'a, P> {
+    /// Color outside pane rectangles. On translucent frames its alpha also applies to the gutters.
     pub background: Rgba,
     pub panes: P,
-    /// Divider and dim fills, composited in order after the panes and before the chrome.
+    /// Divider and dim tints, drawn after panes and before chrome. A translucent frame preserves
+    /// the alpha already present under each tint.
     pub fills: &'a [Fill],
     pub chrome: Option<ChromeLayer<'a>>,
 }
@@ -295,19 +297,29 @@ impl DrawList<'_> {
         }
     }
 
-    pub(crate) fn write_layered(&self, bytes: wgpu::WriteOnly<'_, [u8]>, layers: &GridLayers) {
+    pub(crate) fn write_layered(
+        &self,
+        bytes: wgpu::WriteOnly<'_, [u8]>,
+        layers: &GridLayers,
+        translucent: bool,
+        viewer: bool,
+    ) {
+        let opaque_pane = translucent && viewer;
         let stride = size_of::<Instance>();
         let (text, cursor) = bytes.split_at(layers.text as usize * stride);
         let mut write = instance_writer(text);
         let mut write_cursor = instance_writer(cursor);
         if let Some(base) = layers.base {
-            let [r, g, b, _] = self.default_background;
-            write(Instance::solid(base, [r, g, b, 255]));
+            let mut color = self.default_background;
+            if !translucent || opaque_pane {
+                color[3] = 255;
+            }
+            write(Instance::solid(base, color));
         }
         if layers.base.is_some() && !self.default_backgrounds.is_empty() {
-            self.write_backgrounds::<true>(&mut write);
+            self.write_backgrounds::<true>(&mut write, opaque_pane);
         } else {
-            self.write_backgrounds::<false>(&mut write);
+            self.write_backgrounds::<false>(&mut write, opaque_pane);
         }
         let block = self.block_cursor();
         if let Some(cursor) = self.cursor {
@@ -329,12 +341,19 @@ impl DrawList<'_> {
         }
     }
 
-    fn write_backgrounds<const SKIP_DEFAULT: bool>(&self, mut write: impl FnMut(Instance)) {
+    fn write_backgrounds<const SKIP_DEFAULT: bool>(
+        &self,
+        mut write: impl FnMut(Instance),
+        opaque_pane: bool,
+    ) {
         let columns = self.grid_size[0] as usize;
         for (row, backgrounds) in self.backgrounds.chunks(columns.max(1)).enumerate() {
-            for (col, &color) in backgrounds.iter().enumerate() {
+            for (col, mut color) in backgrounds.iter().copied().enumerate() {
                 if SKIP_DEFAULT && self.default_backgrounds[row * columns + col] {
                     continue;
+                }
+                if opaque_pane {
+                    color[3] = 255;
                 }
                 let offset = [
                     i32::try_from(col * self.cell_size[0] as usize).expect("grid too wide"),
@@ -372,7 +391,7 @@ impl DrawList<'_> {
     }
 
     fn write_grid(&self, mut write: impl FnMut(Instance)) {
-        self.write_backgrounds::<false>(&mut write);
+        self.write_backgrounds::<false>(&mut write, false);
         let block = self.block_cursor();
         if let Some(block) = &block {
             block.cursor.write(&mut write);

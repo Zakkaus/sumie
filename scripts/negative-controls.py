@@ -216,6 +216,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                        "== next.minimum_contrast().to_bits()"),
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("explicit cell backgrounds become translucent", "test", "src/view/paint.rs",
+              replace_once("if default {", "if !highlighted && !covered {"),
+              "test view::tests::background_opacity_respects_vt_colors_and_opaque_overlays ... FAILED")
         probe("idle OSC 8 underline disappears", "test", "src/view/attributes.rs",
               replace_once("style.hyperlink || hovered.is_some()", "hovered.is_some()"),
               "test view::attributes::tests::link_underline_precedence ... FAILED")

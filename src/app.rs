@@ -219,8 +219,8 @@ impl App {
             if resize_grid {
                 session.resize_grid()?;
             }
-            if changes.scrollback_limit {
-                for tab in session.all_panes_mut() {
+            for tab in session.all_panes_mut() {
+                if changes.scrollback_limit {
                     tab.pane
                         .terminal
                         .set_scrollback_bytes(next.scrollback_limit())?;
@@ -230,8 +230,6 @@ impl App {
                         tab.frame_dirty = true;
                     }
                 }
-            }
-            for tab in session.all_panes_mut() {
                 if changes.thumbnail_rows {
                     tab.pane
                         .terminal
@@ -248,6 +246,12 @@ impl App {
             }
             if changes.selection_colors {
                 session.view.set_selection_colors(&next.colors);
+            }
+            if changes.background {
+                let (opacity, effects_changed) =
+                    self.gpu.as_mut().unwrap().set_background(&next.window);
+                let opacity_changed = session.view.set_background_opacity(opacity);
+                session.active_mut().frame_dirty |= opacity_changed || effects_changed;
             }
             session.active_mut().frame_dirty |= changes.selection_colors
                 || changes.minimum_contrast
@@ -301,14 +305,18 @@ impl App {
                 if let Some(session) = &mut self.session {
                     session.resize(scale, logical, device)?;
                 } else {
-                    self.session = Some(Session::new(
+                    let gpu = self.gpu.as_mut().unwrap();
+                    let mut session = Session::new(
                         scale,
                         logical,
                         device,
                         handle.clone(),
-                        self.gpu.as_ref().unwrap().image_dimension_limit(),
+                        gpu.image_dimension_limit(),
                         &self.config,
-                    )?);
+                    )?;
+                    let (opacity, _) = gpu.set_background(&self.config.window);
+                    session.view.set_background_opacity(opacity);
+                    self.session = Some(session);
                 }
                 self.gpu.as_mut().unwrap().resize(device);
             }

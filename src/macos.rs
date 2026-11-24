@@ -196,7 +196,12 @@ impl Smoke {
             self.page.clear,
             |frame| {
                 if path.is_some() {
-                    capture = Some(capture::Readback::copy(&self.device, &self.queue, frame));
+                    capture = Some(capture::Readback::copy(
+                        &self.device,
+                        &self.queue,
+                        frame,
+                        false,
+                    ));
                 }
                 window.arm_frame_callback();
             },

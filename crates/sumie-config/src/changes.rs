@@ -15,6 +15,7 @@ pub struct Changes {
     pub scrollback_limit: bool,
     pub thumbnail_rows: bool,
     pub padding: bool,
+    pub background: bool,
 }
 
 impl Config {
@@ -45,6 +46,9 @@ impl Config {
             scrollback_limit: self.scrollback_limit() != next.scrollback_limit(),
             thumbnail_rows: self.images.thumbnail_rows() != next.images.thumbnail_rows(),
             padding: self.window.padding() != next.window.padding(),
+            background: self.window.background_opacity().to_bits()
+                != next.window.background_opacity().to_bits()
+                || self.window.background_blur() != next.window.background_blur(),
         }
     }
 }
@@ -106,7 +110,9 @@ mod tests {
                 scrollback_limit,
                 thumbnail_rows,
                 padding,
+                background,
             } = old.changes(&new);
+            assert!(!background, "{text}");
             assert_eq!(
                 [
                     font,

@@ -62,6 +62,7 @@ pub(crate) struct View {
     active_pane: Option<usize>,
     fills: Vec<Fill>,
     frame_background: Rgba,
+    background_alpha: u8,
     palette: Palette,
     selection_foreground: Option<Rgb>,
     selection_background: Option<Rgb>,
@@ -131,6 +132,7 @@ impl View {
             active_pane: None,
             fills: Vec::new(),
             frame_background: [0, 0, 0, 255],
+            background_alpha: 255,
             palette: Palette::for_luminance(0.0),
             selection_foreground: colors.selection_foreground(),
             selection_background: colors.selection_background(),
@@ -205,6 +207,22 @@ impl View {
         self.invalidate_paint();
     }
 
+    /// Apply validated window opacity on the next composition; return whether alpha changed.
+    pub(crate) fn set_background_opacity(&mut self, opacity: f32) -> bool {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "validated opacity in 0..=1, rounded to an RGBA8 channel"
+        )]
+        let alpha = (opacity * 255.0).round() as u8;
+        if alpha == self.background_alpha {
+            return false;
+        }
+        self.background_alpha = alpha;
+        self.invalidate_paint();
+        true
+    }
+
     fn invalidate_paint(&mut self) {
         for pane in &mut self.panes {
             pane.id = None;
@@ -221,6 +239,7 @@ impl View {
         self.active_pane = None;
         self.fills.clear();
         self.frame_background = rgba(background);
+        self.frame_background[3] = self.background_alpha;
         self.palette = palette_for_background(background);
         self.fills.extend(dividers.into_iter().map(|rect| Fill {
             rect: pixel_rect(rect),
@@ -279,6 +298,7 @@ impl View {
             line: &mut self.line,
             composition: &mut self.composition,
             cell: self.cell,
+            background_alpha: self.background_alpha,
             link_hint: self.palette.link_hint(),
             selection_foreground: self.selection_foreground,
             selection_background: self.selection_background,

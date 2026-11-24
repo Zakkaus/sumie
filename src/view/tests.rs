@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use sumie_core::graphics::{Image, Placement};
 use sumie_core::splits::Rect;
+use sumie_core::{CellPosition, CellRange};
 use sumie_render::PixelRect;
 use sumie_vt::{Snapshot, Terminal};
 
@@ -58,6 +59,50 @@ fn focus(id: u64, active: bool) -> PaneFocus<'static> {
         dirty: true,
         window_focused: true,
         viewer: None,
+    }
+}
+
+#[test]
+fn background_opacity_respects_vt_colors_and_opaque_overlays() {
+    let mut view = view();
+    let rect = view.content_rect();
+    let size = view.pane_size(rect);
+    let mut terminal = Terminal::new(size.cols, size.rows).unwrap();
+    terminal
+        .set_colors([18; 3], [72; 3], None, &[[18; 3]; 16])
+        .unwrap();
+    terminal.write(b"\x1b[?5hA\x1b[40mB\x1b[48;2;18;18;18mC\x1b[0;7mD\x1b[0mEFG");
+    let snapshot = terminal.render_snapshot().unwrap();
+    assert_eq!(snapshot.background, [18; 3]);
+    view.search_highlights.push((0, 5, 5, true));
+    view.preedit = String::from("x");
+    let selection = CellRange::group(CellPosition { row: 0, column: 4 }, 1);
+    let mut focus = focus(1, true);
+    focus.dirty = false;
+
+    for (opacity, alpha, changed) in [(1.0, 255, false), (0.5, 128, true), (1.0, 255, true)] {
+        assert_eq!(view.set_background_opacity(opacity), changed);
+        view.begin_frame([], snapshot.background);
+        view.build_pane(
+            rect,
+            &snapshot,
+            Some(selection),
+            LinkHighlight::default(),
+            None,
+            focus,
+        );
+        view.end_frame();
+
+        let mut frame = view.frame(false);
+        let draw = frame.panes.next().unwrap().draw;
+        assert_eq!(frame.background, [18, 18, 18, alpha]);
+        assert_eq!(draw.default_background, frame.background);
+        assert_eq!(draw.backgrounds[1..3], [[18, 18, 18, 255]; 2]);
+        assert_eq!(
+            std::array::from_fn(|i| draw.backgrounds[i][3]),
+            [alpha, 255, 255, 255, 255, 255, alpha, 255],
+        );
+        assert_eq!(draw.cursor.unwrap().color[3], 255);
     }
 }
 

@@ -21,7 +21,7 @@ fn load_configuration() {
         "minimum-contrast = 7.0\nscrollback-limit = 104857600\n\
          [font]\nfamily = 'Iosevka'\nsize = 12\nweight = 500\n\
          hinting = 'off'\n[colors]\nforeground = '#AB12EF'\nbackground = '#123456'\n\
-         [window]\npadding-x = 4\npadding-y = 9\n",
+         [window]\npadding-x = 4\npadding-y = 9\nbackground-blur = true\n",
     )
     .unwrap();
 
@@ -32,7 +32,7 @@ fn load_configuration() {
          background = '#fedcba'\ncursor = '#123456'\nselection-foreground = '#abcdef'\n\
          selection-background = '#654321'\npalette = {palette:?}\n"
     );
-    let cases: [Case<'_>; 12] = [
+    let cases: [Case<'_>; 13] = [
         (
             "[font]\nfamily = 'Monospace'\nsize = 18\nweight = 600\nhinting = 'normal'\n",
             Ok(|config| {
@@ -54,11 +54,8 @@ fn load_configuration() {
             }),
         ),
         (
-            "include = ['shared.toml']\n[window]\npadding-x = 0\n",
-            Ok(|config| {
-                assert_eq!(config.window.padding(), [0, 9]);
-                assert!(Config::default().changes(&config).padding);
-            }),
+            "include = ['shared.toml']\n[window]\npadding-x = 0\nbackground-opacity = 0.5\n",
+            Ok(|config| assert_window(&config)),
         ),
         (
             "[font]\nhinting = 'strong'\n",
@@ -75,6 +72,10 @@ fn load_configuration() {
         (
             "minimum-contrast = 21.00000001\n",
             Err((1, 20, "between 1.0 and 21.0")),
+        ),
+        (
+            "[window]\nbackground-opacity = 1.00000001\n",
+            Err((2, 22, "between 0.0 and 1.0")),
         ),
     ];
     for (input, expected) in cases {
@@ -109,9 +110,25 @@ fn assert_font(font: Font, family: &str, px: f32, weight: u16, hinting: Hinting)
     assert_eq!(font.into_family(), family);
 }
 
+fn assert_window(config: &Config) {
+    let changes = Config::default().changes(config);
+    assert!(changes.padding && changes.background);
+    assert_eq!(config.window.padding(), [0, 9]);
+    assert!(config.window.background_blur());
+    assert_eq!(
+        config.window.background_opacity().to_bits(),
+        0.5_f32.to_bits()
+    );
+}
+
 fn assert_defaults(config: Config) {
     assert_eq!(config.minimum_contrast().to_bits(), 1.1_f32.to_bits());
     assert_eq!(config.window.padding(), [8, 6]);
+    assert_eq!(
+        config.window.background_opacity().to_bits(),
+        1.0_f32.to_bits()
+    );
+    assert!(!config.window.background_blur());
     assert_eq!(config.colors.foreground(), [0xff; 3]);
     assert_eq!(config.colors.background(), [0x12, 0x27, 0x38]);
     assert_eq!(config.colors.cursor(), Some([0xff; 3]));

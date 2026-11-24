@@ -83,6 +83,7 @@ pub(super) struct PanePainter<'a> {
     pub(super) line: &'a mut Line,
     pub(super) composition: &'a mut Line,
     pub(super) cell: [u32; 2],
+    pub(super) background_alpha: u8,
     pub(super) link_hint: Rgba,
     pub(super) selection_foreground: Option<Rgb>,
     pub(super) selection_background: Option<Rgb>,
@@ -103,6 +104,7 @@ impl PanePainter<'_> {
         self.pane.backgrounds.clear();
         self.pane.images = (!snapshot.images.is_empty()).then(|| Arc::clone(&snapshot.images));
         self.pane.default_background = rgba(snapshot.background);
+        self.pane.default_background[3] = self.background_alpha;
         self.pane.default_backgrounds.clear();
         self.pane.glyphs.quads.clear();
         self.set_overlay_bounds(banner.is_some());
@@ -175,15 +177,18 @@ impl PanePainter<'_> {
                 } else {
                     (cell.foreground, cell.background)
                 };
-                self.pane.backgrounds.push(rgba(if covered {
+                let default = cell.default_background && !highlighted && !covered;
+                let mut color = rgba(if covered {
                     snapshot.background
                 } else {
                     background
-                }));
+                });
+                if default {
+                    color[3] = self.background_alpha;
+                }
+                self.pane.backgrounds.push(color);
                 if self.pane.images.is_some() {
-                    self.pane
-                        .default_backgrounds
-                        .push(cell.default_background && !highlighted && !covered);
+                    self.pane.default_backgrounds.push(default);
                 }
                 if cell.width == 0 {
                     continue;

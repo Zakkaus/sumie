@@ -45,6 +45,8 @@ use crate::{
     presentation::Presentation, scale::Scale,
 };
 
+mod background_effects;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
     #[error("connect to Wayland: {0}")]
@@ -257,7 +259,7 @@ impl Platform {
         self.state.frame_pending = None;
     }
 
-    /// Arm the frame callback and optional presentation feedback, and stage buffer geometry.
+    /// Arm the frame callback and optional presentation feedback, and stage surface state.
     /// Call only when a buffer is ready, immediately before presenting it. A successful
     /// call must be followed by a buffer commit before dispatching or changing IME state.
     #[must_use]
@@ -309,6 +311,7 @@ impl Platform {
 // SCTK's handler traits return proxies. Keep their implementor out of the public API.
 pub(crate) struct State {
     scale: Scale,
+    background_effects: background_effects::BackgroundEffects,
     pub(crate) presentation: Option<Presentation>,
     #[cfg(debug_assertions)]
     pub(crate) present_log: Option<PresentLog>,
@@ -356,6 +359,7 @@ impl State {
         })?;
         let surface = compositor.create_surface(&qh);
         let scale = Scale::bind(&globals, &qh, &surface);
+        let background_effects = background_effects::BackgroundEffects::bind(&globals, &qh);
         let window = shell.create_window(surface, WindowDecorations::RequestServer, &qh);
         window.set_title(title);
         window.set_app_id("sumie");
@@ -378,6 +382,7 @@ impl State {
             .map_err(|err| err.error)?;
         Ok(Self {
             scale,
+            background_effects,
             presentation,
             compositor,
             #[cfg(debug_assertions)]
@@ -418,10 +423,7 @@ impl State {
         if let Some(title) = self.pending_title.take() {
             self.window.window.set_title(title);
         }
-        if self.geometry_dirty {
-            self.scale.apply(self.wl_surface(), self.logical);
-            self.geometry_dirty = false;
-        }
+        self.stage_frame_geometry();
         let surface = self.window.wl_surface();
         self.frame_pending = Some(surface.frame(&self.qh, ()));
         if let Some(presentation) = &mut self.presentation {
@@ -456,7 +458,7 @@ impl Drop for State {
         if let Some(manager) = &self.text_input_manager {
             manager.destroy();
         }
-        // The Scale field destroys its extensions before Window destroys the xdg role and wl_surface.
+        // Surface extensions are dropped before Window destroys the xdg role and wl_surface.
     }
 }
 

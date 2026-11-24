@@ -136,9 +136,15 @@ impl Gpu {
         capture: bool,
     ) -> Result<(SurfaceFrame, Option<Result<Readback>>), SurfaceError> {
         let mut readback = None;
+        let premultiplied = capture && self.target.is_premultiplied();
         let result = self.target.draw_frame_with(list, |frame| {
             if capture {
-                readback = Some(Readback::copy(&self.device, &self.queue, frame));
+                readback = Some(Readback::copy(
+                    &self.device,
+                    &self.queue,
+                    frame,
+                    premultiplied,
+                ));
             }
             self.window.arm_frame_callback();
         })?;
@@ -151,6 +157,15 @@ impl Gpu {
 
     pub(crate) fn set_minimum_contrast(&mut self, ratio: f32) {
         self.target.set_minimum_contrast(ratio);
+    }
+
+    pub(crate) fn set_background(&mut self, settings: &sumie_config::Window) -> (f32, bool) {
+        let opacity = settings.background_opacity();
+        let transparent = self.target.set_transparent(opacity < 1.0);
+        let changed = self
+            .window
+            .set_background_effects(transparent, transparent && settings.background_blur());
+        (if transparent { opacity } else { 1.0 }, changed)
     }
 
     pub(crate) const fn present_count(&self) -> u64 {
