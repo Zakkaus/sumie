@@ -237,6 +237,10 @@ pub(crate) fn request_environment() -> BTreeMap<OsString, OsString> {
     env.insert("COLORTERM".into(), "truecolor".into());
     env.insert("TERM_PROGRAM".into(), "sumie".into());
     env.insert("TERM_PROGRAM_VERSION".into(), VERSION.into());
+    // Node's supports-hyperlinks (Claude Code, npm) only trusts terminals it knows by name.
+    // Respect a value the user already set, including 0.
+    env.entry("FORCE_HYPERLINK".into())
+        .or_insert_with(|| "1".into());
     env
 }
 

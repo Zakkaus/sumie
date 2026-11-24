@@ -23,7 +23,7 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 在 macOS 13 以上版本，sumie 會開啟 Metal 測試頁，不啟動 shell。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
 
-在 Linux 上首次啟動時，sumie 使用 ncurses 的 `tic` 將 `xterm-sumie` 安裝到 `$XDG_DATA_HOME/sumie/terminfo`（預設為 `~/.local/share/sumie/terminfo`）。內附的原始碼有變更時才重新編譯；若無法安裝，sumie 會改用 `TERM=xterm-256color` 啟動 shell。
+在 Linux 上首次啟動時，sumie 使用 ncurses 的 `tic` 將 `xterm-sumie` 安裝到 `$XDG_DATA_HOME/sumie/terminfo`（預設為 `~/.local/share/sumie/terminfo`）。內附的原始碼有變更時才重新編譯；若無法安裝，sumie 會改用 `TERM=xterm-256color` 啟動 shell。子行程也會取得 `FORCE_HYPERLINK=1`（已自行設定時不覆寫），讓 Claude Code 這類依終端機名稱判斷是否支援超連結的工具送出 OSC 8 連結。
 
 滾輪每格捲動三行歷史記錄。程式若開啟滑鼠追蹤，滾輪事件會送給程式。`less` 等使用替代螢幕的程式若未追蹤滑鼠，且已開啟模式 1007（預設開啟），滾輪每格會送出三次方向鍵。滑鼠追蹤開啟時，按住 Shift 開始選取文字；拖曳途中放開 Shift，移動事件也不會送給程式。捲動會清除選取範圍，輸入文字會回到底部。
 
