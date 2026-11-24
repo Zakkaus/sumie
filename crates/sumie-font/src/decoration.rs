@@ -14,6 +14,7 @@ pub enum Decoration {
     Dotted,
     Dashed,
     Strikethrough,
+    /// A dotted mask with two extra pixels for cropping to the row's phase.
     LinkHint,
     Overline,
 }
@@ -53,6 +54,7 @@ impl Decoration {
         } else {
             metrics.underline
         };
+        let width = metrics.width + if self == Self::LinkHint { 2 } else { 0 };
         let w = metrics.width as f32;
         let t = line.thickness.min(metrics.height) as f32;
         path.clear();
@@ -89,8 +91,7 @@ impl Decoration {
                 (offset as u32, offset + 0.5 * t + r)
             }
             Self::LinkHint => {
-                let start = u32::from(metrics.width > 1);
-                for x in (start..metrics.width).step_by(3) {
+                for x in (1..width).step_by(3) {
                     path.add_rect([x as f32, 0.0], 1.0, 1.0);
                 }
                 (0, 1.0)
@@ -118,13 +119,13 @@ impl Decoration {
         let placement = Placement {
             left: 0,
             top: top.cast_signed(),
-            width: metrics.width,
+            width,
             height,
         };
         atlas.insert(key, placement, |pixels, pitch| {
             Mask::with_scratch(&*path, scratch)
                 .style(style)
-                .size(metrics.width, height)
+                .size(width, height)
                 .render_into(pixels, Some(pitch));
         })
     }

@@ -21,14 +21,15 @@ pub(super) fn assert_decorations(
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
     let mut view = View::new(150, [256, 64], [320, 80], font, &config.colors).unwrap();
+    view.zoom(sumie_core::FontZoom::Increase).unwrap();
     let size = view.size();
     let mut vt = Terminal::new(size.cols, size.rows).unwrap();
     vt.write(b"\x1b[48;2;0;0;0;38;2;255;255;255m");
     for (_, sgr) in CASES {
         vt.write(format!("\x1b[24;29;55;22;{sgr}m\x1b[58;2;255;0;0m ").as_bytes());
     }
-    vt.write(b"\x1b[0;48;2;0;0;0m\x1b]8;;https://example.test\x1b\\ \x1b]8;;\x1b\\");
-    view.build(&vt.render_snapshot().unwrap(), None, &[], None, true);
+    let snapshot = wide_link_snapshot(&mut vt, CASES.len());
+    view.build(&snapshot, None, &[], None, true);
     let target = renderer.create_offscreen(view.device);
     renderer.set_minimum_contrast(1.0);
     renderer.upload_atlas(&view.atlas());
@@ -85,21 +86,40 @@ pub(super) fn assert_decorations(
     }
 }
 
+fn wide_link_snapshot(vt: &mut Terminal, column: usize) -> sumie_vt::Snapshot {
+    vt.write(b"\x1b[0;48;2;0;0;0m\x1b]8;;https://example.test\x1b\\    \x1b]8;;\x1b\\ ");
+    let mut snapshot = vt.render_snapshot().unwrap();
+    // Supply a wide blank directly so the VT width probe can fail independently.
+    let cells = &mut snapshot.rows[0][column..];
+    cells[1].text = "\u{3000}".into();
+    cells[1].width = 2;
+    cells[2].text.clear();
+    cells[2].width = 0;
+    snapshot
+}
+
 fn assert_link_hint(pixels: &[u8], pitch: usize, start: usize, w: usize, h: usize) {
     let rows = (0..h).map(|y| {
         let offset = 4 * (y * pitch + start);
-        pixels[offset..offset + 4 * w].as_chunks::<4>().0.iter()
+        pixels[offset..offset + 4 * 5 * w].as_chunks::<4>().0.iter()
     });
     let mut ink = rows.filter(|row| row.clone().any(|p| p[..3] != [0, 0, 0]));
     let row = ink.next().expect("idle OSC 8 link must be visible");
     assert!(ink.next().is_none(), "hint must be one device pixel thick");
-    assert!(
-        row.clone().any(|p| p[..3] == [0, 0, 0]),
-        "hint must have gaps"
-    );
-    assert!(
-        row.filter(|p| p[..3] != [0, 0, 0])
-            .all(|p| { p[0] <= 1 && (60..100).contains(&p[1]) && (145..185).contains(&p[2]) }),
-        "hint must use a translucent accent"
-    );
+    for (x, pixel) in row.enumerate() {
+        if x < 4 * w && (start + x) % 3 == 1 {
+            assert!(
+                pixel[0] <= 1 && (60..100).contains(&pixel[1]) && (145..185).contains(&pixel[2]),
+                "missing hint dot at x={}",
+                start + x
+            );
+        } else {
+            assert_eq!(
+                pixel[..3],
+                [0, 0, 0],
+                "unexpected hint dot at x={}",
+                start + x
+            );
+        }
+    }
 }

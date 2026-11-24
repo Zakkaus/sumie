@@ -1,5 +1,5 @@
 use sumie_core::{
-    CellPosition, CellRange, LinkUri,
+    CellPosition, CellRange, LinkUri, SelectionPoint,
     mouse::{Button, MousePhase},
 };
 use sumie_vt::Terminal;
@@ -66,9 +66,16 @@ impl Pointer {
     }
 }
 
+struct Checked {
+    hit: CellPosition,
+    // Keep the stamp anchored to the original lookup across soft wraps.
+    origin: CellPosition,
+    stamp: u64,
+}
+
 #[derive(Default)]
 pub(super) struct Hover {
-    checked: Option<(CellPosition, u64)>,
+    checked: Option<Checked>,
     ranges: Vec<CellRange>,
     uri: Option<LinkUri>,
     control: bool,
@@ -80,8 +87,8 @@ impl Hover {
     }
 
     pub(super) fn before_snapshot(&mut self, terminal: &Terminal) {
-        if let Some((hit, stamp)) = self.checked
-            && terminal.link_stamp(hit) != (stamp, false)
+        if let Some(checked) = &self.checked
+            && terminal.link_stamp(checked.origin) != (checked.stamp, false)
         {
             self.checked = None;
         }
@@ -101,11 +108,22 @@ impl Hover {
     ) -> Result<bool> {
         let was_link = self.uri.is_some();
         if let Some(hit) = hit {
-            if self.checked.is_some_and(|(pos, _)| pos == hit) {
+            if let Some(checked) = &mut self.checked
+                && (checked.hit == hit
+                    || (matches!(self.ranges.as_slice(), [range]
+                        if (range.start..=range.end).contains(&SelectionPoint::from(hit)))
+                        && terminal.plain_link_cell(checked.origin)?
+                        && terminal.plain_link_cell(hit)?))
+            {
+                checked.hit = hit;
                 return Ok(false);
             }
             self.uri = terminal.link_at(hit, host, &mut self.ranges)?;
-            self.checked = Some((hit, terminal.link_stamp(hit).0));
+            self.checked = Some(Checked {
+                hit,
+                origin: hit,
+                stamp: terminal.link_stamp(hit).0,
+            });
         } else {
             return Ok(self.clear());
         }
@@ -210,7 +228,12 @@ impl Session {
             pane.frame_dirty |= pane.hover.uri().is_some() && pane.hover.control != modifiers.ctrl;
             pane.hover.control = modifiers.ctrl;
             link |= hit.is_some_and(|hit| {
-                pane.hover.uri().is_some() && pane.hover.checked.is_some_and(|(pos, _)| pos == hit)
+                pane.hover.uri().is_some()
+                    && pane
+                        .hover
+                        .checked
+                        .as_ref()
+                        .is_some_and(|checked| checked.hit == hit)
             });
         }
         gpu.set_pointer_icon(if thumbnail || (link && modifiers.ctrl) {
@@ -221,5 +244,26 @@ impl Session {
             CursorIcon::Default
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hover_reuses_wrapped_url_but_not_over_an_osc8_label() {
+        let mut terminal = Terminal::new(12, 3).unwrap();
+        terminal.write(b"https://ex.io/a\x1b]8;;https://other.test\x1b\\b\x1b]8;;\x1b\\c");
+        let mut hover = Hover::default();
+        for (row, column, redraw, uri) in [
+            (0, 0, true, "https://ex.io/abc"),
+            (1, 1, false, "https://ex.io/abc"),
+            (1, 3, true, "https://other.test"),
+        ] {
+            let hit = CellPosition { row, column };
+            assert_eq!(hover.refresh(&terminal, Some(hit), "").unwrap(), redraw);
+            assert_eq!(hover.uri().unwrap().as_str(), uri);
+        }
     }
 }

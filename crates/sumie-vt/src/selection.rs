@@ -67,13 +67,17 @@ unsafe extern "C" fn compare(data: *mut c_void, bytes: *const u8, len: usize) ->
     true
 }
 
-fn cell_wide(reference: &ffi::GridRef) -> Result<c_int, Error> {
+fn grid_cell(reference: &ffi::GridRef) -> Result<ffi::Cell, Error> {
     let mut cell = 0;
-    let mut wide = 0;
     // SAFETY: The reference was returned by Ghostty and the terminal has not been mutated.
-    // CELL_DATA_WIDE writes a C enum.
+    check(unsafe { ffi::ghostty_grid_ref_cell(reference, &raw mut cell) })?;
+    Ok(cell)
+}
+
+fn cell_wide(cell: ffi::Cell) -> Result<c_int, Error> {
+    let mut wide = 0;
+    // SAFETY: CELL_DATA_WIDE writes a C enum and the cell came from this terminal.
     unsafe {
-        check(ffi::ghostty_grid_ref_cell(reference, &raw mut cell))?;
         check(ffi::ghostty_cell_get(
             cell,
             ffi::CELL_DATA_WIDE,
@@ -181,10 +185,10 @@ impl Terminal {
     fn cell_range(&self, selection: &ffi::Selection) -> Result<CellRange, Error> {
         let mut start = self.selection_point(&selection.start)?;
         let mut end = self.selection_point(&selection.end)?;
-        if cell_wide(&selection.start)? == ffi::CELL_WIDE_SPACER_TAIL {
+        if cell_wide(grid_cell(&selection.start)?)? == ffi::CELL_WIDE_SPACER_TAIL {
             start.column -= 1;
         }
-        if cell_wide(&selection.end)? == ffi::CELL_WIDE_WIDE {
+        if cell_wide(grid_cell(&selection.end)?)? == ffi::CELL_WIDE_WIDE {
             end.column += 1;
         }
         Ok(CellRange { start, end })
@@ -200,6 +204,23 @@ impl Terminal {
             ffi::sumie_selection_link_stamp(self.raw, hit.column, hit.row, &raw mut stamp)
         };
         (stamp, dirty)
+    }
+
+    /// Whether a cell can reuse a detected URL, without overriding an OSC 8 link.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid hit or a native cell lookup failure.
+    pub fn plain_link_cell(&self, hit: CellPosition) -> Result<bool, Error> {
+        let row = hit.row.into();
+        let cell = grid_cell(&self.grid_ref(ffi::POINT_TAG_VIEWPORT, hit.column, row)?)?;
+        let cell = match cell_wide(cell)? {
+            ffi::CELL_WIDE_SPACER_HEAD => return Ok(false),
+            ffi::CELL_WIDE_SPACER_TAIL => {
+                grid_cell(&self.grid_ref(ffi::POINT_TAG_VIEWPORT, hit.column - 1, row)?)?
+            }
+            _ => cell,
+        };
+        Ok(!crate::style::has_hyperlink(cell)?)
     }
 
     /// Find an OSC 8 or detected URI covering a viewport cell, including soft wraps.

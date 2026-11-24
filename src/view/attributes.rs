@@ -76,7 +76,9 @@ impl Decorations {
         hovered: Option<bool>,
     ) {
         let style = cell.style;
-        if let Some((mark, color)) = underline(style, fg, view.link_hint, hovered) {
+        if let Some((mark, color)) =
+            underline(style, fg, view.link_hint, hovered, cell.wide_wrap_spacer)
+        {
             self.draw_mark(view, pos, cell.width, mark, color);
         }
         if style.overline {
@@ -109,9 +111,13 @@ impl Decorations {
         for column in col..col + u32::from(width) {
             let cell = [column, row];
             let origin = view.origin(cell);
-            view.pane
-                .glyphs
-                .push(glyph_quad(image, origin, cell, color));
+            let mut quad = glyph_quad(image, origin, cell, color);
+            if mark == Decoration::LinkHint {
+                quad.atlas.origin[0] += origin[0].rem_euclid(3).cast_unsigned();
+                quad.atlas.size[0] = view.cell[0];
+                quad.dest.size[0] = view.cell[0];
+            }
+            view.pane.glyphs.push(quad);
         }
     }
 }
@@ -121,11 +127,11 @@ fn underline(
     fg: Rgba,
     hint: Rgba,
     hovered: Option<bool>,
+    wide_wrap_spacer: bool,
 ) -> Option<(Decoration, Rgba)> {
-    if hovered == Some(true) {
-        return Some((Decoration::Single, fg));
-    }
     let mark = match style.underline {
+        Underline::None if wide_wrap_spacer => return None,
+        Underline::None if hovered == Some(true) => return Some((Decoration::Single, fg)),
         Underline::None if style.hyperlink || hovered.is_some() => {
             return Some((Decoration::LinkHint, hint));
         }
@@ -182,19 +188,31 @@ mod tests {
             underline_color: Some([255, 0, 0]),
             ..osc
         };
-        for (style, hovered, expected) in [
-            (osc, None, Some((Decoration::LinkHint, hint))),
+        for (style, hovered, spacer, expected) in [
+            (osc, None, false, Some((Decoration::LinkHint, hint))),
             (
                 app,
                 Some(false),
+                false,
                 Some((Decoration::Double, [255, 0, 0, 255])),
             ),
-            (plain, None, None),
-            (plain, Some(false), Some((Decoration::LinkHint, hint))),
-            (plain, Some(true), Some((Decoration::Single, fg))),
-            (app, Some(true), Some((Decoration::Single, fg))),
+            (plain, None, false, None),
+            (
+                plain,
+                Some(false),
+                false,
+                Some((Decoration::LinkHint, hint)),
+            ),
+            (plain, Some(true), false, Some((Decoration::Single, fg))),
+            (plain, Some(true), true, None),
+            (
+                app,
+                Some(true),
+                false,
+                Some((Decoration::Double, [255, 0, 0, 255])),
+            ),
         ] {
-            assert_eq!(underline(style, fg, hint, hovered), expected);
+            assert_eq!(underline(style, fg, hint, hovered, spacer), expected);
         }
     }
 }

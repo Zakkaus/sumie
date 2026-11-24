@@ -207,7 +207,7 @@ impl PanePainter<'_> {
                 let intersects = columns.as_ref().is_some_and(|columns| {
                     columns.start < column + u32::from(cell.width) && column < columns.end
                 });
-                if !intersects && !cell.wide_wrap_spacer {
+                if !intersects {
                     let hovered = hovered_link.at(row, column);
                     decorations.draw(self, [column, row], cell, ink.color, hovered);
                 }

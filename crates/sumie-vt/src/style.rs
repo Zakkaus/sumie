@@ -116,9 +116,9 @@ impl Terminal {
     }
 }
 
-fn has_hyperlink(cell: ffi::Cell) -> Result<bool, Error> {
+pub(super) fn has_hyperlink(cell: ffi::Cell) -> Result<bool, Error> {
     let mut linked = false;
-    // SAFETY: The cell came from the live render state and HAS_HYPERLINK writes a C bool.
+    // SAFETY: Ghostty supplied the cell and HAS_HYPERLINK writes a C bool.
     check(unsafe {
         ffi::ghostty_cell_get(
             cell,

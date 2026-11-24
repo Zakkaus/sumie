@@ -350,6 +350,7 @@ impl Session {
     }
 
     fn resize_grid(&mut self) -> Result<()> {
+        self.link_pointer.clear_link();
         for tab in self.tabs.as_mut_slice() {
             tab.resize_grid(&self.view)?;
         }
