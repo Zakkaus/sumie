@@ -19,6 +19,7 @@ pub const IMAGE_VIEWER_MARGIN: u32 = 16;
 // Sumie-local D3+ layout and type sizes.
 pub(super) const TAB_HEIGHT: u32 = 34;
 pub(super) const TAB_MAX_WIDTH: u32 = 190;
+pub(super) const TAB_MIN_TITLE_WIDTH: u32 = 112;
 pub(super) const DIVIDER_INSET: u32 = 10;
 pub(super) const PLUS_MARK: u32 = 10;
 pub(super) const DOT_SIZE: u32 = 5;

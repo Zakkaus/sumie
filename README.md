@@ -9,7 +9,7 @@ On Wayland, OSC 8 links have a faint dotted underline unless the terminal progra
 Press Ctrl+Shift+F to search the screen and scrollback. Search treats wrapped rows as one line and ignores case unless the query contains an uppercase letter. Matches are numbered from oldest to newest. Enter or F3 selects an older match; hold Shift to select a newer one. Escape closes search without moving the viewport.
 New output stays visible when the viewport is at the bottom. Typing in the terminal returns to the bottom.
 
-In the search field, Ctrl+A selects the query. Typing or pasting replaces the selection; Backspace deletes it or removes one grapheme. Home and End move to the start or end of the query. Ctrl+Backspace deletes the previous word. Ctrl+V or Shift+Insert pastes from the clipboard, replacing each line break with a space.
+In the search field, Ctrl+A selects the query. Typing or pasting replaces the selection; Backspace deletes it or removes one grapheme. Left and Right move the caret one grapheme; Home and End move to the start or end of the query. Ctrl+Backspace deletes the previous word. Ctrl+V or Shift+Insert pastes from the clipboard, replacing each line break with a space.
 
 On Wayland, Ctrl+Shift+T opens a tab. Ctrl+Shift+E splits the focused pane to the right; Ctrl+Shift+O splits it down. Each new shell starts in the focused pane's last reported local directory (OSC 7), or in `$HOME` if none is available. New windows start in `$HOME`.
 
@@ -17,7 +17,7 @@ Click a pane to focus it, or press Ctrl+Alt+Arrow to focus a neighbour. Drag a d
 
 Ctrl+Tab or Ctrl+PageDown selects the next tab; Ctrl+Shift+Tab or Ctrl+PageUp selects the previous one. Alt+1 through Alt+8 select tabs by position, and Alt+9 selects the last tab. Ctrl+Shift+PageUp and Ctrl+Shift+PageDown move the active tab left and right.
 
-The bar appears when a second tab opens. Click **+** to open a tab. Click a numbered tab or scroll over the bar to switch tabs. A dot next to a title means the tab received output in the background; selecting the tab clears the dot. To close a tab, middle-click it or click **×** on the active or hovered tab.
+The bar appears when a second tab opens. Click a numbered tab or scroll over the bar to switch tabs. When titles no longer fit at a readable width, the strip scrolls to keep the active tab in view. Click **+** after the last visible tab to open a tab. A dot next to a title means the tab received output in the background; selecting the tab clears the dot. To close a tab, middle-click it or click **×** on the active or hovered tab.
 
 Press Ctrl+= or Ctrl++ to increase the terminal font size by 1 pt, or Ctrl+- to decrease it. The shortcuts clamp zoom to 4–200 pt. All tabs in the window share the size, and the grid reflows without resizing the window. Ctrl+0 restores the configured size, as does changing `[font].size` in the config file.
 

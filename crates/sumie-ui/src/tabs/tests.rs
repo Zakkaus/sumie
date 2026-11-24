@@ -13,7 +13,7 @@ fn scaled_tabs_share_edges_with_hit_regions() {
             title: scaled(title, scale),
             activity: false,
         });
-        let layout = TabLayout::new([1400, 120], scale, 1, &tabs, scaled(8, scale)).unwrap();
+        let layout = TabLayout::new([1400, 120], scale, 1, &tabs).unwrap();
         assert_eq!(layout.visible(), 0..3);
         let [body, edge, plus, close_x, close_y, side] =
             [body, edge, plus, close_x, close_y, side].map(f64::from);
@@ -49,25 +49,26 @@ fn tabs_shrink_evenly_regardless_of_title_width() {
         title,
         activity: false,
     });
-    let layout = TabLayout::new([345, 100], 120, 0, &tabs, 10).unwrap();
-    assert_eq!([0, 1, 2].map(|i| layout.tab(i).size[0]), [101, 100, 100]);
-    assert_eq!(layout.hit([307.0, 0.0]), Some(TabHit::New));
+    let layout = TabLayout::new([495, 100], 120, 0, &tabs).unwrap();
+    assert_eq!([0, 1, 2].map(|i| layout.tab(i).size[0]), [151, 150, 150]);
+    assert_eq!(layout.hit([457.0, 0.0]), Some(TabHit::New));
 }
 
 #[test]
 fn overflow_keeps_active_and_plus_in_view() {
     let tabs = [TabMeasurement {
-        number: 8,
-        title: 120,
+        number: 17,
+        title: 240,
         activity: false,
-    }; 16];
+    }; 20];
     assert_eq!(tab_bar_height(1, 120, 100), 0);
-    let layout = TabLayout::new([262, 100], 120, 12, &tabs, 8).unwrap();
-    assert_eq!(layout.visible(), 11..14);
-    assert_eq!(layout.hit([79.0, 0.0]), Some(TabHit::Tab(12)));
-    assert_eq!(layout.hit([224.0, 0.0]), Some(TabHit::New));
+    let layout = TabLayout::new([1400, 100], 150, 19, &tabs).unwrap();
+    assert_eq!(layout.visible(), 15..20);
+    assert!(layout.visible().all(|i| layout.title(i).size[0] >= 140));
+    assert_eq!(layout.hit([1100.0, 0.0]), Some(TabHit::Tab(19)));
+    assert_eq!(layout.hit([1198.0, 0.0]), Some(TabHit::New));
 
-    let clipped = TabLayout::new([31, 2], 120, 12, &tabs, 8).unwrap();
+    let clipped = TabLayout::new([31, 2], 120, 19, &tabs).unwrap();
     assert!(clipped.visible().is_empty());
     assert_eq!(clipped.hit([0.0, 0.0]), Some(TabHit::New));
     assert_eq!(clipped.hit([0.0, 1.0]), None);
@@ -81,7 +82,7 @@ fn underline_spans_content_and_dividers_align_with_edges() {
         activity: false,
     }; 4];
     tabs[0].activity = true;
-    let layout = TabLayout::new([500, 100], 120, 1, &tabs, 8).unwrap();
+    let layout = TabLayout::new([500, 100], 120, 1, &tabs).unwrap();
     assert_eq!(layout.number(0), rect(31, 0, 8, 34));
     assert_eq!(layout.title(0), rect(47, 0, 37, 34));
 

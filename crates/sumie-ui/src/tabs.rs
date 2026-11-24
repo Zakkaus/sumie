@@ -43,7 +43,7 @@ struct Slot {
 struct Sizing {
     chrome: u32,
     max: u32,
-    ellipsis: u32,
+    min_title: u32,
     gap: u32,
     dot: u32,
     active: usize,
@@ -59,7 +59,7 @@ impl Sizing {
         let gap = if tab.title != 0 { self.gap } else { 0 };
         let fixed = (self.chrome + dot + gap).saturating_add(tab.number);
         fixed
-            .saturating_add(self.ellipsis.min(tab.title))
+            .saturating_add(self.min_title.min(tab.title))
             .min(self.max)
     }
 
@@ -161,7 +161,6 @@ impl TabLayout {
         scale: u16,
         active: usize,
         measurements: &[TabMeasurement],
-        label_cell: u32,
     ) -> Option<Self> {
         let [width, device_height] = size;
         let height = tab_bar_height(measurements.len(), scale, device_height);
@@ -176,7 +175,7 @@ impl TabLayout {
         let sizing = Sizing {
             chrome: 2 * px(tokens::TAB_PADDING) + px(tokens::CLOSE_SIZE).max(1) + gap,
             max: px(tokens::TAB_MAX_WIDTH),
-            ellipsis: label_cell,
+            min_title: px(tokens::TAB_MIN_TITLE_WIDTH),
             gap,
             dot: px(tokens::DOT_SIZE).max(1),
             active,

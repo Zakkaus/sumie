@@ -235,13 +235,8 @@ impl View {
                 }
             }
             _ => {
-                let Some(layout) = TabLayout::new(
-                    self.device,
-                    scale,
-                    active,
-                    &paint.measurements,
-                    paint.ellipsis.width(),
-                ) else {
+                let Some(layout) = TabLayout::new(self.device, scale, active, &paint.measurements)
+                else {
                     paint.frame = None;
                     return;
                 };

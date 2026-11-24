@@ -78,6 +78,7 @@ impl Bar {
             SearchAction::SelectAll => bar.caret = None,
             SearchAction::Home => bar.caret = Some(0),
             SearchAction::End => bar.caret = Some(bar.query.len()),
+            SearchAction::Move { right } => bar.move_caret(right),
             SearchAction::Insert(text) => {
                 let text = single_line(text);
                 if !text.is_empty() {
@@ -112,6 +113,20 @@ impl Bar {
             SearchAction::Open | SearchAction::Close => unreachable!(),
         }
         Ok(false)
+    }
+
+    fn move_caret(&mut self, right: bool) {
+        let edge = if right { self.query.len() } else { 0 };
+        self.caret = Some(self.caret.map_or(edge, |offset| {
+            let mut cursor = GraphemeCursor::new(offset, self.query.len(), true);
+            if right {
+                cursor.next_boundary(&self.query, 0)
+            } else {
+                cursor.prev_boundary(&self.query, 0)
+            }
+            .expect("complete query")
+            .unwrap_or(edge)
+        }));
     }
 
     pub(super) fn resized(&mut self) {
@@ -444,14 +459,15 @@ mod tests {
         for (event, expected) in [
             (commit("replace-me"), "replace-me"),
             (key_event(30, key::A, Press, caps_ctrl), "replace-me"),
-            (plain(19, key::r), "r"),
-            (plain(102, key::Home), "r"),
-            (commit("木\u{e0100}"), "木\u{e0100}r"),
-            (plain(14, key::BackSpace), "r"),
-            (plain(107, key::End), "r"),
-            (commit(" \u{600}1"), "r \u{600}1"),
-            (chord(14, key::BackSpace), "r "),
-            (key_event(30, key::A, Press, shift_ctrl), "r "),
+            (commit("rs"), "rs"),
+            (plain(102, key::Home), "rs"),
+            (plain(106, key::Right), "rs"),
+            (commit("木\u{e0100}"), "r木\u{e0100}s"),
+            (plain(14, key::BackSpace), "rs"),
+            (plain(107, key::End), "rs"),
+            (commit(" \u{600}1"), "rs \u{600}1"),
+            (chord(14, key::BackSpace), "rs "),
+            (key_event(30, key::A, Press, shift_ctrl), "rs "),
             (plain(14, key::BackSpace), ""),
             (key_event(47, key::V, Press, caps_ctrl), "a b c d e f g h i"),
             (chord(30, key::a), "a b c d e f g h i"),

@@ -29,6 +29,7 @@ pub(crate) enum SearchAction {
     SelectAll,
     Home,
     End,
+    Move { right: bool },
     Backspace { word: bool },
     Insert(String),
     Navigate { newer: bool },
@@ -313,6 +314,8 @@ fn search_key(keysym: u32, modifiers: KeyModifiers, text: Option<String>) -> Eff
         key::Escape => SearchAction::Close,
         key::Home | key::KP_Home => SearchAction::Home,
         key::End | key::KP_End => SearchAction::End,
+        key::Left | key::KP_Left => SearchAction::Move { right: false },
+        key::Right | key::KP_Right => SearchAction::Move { right: true },
         key::BackSpace => SearchAction::Backspace { word: ctrl },
         key::Return | key::KP_Enter | key::F3 => SearchAction::Navigate {
             newer: modifiers.shift,

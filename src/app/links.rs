@@ -130,6 +130,10 @@ impl Hover {
         Ok(was_link || self.uri.is_some())
     }
 
+    fn set_control(&mut self, control: bool) -> bool {
+        std::mem::replace(&mut self.control, control) != control && self.uri.is_some()
+    }
+
     pub(super) fn highlight(&self) -> LinkHighlight<'_> {
         LinkHighlight {
             ranges: &self.ranges,
@@ -225,8 +229,7 @@ impl Session {
             if hit.is_none() || !pane.snapshot_dirty {
                 pane.probe_link(hit, &self.host)?;
             }
-            pane.frame_dirty |= pane.hover.uri().is_some() && pane.hover.control != modifiers.ctrl;
-            pane.hover.control = modifiers.ctrl;
+            pane.frame_dirty |= pane.hover.set_control(modifiers.ctrl);
             link |= hit.is_some_and(|hit| {
                 pane.hover.uri().is_some()
                     && pane
@@ -256,13 +259,16 @@ mod tests {
         let mut terminal = Terminal::new(12, 3).unwrap();
         terminal.write(b"https://ex.io/a\x1b]8;;https://other.test\x1b\\b\x1b]8;;\x1b\\c");
         let mut hover = Hover::default();
-        for (row, column, redraw, uri) in [
-            (0, 0, true, "https://ex.io/abc"),
-            (1, 1, false, "https://ex.io/abc"),
-            (1, 3, true, "https://other.test"),
+        for (row, column, control, redraw, uri) in [
+            (0, 0, false, true, "https://ex.io/abc"),
+            (1, 1, false, false, "https://ex.io/abc"),
+            (1, 3, false, true, "https://other.test"),
+            (1, 3, true, true, "https://other.test"),
         ] {
             let hit = CellPosition { row, column };
-            assert_eq!(hover.refresh(&terminal, Some(hit), "").unwrap(), redraw);
+            let moved = hover.refresh(&terminal, Some(hit), "").unwrap();
+            assert_eq!(moved | hover.set_control(control), redraw);
+            assert_eq!(hover.highlight().control, control);
             assert_eq!(hover.uri().unwrap().as_str(), uri);
         }
     }
