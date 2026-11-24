@@ -98,21 +98,25 @@ impl Terminal {
                 let colors = if let Some(colors) = palette {
                     colors
                 } else {
-                    let mut colors = [[0; 3]; 256];
-                    // SAFETY: The render state is live and COLOR_PALETTE writes 256 RGB values.
-                    check(unsafe {
-                        ffi::ghostty_render_state_get(
-                            self.render,
-                            ffi::RENDER_STATE_DATA_COLOR_PALETTE,
-                            from_mut(&mut colors).cast(),
-                        )
-                    })?;
-                    palette.insert(colors)
+                    palette.insert(self.render_palette()?)
                 };
                 Ok(Some(colors[usize::from(index)]))
             }
             _ => Err(Error(ffi::INVALID_VALUE)),
         }
+    }
+
+    pub(super) fn render_palette(&self) -> Result<[Rgb; 256], Error> {
+        let mut palette = [[0; 3]; 256];
+        // SAFETY: The render state is live and COLOR_PALETTE writes 256 RGB values.
+        unsafe {
+            check(ffi::ghostty_render_state_get(
+                self.render,
+                ffi::RENDER_STATE_DATA_COLOR_PALETTE,
+                from_mut(&mut palette).cast(),
+            ))?;
+        }
+        Ok(palette)
     }
 }
 

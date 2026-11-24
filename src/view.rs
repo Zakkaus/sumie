@@ -8,9 +8,8 @@ use std::{
 };
 
 use sumie_core::splits::Rect;
-use sumie_core::{CellPosition, CellRange, FontZoom};
+use sumie_core::{CellRange, FontZoom};
 use sumie_font::{FontError, FontStyle, FontSystem};
-use sumie_pty::Size;
 #[cfg(test)]
 use sumie_render::DrawList;
 use sumie_render::{AtlasRect, AtlasUpload, Fill, FrameDraw, PaneDraw, PixelRect, Rgba, wgpu};
@@ -23,6 +22,8 @@ pub(crate) use attributes::LinkHighlight;
 pub(crate) use paint::PaneFocus;
 use paint::{PanePaint, PanePainter};
 
+mod geometry;
+use geometry::{grid_size, scaled_padding};
 mod images;
 use images::{PresentedImages, ViewerPaint};
 mod overlays;
@@ -42,6 +43,8 @@ pub(crate) struct View {
     font_errors: FontErrors,
     logical: [u32; 2],
     scale: u32,
+    padding: [u16; 2],
+    device_padding: [u32; 2],
     tabs: Tabs,
     pub(crate) device: [u32; 2],
     pub(crate) cell: [u32; 2],
@@ -99,6 +102,7 @@ impl View {
         device: [u32; 2],
         font_settings: FontSettings,
         colors: &sumie_config::Colors,
+        padding: [u16; 2],
     ) -> Result<Self> {
         u16::try_from(device[0])?;
         u16::try_from(device[1])?;
@@ -110,6 +114,8 @@ impl View {
             zoom_points: None,
             font_errors: FontErrors::default(),
             scale,
+            padding,
+            device_padding: scaled_padding(padding, scale),
             tabs: Tabs::default(),
             logical,
             device,
@@ -142,6 +148,7 @@ impl View {
             self.tabs.rescale(scale)?;
             self.font = font;
             self.scale = scale;
+            self.device_padding = scaled_padding(self.padding, scale);
             self.cell = [self.font.metrics().width, self.font.metrics().height];
             self.invalidate_paint();
         }
@@ -151,6 +158,14 @@ impl View {
         self.reset_hits();
         self.presented_images.clear();
         Ok(())
+    }
+
+    pub(crate) fn set_padding(&mut self, padding: [u16; 2]) {
+        self.padding = padding;
+        self.device_padding = scaled_padding(padding, self.scale);
+        self.presented_search = None;
+        self.presented_images.clear();
+        self.invalidate_paint();
     }
 
     /// Replace the font and its atlas at the current scale, leaving the view intact on error.
@@ -196,93 +211,6 @@ impl View {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn size(&self) -> Size {
-        self.pane_size(self.content_rect())
-    }
-
-    pub(crate) const fn content_rect(&self) -> Rect {
-        let y = self.bar_height();
-        Rect {
-            x: 0,
-            y,
-            width: self.device[0],
-            height: self.device[1] - y,
-        }
-    }
-
-    pub(crate) fn pane_size(&self, rect: Rect) -> Size {
-        let size = [rect.width, rect.height];
-        let [cols, rows] =
-            grid_size(size, self.cell).map(|value| u16::try_from(value).expect("validated grid"));
-        let [width_px, height_px] =
-            size.map(|value| u16::try_from(value).expect("validated device size"));
-        Size {
-            cols,
-            rows,
-            width_px,
-            height_px,
-        }
-    }
-
-    pub(crate) fn pointer_position(
-        &self,
-        position: (f64, f64),
-        rect: Rect,
-    ) -> (CellPosition, [f32; 2]) {
-        let relative = self.pane_pixel(position, rect);
-        let grid = grid_size([rect.width, rect.height], self.cell);
-        let pixel = relative.map(|pos| {
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "native mouse coordinates are f32"
-            )]
-            {
-                pos as f32
-            }
-        });
-        (self.pointer_cell(relative, grid), pixel)
-    }
-
-    fn pane_pixel(&self, position: (f64, f64), rect: Rect) -> [f64; 2] {
-        let [x, y] = self.window_pixel(position);
-        [x - f64::from(rect.x), y - f64::from(rect.y)]
-    }
-
-    fn pointer_cell(&self, pixel: [f64; 2], grid: [u32; 2]) -> CellPosition {
-        let cell = |axis: usize| {
-            let index = pixel[axis] / f64::from(self.cell[axis]);
-            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            {
-                index.clamp(0.0, f64::from(grid[axis] - 1)) as u16
-            }
-        };
-        CellPosition {
-            row: cell(1),
-            column: cell(0),
-        }
-    }
-
-    pub(crate) fn link_cell(
-        &self,
-        position: (f64, f64),
-        rect: Rect,
-        banner: bool,
-    ) -> Option<CellPosition> {
-        let pixel = self.pane_pixel(position, rect);
-        let size = [rect.width, rect.height];
-        let grid = grid_size(size, self.cell);
-        let inside = (0..2).all(|i| {
-            let end = f64::from(size[i].min(grid[i] * self.cell[i]));
-            (0.0..end).contains(&pixel[i])
-        });
-        if !inside || self.over_tab_bar(position) {
-            return None;
-        }
-        let hit = self.pointer_cell(pixel, grid);
-        (!banner || hit.row != 0).then_some(hit)
-    }
-
     /// Start a composition on the event-loop thread. Panes follow in layout order.
     pub(crate) fn begin_frame(
         &mut self,
@@ -323,7 +251,7 @@ impl View {
         if index == self.panes.len() {
             self.panes.push(PanePaint::new(rect));
         }
-        let pane = &mut self.panes[index];
+        let pane = &self.panes[index];
         let focused = focus.active && focus.window_focused;
         if !focus.dirty
             && pane.id == Some(focus.id)
@@ -333,13 +261,17 @@ impl View {
         {
             return;
         }
+        let grid = self.pane_grid(rect);
+        let pane = &mut self.panes[index];
         pane.id = Some(focus.id);
         pane.rect = rect;
+        pane.grid = grid_size(grid, self.cell);
+        pane.glyphs.offset = [grid.x.cast_signed(), grid.y.cast_signed()];
         pane.active = focus.active;
         pane.focused = focused;
         pane.viewer = focus
             .viewer
-            .and_then(|p| ViewerPaint::new(p, rect, self.scale));
+            .and_then(|p| ViewerPaint::new(p, grid, self.scale));
         PanePainter {
             pane,
             font: &mut self.font,
@@ -456,8 +388,8 @@ impl View {
         } else {
             let cursor = cursor?;
             [
-                (rect.x + u32::from(cursor.column) * self.cell[0]).cast_signed(),
-                (rect.y + u32::from(cursor.row) * self.cell[1]).cast_signed(),
+                pane.glyphs.offset[0] + (u32::from(cursor.column) * self.cell[0]).cast_signed(),
+                pane.glyphs.offset[1] + (u32::from(cursor.row) * self.cell[1]).cast_signed(),
             ]
         };
         let ends = [
@@ -560,10 +492,6 @@ impl Line {
             }
         }
     }
-}
-
-fn grid_size([width, height]: [u32; 2], cell: [u32; 2]) -> [u32; 2] {
-    [(width / cell[0]).max(1), (height / cell[1]).max(1)]
 }
 
 fn pixel_rect(rect: Rect) -> PixelRect {

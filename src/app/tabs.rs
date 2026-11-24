@@ -115,7 +115,8 @@ impl PaneHost {
         config: &sumie_config::Config,
         cwd: &Path,
     ) -> Result<PaneState> {
-        let mut pane = LocalPane::login(view.pane_size(rect), view.cell, config, cwd)?;
+        let size = view.pane_size(rect);
+        let mut pane = LocalPane::login(size, view.cell, config, cwd)?;
         pane.terminal
             .set_image_dimension_limit(self.image_dimension_limit);
         if let Some(millis) = self.click_interval {
@@ -126,6 +127,7 @@ impl PaneHost {
             id,
             rect,
             cell: view.cell,
+            viewport_px: [size.width_px, size.height_px],
             exited: false,
             paste_recipient: None,
             search: None,
@@ -159,16 +161,18 @@ impl PaneState {
     pub(super) fn resize_grid(&mut self, rect: Rect, view: &View) -> Result<()> {
         let old = std::mem::replace(&mut self.rect, rect);
         self.frame_dirty |= old != rect;
-        if old.width == rect.width && old.height == rect.height && self.cell == view.cell {
+        let size = view.pane_size(rect);
+        let px = [size.width_px, size.height_px];
+        if self.viewport_px == px && self.cell == view.cell {
             return Ok(());
         }
         self.cell = view.cell;
+        self.viewport_px = px;
         self.clear_selection();
-        let size = view.pane_size(rect);
         self.pane.command(PaneCommand::Resize {
             cols: size.cols,
             rows: size.rows,
-            px: [size.width_px, size.height_px],
+            px,
             cell_px: view.cell,
         })?;
         self.activity_after = Some(Instant::now() + activity::RESIZE_QUIET);
@@ -265,6 +269,25 @@ impl Session {
     }
     pub(super) fn active_mut(&mut self) -> &mut PaneState {
         self.tabs.active_mut().expect("live window").focused_mut()
+    }
+
+    pub(super) fn draw_tab_strip(&mut self) {
+        let tabs = self.tabs.as_slice();
+        if tabs.len() < 2 {
+            return;
+        }
+        let active = self.tabs.active_index().expect("live window");
+        let snapshot = tabs[active]
+            .focused()
+            .snapshot
+            .as_ref()
+            .expect("visible pane snapshot");
+        self.view.draw_tabs(
+            tabs.iter()
+                .map(|tab| (tab.focused().label(&self.shell), tab.activity)),
+            active,
+            snapshot,
+        );
     }
 
     pub(super) fn bar_input(&mut self, event: &Event) -> ControlFlow<Option<Action>> {

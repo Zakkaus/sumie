@@ -56,6 +56,8 @@ pub struct Config {
     pub images: Images,
     /// Interactive login shell settings.
     pub shell: Shell,
+    /// Padding around each terminal pane.
+    pub window: Window,
     /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
     #[serde(deserialize_with = "deserialize_contrast")]
     #[schemars(
@@ -91,9 +93,45 @@ impl Config {
         self.cursor.overlay(file.cursor);
         self.images.overlay(&file.images);
         self.shell.overlay(&file.shell);
+        self.window.overlay(&file.window);
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
         self.scrollback_limit = file.scrollback_limit.or(self.scrollback_limit);
     }
+}
+
+/// Padding in logical pixels on each side of a pane.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Window {
+    /// Left and right padding. Set to 0 to remove it.
+    #[schemars(with = "u16", default = "default_padding_x")]
+    padding_x: Option<u16>,
+    /// Top and bottom padding. Set to 0 to remove it.
+    #[schemars(with = "u16", default = "default_padding_y")]
+    padding_y: Option<u16>,
+}
+
+impl Window {
+    #[must_use]
+    pub fn padding(&self) -> [u16; 2] {
+        [
+            self.padding_x.unwrap_or_else(default_padding_x),
+            self.padding_y.unwrap_or_else(default_padding_y),
+        ]
+    }
+
+    fn overlay(&mut self, file: &Self) {
+        self.padding_x = file.padding_x.or(self.padding_x);
+        self.padding_y = file.padding_y.or(self.padding_y);
+    }
+}
+
+const fn default_padding_x() -> u16 {
+    12
+}
+
+const fn default_padding_y() -> u16 {
+    6
 }
 
 const fn default_contrast() -> f64 {
@@ -513,7 +551,7 @@ pub fn defaults_toml() -> String {
         "scrollback-limit",
         &properties["scrollback-limit"],
     );
-    for table in ["font", "colors", "cursor", "shell", "images"] {
+    for table in ["font", "colors", "cursor", "shell", "images", "window"] {
         use std::fmt::Write as _;
         writeln!(text, "\n[{table}]").expect("writing to a String is infallible");
         if let Some(fields) = properties[table]["properties"].as_object() {

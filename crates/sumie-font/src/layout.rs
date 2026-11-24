@@ -10,6 +10,10 @@ use zeno::{Bounds, Point};
 use crate::raster::Rasterizer;
 use crate::{Atlas, CellMetrics, Face, FaceId, FontError, FontStyle, FontSystem, GlyphKey, sprite};
 
+mod text;
+
+pub use text::{TextGlyph, TextRun};
+
 /// Glyph placement in an input run, in integer device pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShapedGlyph {

@@ -46,7 +46,7 @@ def mix(base, color, opacity):
 
 
 def main():
-    categories = "size spacing border radius typography text-size type-scale font-weight color"
+    categories = "size spacing border radius typography color"
     tokens = {key: vals for c in categories.split() for key, *vals in tables(c)}
 
     def scalar(name):
@@ -56,37 +56,30 @@ def main():
 
     lines = [f"//! Astryx {CLI_VERSION}; exported by `python3 scripts/astryx-tokens.py`. Do not edit.", "",
              "use super::Palette;", ""]
-    sizes = {"TAB_HEIGHT": "size-element-md", "PLUS_WIDTH": "size-element-lg",
-             "PADDING_LEFT": "spacing-3", "PADDING_RIGHT": "spacing-1-5",
-             "ITEM_GAP": "spacing-2", "DIVIDER_INSET": "spacing-2", "RAIL_GAP": "spacing-1",
-             "RULE": "border-width", "INDICATOR": "spacing-0-5", "CLOSE_RADIUS": "radius-inner",
-             "CLOSE_MARK": "spacing-2", "PLUS_MARK": "spacing-3", "DOT_SIZE": "spacing-1-5",
-             "DOT_PULL": "spacing-0-5", "THUMBNAIL_CHIP": "spacing-4"}
+    sizes = {"PLUS_WIDTH": "size-element-md", "BAR_INSET": "spacing-1-5",
+             "PADDING_LEFT": "spacing-3", "PADDING_RIGHT": "spacing-2",
+             "ITEM_GAP": "spacing-2", "RULE": "border-width", "INDICATOR": "spacing-0-5",
+             "CLOSE_RADIUS": "radius-inner", "CLOSE_MARK": "spacing-2", "CLOSE_SIZE": "spacing-4",
+             "SHADOW_HEIGHT": "spacing-1-5", "THUMBNAIL_CHIP": "spacing-4"}
     for key, token in sizes.items():
         lines.append(f"pub(super) const {key}: u32 = {pixels(scalar(token))};")
-    # The native tab close box adds the smallest spacing step to a 16px icon slot.
-    close_size = pixels(scalar("spacing-4")) + pixels(scalar("spacing-0-5"))
-    lines.append(f"pub(super) const CLOSE_SIZE: u32 = {close_size};")
+    # D3+ specifies native tab dimensions that do not map to individual Astryx tokens.
+    for key, value in {"TAB_HEIGHT": 34, "TAB_MAX_WIDTH": 190, "DIVIDER_INSET": 10,
+                       "PLUS_MARK": 10, "DOT_SIZE": 5}.items():
+        lines.append(f"pub(super) const {key}: u32 = {value};")
     lines.append(f"pub const IMAGE_VIEWER_MARGIN: u32 = {pixels(scalar('spacing-4'))};")
-    lines += [f"pub const LABEL_PX: u16 = {pixels(scalar('text-label-size'))};",
-              f"pub const LABEL_WEIGHT: u16 = {int(scalar('text-label-weight'))};"]
-    # FontSystem shapes on a fixed grid; use the code stack's native generic family.
-    family = scalar("font-family-code").rsplit(",", 1)[-1].strip()
-    lines.append(f"pub const LABEL_FAMILY: &str = {json.dumps(family)};")
+    lines += ["pub const LABEL_PX: f32 = 12.5;", "pub const LABEL_WEIGHT: u16 = 400;",
+              "pub const NUMBER_PX: f32 = 11.0;"]
+    # Match native generic families rather than copying a web fallback stack into one font name.
+    for key, token in {"LABEL_FAMILY": "font-family-body", "NUMBER_FAMILY": "font-family-code"}.items():
+        family = scalar(token).rsplit(",", 1)[-1].strip()
+        lines.append(f"pub const {key}: &str = {json.dumps(family)};")
     colors = {"surface": "background-body", "label": "text-secondary", "selected": "text-primary",
               "accent": "accent", "active_number": "text-accent", "on_accent": "on-accent",
               "rule": "border", "inactive_pane": "background-muted", "overlay": "overlay"}
     for i, mode in enumerate(("LIGHT", "DARK")):
         palette = {field: rgba(tokens["--color-" + token][i]) for field, token in colors.items()}
-        surface = palette["surface"]
-        tint = [{"black": 0, "white": 255}[tokens["--color-tint-hover"][i]]] * 3
-        palette.update(muted=mix(surface, palette["label"], 0.55),
-                       active=mix(mix(surface, tint, 0.035), palette["accent"], 0.05),
-                       hover=mix(surface, tint, 0.04),
-                       close_hover=[*tint, round(255 * 0.12)])
-        palette["affordance"] = (
-            rgba(tokens["--color-icon-secondary"][0]) if mode == "LIGHT" else palette["muted"]
-        )
+        palette["muted"] = mix(palette["surface"], palette["label"], 0.55)
         lines += ["", f"pub(super) const {mode}: Palette = Palette {{"]
         for field, value in palette.items():
             lines.append(f"    {field}: {value},")

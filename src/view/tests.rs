@@ -11,7 +11,15 @@ use crate::input::SearchTarget;
 fn view() -> View {
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
-    let mut view = View::new(150, [800, 500], [1000, 625], font, &config.colors).unwrap();
+    let mut view = View::new(
+        150,
+        [800, 500],
+        [1000, 625],
+        font,
+        &config.colors,
+        config.window.padding(),
+    )
+    .unwrap();
     view.set_tab_count(2).unwrap();
     view
 }
@@ -104,9 +112,16 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
         (search.origin[0] + (10 * view.cell[0]).cast_signed()) * 4 / 5
     );
 
-    let gutter = logical(left.width.cast_signed() - 1, left.y.cast_signed());
-    let gutter = (gutter.0 + 0.4, gutter.1 + 0.4);
-    assert!(view.link_cell(gutter, left, false).is_none());
+    let [x, y] = right_draw.origin;
+    let first_cell = logical(x + 1, y + 1);
+    let (hit, pixel) = view.pointer_position(first_cell, right);
+    assert_eq!([hit.column, hit.row], [0, 0]);
+    assert!(pixel.into_iter().all(|value| (0.99..1.01).contains(&value)));
+    assert_eq!(view.link_cell(first_cell, right, false), Some(hit));
+    assert!(
+        view.link_cell(logical(x - 1, y + 1), right, false)
+            .is_none()
+    );
 }
 
 fn thumbnail_snapshot(view: &View) -> Snapshot {
@@ -145,7 +160,7 @@ fn thumbnail_snapshot(view: &View) -> Snapshot {
 #[test]
 fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
     let mut view = view();
-    let rect = view.content_rect();
+    let rect = view.pane_grid(view.content_rect());
     let [w, h] = view.cell;
     let mut snapshot = thumbnail_snapshot(&view);
     view.build(&snapshot, None, &[], None, true);
@@ -158,7 +173,12 @@ fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
         size: [w, h / 2],
         ..bounds
     };
-    let logical_y = |y| (f64::from(w) * 0.8 + 0.4, (f64::from(y) + 0.5) * 0.8);
+    let logical_y = |y| {
+        (
+            f64::from(rect.x + w) * 0.8 + 0.4,
+            (f64::from(y) + 0.5) * 0.8,
+        )
+    };
     let inside = logical_y(rect.y + h - 1);
     assert!(view.thumbnail_hit(inside, 0).is_none());
     view.images_presented([(0, 0, bounds), (0, 1, covering)].into_iter());

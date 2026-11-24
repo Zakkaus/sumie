@@ -20,7 +20,7 @@ pub(super) fn assert_decorations(
     ];
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
-    let mut view = View::new(150, [256, 64], [320, 80], font, &config.colors).unwrap();
+    let mut view = View::new(150, [256, 64], [320, 80], font, &config.colors, [0; 2]).unwrap();
     view.zoom(sumie_core::FontZoom::Increase).unwrap();
     let size = view.size();
     let mut vt = Terminal::new(size.cols, size.rows).unwrap();

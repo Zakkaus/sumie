@@ -1,6 +1,6 @@
 #[cfg(target_os = "linux")]
 mod linux {
-    use crate::{FontError, FontOptions, FontStyle, FontSystem, Hinting};
+    use crate::{FontError, FontOptions, FontStyle, FontSystem, Hinting, TextRun};
 
     fn jetbrains_at(logical_px: f32, scale: f32, options: FontOptions) -> Option<FontSystem> {
         const FAMILY: &str = "JetBrains Mono";
@@ -23,6 +23,30 @@ mod linux {
         assert_eq!(metrics.width, 18);
         assert!(metrics.baseline > 0 && metrics.baseline.unsigned_abs() < metrics.height);
         println!("JetBrains Mono: {metrics:?}");
+    }
+
+    #[test]
+    fn proportional_cutoff_measures_advance_not_character_count() {
+        let mut fonts = FontSystem::new("sans-serif", 12.5, 1.25, FontOptions::default()).unwrap();
+        let mut narrow = TextRun::default();
+        let mut wide = TextRun::default();
+        let mut ellipsis = TextRun::default();
+        fonts
+            .shape_text_into(["i"; 6].into_iter(), &mut narrow)
+            .unwrap();
+        fonts
+            .shape_text_into(["W"; 6].into_iter(), &mut wide)
+            .unwrap();
+        fonts
+            .shape_text_into(std::iter::once("…"), &mut ellipsis)
+            .unwrap();
+
+        let maximum = narrow.width() + ellipsis.width();
+        assert!(wide.width() > maximum);
+        assert!(narrow.fit(maximum, &ellipsis).1.is_none());
+        let (glyphs, suffix, advance) = wide.fit(maximum, &ellipsis);
+        assert!(!glyphs.is_empty() && glyphs.len() < 6);
+        assert!(suffix.is_some() && advance <= maximum);
     }
 
     #[test]

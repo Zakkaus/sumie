@@ -20,7 +20,8 @@ fn load_configuration() {
         scratch.0.join("shared.toml"),
         "minimum-contrast = 7.0\nscrollback-limit = 104857600\n\
          [font]\nfamily = 'Iosevka'\nsize = 12\nweight = 500\n\
-         hinting = 'off'\n[colors]\nforeground = '#AB12EF'\nbackground = '#123456'\n",
+         hinting = 'off'\n[colors]\nforeground = '#AB12EF'\nbackground = '#123456'\n\
+         [window]\npadding-x = 4\npadding-y = 9\n",
     )
     .unwrap();
 
@@ -31,7 +32,7 @@ fn load_configuration() {
          background = '#fedcba'\ncursor = '#123456'\nselection-foreground = '#abcdef'\n\
          selection-background = '#654321'\npalette = {palette:?}\n"
     );
-    let cases: [Case<'_>; 11] = [
+    let cases: [Case<'_>; 12] = [
         (
             "[font]\nfamily = 'Monospace'\nsize = 18\nweight = 600\nhinting = 'normal'\n",
             Ok(|config| {
@@ -50,6 +51,13 @@ fn load_configuration() {
                 assert_eq!(config.minimum_contrast().to_bits(), 7.0_f32.to_bits());
                 assert_eq!(config.scrollback_limit(), 104_857_600);
                 assert_font(config.font, "Iosevka", 20.0, 700, Hinting::Off);
+            }),
+        ),
+        (
+            "include = ['shared.toml']\n[window]\npadding-x = 0\n",
+            Ok(|config| {
+                assert_eq!(config.window.padding(), [0, 9]);
+                assert!(Config::default().changes(&config).padding);
             }),
         ),
         (
@@ -74,23 +82,24 @@ fn load_configuration() {
         let result = load(&main);
         match expected {
             Ok(check) => check(result.unwrap()),
-            Err((line, column, reason)) => {
-                let error = result.unwrap_err();
-                let Error::Invalid {
-                    path,
-                    line: actual_line,
-                    column: actual_column,
-                    message,
-                } = error
-                else {
-                    panic!("{error}");
-                };
-                assert_eq!(path, main);
-                assert_eq!((actual_line, actual_column), (line, column), "{message}");
-                assert!(message.contains(reason), "{message}");
-            }
+            Err(expected) => assert_invalid(result.unwrap_err(), &main, expected),
         }
     }
+}
+
+fn assert_invalid(error: Error, main: &Path, (line, column, reason): (usize, usize, &str)) {
+    let Error::Invalid {
+        path,
+        line: actual_line,
+        column: actual_column,
+        message,
+    } = error
+    else {
+        panic!("{error}");
+    };
+    assert_eq!(path, main);
+    assert_eq!((actual_line, actual_column), (line, column), "{message}");
+    assert!(message.contains(reason), "{message}");
 }
 
 fn assert_font(font: Font, family: &str, px: f32, weight: u16, hinting: Hinting) {
@@ -102,6 +111,7 @@ fn assert_font(font: Font, family: &str, px: f32, weight: u16, hinting: Hinting)
 
 fn assert_defaults(config: Config) {
     assert_eq!(config.minimum_contrast().to_bits(), 1.1_f32.to_bits());
+    assert_eq!(config.window.padding(), [12, 6]);
     assert_eq!(config.colors.foreground(), [0xff; 3]);
     assert_eq!(config.colors.background(), [0x12, 0x27, 0x38]);
     assert_eq!(config.colors.cursor(), Some([0xff; 3]));

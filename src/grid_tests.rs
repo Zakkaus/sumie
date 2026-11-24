@@ -21,7 +21,7 @@ fn search_keeps_terminal_dimensions() {
 
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
-    let mut view = View::new(150, [640, 320], [800, 400], font, &config.colors).unwrap();
+    let mut view = View::new(150, [640, 320], [800, 400], font, &config.colors, [0; 2]).unwrap();
     let dimensions = |view: &View| {
         let size = view.size();
         [size.cols, size.rows, size.width_px, size.height_px]
@@ -41,7 +41,7 @@ fn font_zoom_reflows_grid_and_reset_restores_config_size() {
 
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
-    let mut view = View::new(150, [640, 320], [800, 400], font, &config.colors).unwrap();
+    let mut view = View::new(150, [640, 320], [800, 400], font, &config.colors, [0; 2]).unwrap();
     let cell = view.cell;
     let initial = view.size();
 
@@ -147,7 +147,7 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
     #[cfg(target_os = "linux")]
     attributes::assert_decorations(&mut renderer, &device, &queue);
     #[cfg(target_os = "linux")]
-    assert_image(&mut renderer, &device, &queue);
+    assert_padded_grid(&mut renderer, &device, &queue);
     #[cfg(target_os = "linux")]
     assert_image_sampling(&mut renderer, &device, &queue, &target);
     #[cfg(target_os = "linux")]
@@ -156,36 +156,63 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
 }
 
 #[cfg(target_os = "linux")]
-fn assert_image(renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+fn assert_padded_grid(renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
     use crate::view::{FontSettings, View};
 
     const DEVICE: [u32; 2] = [200, 150];
+    const ORIGIN: [u32; 2] = [15, 8];
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
-    let mut view = View::new(150, [160, 120], DEVICE, font, &config.colors).unwrap();
+    let mut view = View::new(
+        150,
+        [160, 120],
+        DEVICE,
+        font,
+        &config.colors,
+        config.window.padding(),
+    )
+    .unwrap();
     let size = view.size();
+    assert_eq!([size.width_px, size.height_px], [170, 134]);
     let mut terminal = sumie_vt::Terminal::new(size.cols, size.rows).unwrap();
     terminal
         .resize_pixels(size.cols, size.rows, view.cell)
         .unwrap();
+    terminal.write(b"\x1b[38;2;255;255;255mX");
     // Red, green, blue, white. Keep the native size and put it in the second row.
     terminal.write(b"\x1b[2;2H\x1b_Ga=T,f=32,s=2,v=2,i=1,C=1;/wAA/wD/AP8AAP///////w==\x1b\\");
     let snapshot = terminal.render_snapshot().unwrap();
     view.build(&snapshot, None, &[], None, true);
     renderer.upload_atlas(&view.atlas());
     let target = renderer.create_offscreen(DEVICE);
-    renderer.draw(&view.draw_list(true), &target);
+    let frame = view.frame(true);
+    assert_eq!(
+        frame.panes.clone().next().unwrap().draw.origin,
+        ORIGIN.map(u32::cast_signed)
+    );
+    renderer.draw_frame(&frame, &target);
     let pixels = readback(device, queue, target.texture());
-    let bg = snapshot.background;
+    let [red, green, blue] = snapshot.background;
+    let bg = [red, green, blue, 255];
+    let pixel = |x, y| {
+        let index = ((y * DEVICE[0] + x) * 4) as usize;
+        &pixels[index..index + 4]
+    };
+    let [x, y] = ORIGIN;
+    assert_eq!(pixel(x, y - 1), bg);
+    assert_eq!(pixel(x - 1, y), bg);
+    assert!(
+        (y..y + view.cell[1])
+            .any(|row| { (x..x + view.cell[0]).any(|column| pixel(column, row) != bg) })
+    );
     for (dx, dy, color) in [
         (0, 0, [255, 0, 0, 255]),
         (1, 0, [0, 255, 0, 255]),
         (0, 1, [0, 0, 255, 255]),
         (1, 1, [255; 4]),
-        (2, 1, [bg[0], bg[1], bg[2], 255]),
+        (2, 1, bg),
     ] {
-        let index = (((view.cell[1] + dy) * DEVICE[0] + view.cell[0] + dx) * 4) as usize;
-        assert_eq!(&pixels[index..index + 4], &color);
+        assert_eq!(pixel(x + view.cell[0] + dx, y + view.cell[1] + dy), color);
     }
 }
 

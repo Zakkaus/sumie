@@ -22,6 +22,7 @@ pub(super) struct SearchBox {
 pub(super) struct PresentedSearch {
     panel: SearchBox,
     cell: [u32; 2],
+    origin: [i32; 2],
     rect: Rect,
 }
 
@@ -85,18 +86,18 @@ impl SearchBox {
         self.left..self.left + self.width
     }
 
-    fn pixels(self, columns: Range<u32>, [w, h]: [u32; 2]) -> PixelRect {
+    fn pixels(self, columns: Range<u32>, [w, h]: [u32; 2], [x, y]: [i32; 2]) -> PixelRect {
         PixelRect {
             origin: [
-                (columns.start * w).cast_signed(),
-                (self.top * h).cast_signed(),
+                x + (columns.start * w).cast_signed(),
+                y + (self.top * h).cast_signed(),
             ],
             size: [(columns.end - columns.start) * w, self.height * h],
         }
     }
 
-    pub(super) fn bounds(self, cell: [u32; 2]) -> PixelRect {
-        self.pixels(self.columns(), cell)
+    fn bounds(self, cell: [u32; 2], origin: [i32; 2]) -> PixelRect {
+        self.pixels(self.columns(), cell, origin)
     }
 
     fn buttons(self) -> impl Iterator<Item = (Range<u32>, &'static str, SearchTarget)> {
@@ -187,13 +188,10 @@ impl PanePainter<'_> {
         self.pane.search_box = self
             .search_bar
             .map(|_| SearchBox::place(self.pane.grid, banner, self.search_highlights));
-        let search = self.pane.search_box.map(|b| {
-            let mut rect = b.bounds(self.cell);
-            for i in 0..2 {
-                rect.origin[i] += self.pane.glyphs.offset[i];
-            }
-            rect
-        });
+        let search = self
+            .pane
+            .search_box
+            .map(|b| b.bounds(self.cell, self.pane.glyphs.offset));
         self.pane.glyphs.cover = search.map(Mask::Outside);
         self.pane.image_exclusions = [
             banner.then(|| PixelRect {
@@ -356,6 +354,7 @@ impl View {
             Some(PresentedSearch {
                 panel: pane.search_box?,
                 cell: self.cell,
+                origin: pane.glyphs.offset,
                 rect: pane.rect,
             })
         });
@@ -366,9 +365,9 @@ impl View {
             .presented_search
             .as_ref()
             .filter(|frame| frame.rect == rect)?;
-        let pixel = self.pane_pixel(position, rect);
-        if !(0.0..f64::from(rect.width)).contains(&pixel[0])
-            || !(0.0..f64::from(rect.height)).contains(&pixel[1])
+        let pixel = self.window_pixel(position);
+        if !(f64::from(rect.x)..f64::from(rect.x + rect.width)).contains(&pixel[0])
+            || !(f64::from(rect.y)..f64::from(rect.y + rect.height)).contains(&pixel[1])
         {
             return None;
         }
@@ -378,11 +377,11 @@ impl View {
             })
         };
         let panel = frame.panel;
-        contains(panel.bounds(frame.cell)).then(|| {
+        contains(panel.bounds(frame.cell, frame.origin)).then(|| {
             panel
                 .buttons()
                 .find_map(|(cols, _, target)| {
-                    contains(panel.pixels(cols, frame.cell)).then_some(target)
+                    contains(panel.pixels(cols, frame.cell, frame.origin)).then_some(target)
                 })
                 .unwrap_or(SearchTarget::Field)
         })

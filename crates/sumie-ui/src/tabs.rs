@@ -1,61 +1,12 @@
-//! A divided Astryx tab bar. Paint and hits share integer device-pixel edges.
+//! D3+ terminal chrome. Paint and hits share one table of device-pixel edges.
 
 use std::ops::Range;
+use std::sync::Arc;
 
-use sumie_render::{Fill, PixelRect, Rgba, ThumbnailChrome};
+use sumie_render::{Fill, PixelRect, Rgba};
 
-use crate::tokens;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Palette {
-    pub surface: Rgba,
-    pub label: Rgba,
-    pub selected: Rgba,
-    pub muted: Rgba,
-    pub active_number: Rgba,
-    pub(crate) affordance: Rgba,
-    pub(crate) active: Rgba,
-    pub(crate) hover: Rgba,
-    pub(crate) close_hover: Rgba,
-    pub(crate) accent: Rgba,
-    pub(crate) on_accent: Rgba,
-    pub rule: Rgba,
-    pub inactive_pane: Rgba,
-    pub overlay: Rgba,
-}
-
-impl Palette {
-    /// Choose the matching color scheme at the WCAG black/white contrast crossover.
-    #[must_use]
-    pub fn for_luminance(linear_luminance: f64) -> Self {
-        if (linear_luminance + 0.05).powi(2) >= 1.05 * 0.05 {
-            tokens::LIGHT
-        } else {
-            tokens::DARK
-        }
-    }
-
-    #[must_use]
-    pub fn link_hint(self) -> Rgba {
-        let [r, g, b, _] = self.accent;
-        [r, g, b, 128]
-    }
-
-    #[must_use]
-    pub fn thumbnails(self, scale: u16, hovered: Option<usize>) -> ThumbnailChrome {
-        ThumbnailChrome {
-            hovered,
-            border: self.rule,
-            accent: self.accent,
-            on_accent: self.on_accent,
-            chip_size: scaled(tokens::THUMBNAIL_CHIP, scale),
-        }
-    }
-}
-
-fn scaled(logical: u32, scale: u16) -> u32 {
-    (logical * u32::from(scale) + 60) / 120
-}
+use crate::palette::{TabPalette, black, tint_over};
+use crate::{scaled, tokens};
 
 /// Height in device pixels at a scale given in 120ths. Leave at least one pixel for the PTY.
 #[must_use]
@@ -63,8 +14,7 @@ pub fn tab_bar_height(count: usize, scale: u16, device_height: u32) -> u32 {
     if count < 2 {
         return 0;
     }
-    scaled(tokens::TAB_HEIGHT + tokens::RAIL_GAP + tokens::RULE, scale)
-        .min(device_height.saturating_sub(1))
+    scaled(tokens::TAB_HEIGHT, scale).min(device_height.saturating_sub(1))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,96 +24,214 @@ pub enum TabHit {
     New,
 }
 
+/// Measured number and title advances in device pixels, before gaps or chrome.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TabMeasurement {
+    pub number: u32,
+    pub title: u32,
+    pub activity: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Slot {
+    end: u32,
+    number: u32,
+    activity: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Sizing {
+    chrome: u32,
+    max: u32,
+    ellipsis: u32,
+    gap: u32,
+    dot: u32,
+    active: usize,
+}
+
+impl Sizing {
+    fn widths(self, index: usize, tab: TabMeasurement) -> (u32, u32) {
+        let dot = if tab.activity && index != self.active {
+            self.dot + self.gap
+        } else {
+            0
+        };
+        let gap = if tab.title != 0 { self.gap } else { 0 };
+        let fixed = (self.chrome + dot + gap).saturating_add(tab.number);
+        (
+            fixed
+                .saturating_add(self.ellipsis.min(tab.title))
+                .min(self.max),
+            fixed.saturating_add(tab.title).min(self.max),
+        )
+    }
+
+    // Add neighboring tabs while the minimum widths of the contiguous run still fit.
+    fn visible(self, tabs: &[TabMeasurement], budget: u32) -> Range<usize> {
+        if budget == 0 {
+            return self.active..self.active;
+        }
+        let (mut first, mut end) = (self.active, self.active + 1);
+        let mut remaining = budget.saturating_sub(self.widths(first, tabs[first]).0);
+        loop {
+            let before = first..end;
+            if first > 0 {
+                let min = self.widths(first - 1, tabs[first - 1]).0;
+                if min <= remaining {
+                    remaining -= min;
+                    first -= 1;
+                }
+            }
+            if end < tabs.len() {
+                let min = self.widths(end, tabs[end]).0;
+                if min <= remaining {
+                    remaining -= min;
+                    end += 1;
+                }
+            }
+            if before == (first..end) {
+                return before;
+            }
+        }
+    }
+
+    fn slots(
+        self,
+        tabs: &[TabMeasurement],
+        visible: Range<usize>,
+        start: u32,
+        budget: u32,
+    ) -> Arc<[Slot]> {
+        let tabs = tabs[visible.clone()].iter().enumerate();
+        let widths = |index, &tab| self.widths(visible.start + index, tab);
+        let total = |shrink: u32| {
+            tabs.clone()
+                .map(|(slot, tab)| {
+                    let (min, ideal) = widths(slot, tab);
+                    ideal.saturating_sub(shrink).max(min)
+                })
+                .fold(0_u32, u32::saturating_add)
+        };
+        let (mut lo, mut hi) = (0, self.max);
+        if total(0) > budget {
+            // Find the same reduction for every tab that can still shrink.
+            while lo < hi {
+                let mid = u32::midpoint(lo, hi);
+                if total(mid) > budget {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+        }
+        let mut spare = if lo == 0 {
+            0
+        } else {
+            budget.saturating_sub(total(lo))
+        };
+        let mut end = start;
+        // Distribute leftover pixels from rounding only among tabs that can still shrink.
+        tabs.map(|(slot, tab)| {
+            let (min, ideal) = widths(slot, tab);
+            let reduced = ideal.saturating_sub(lo);
+            let extra = u32::from(spare > 0 && reduced >= min && reduced < ideal);
+            spare -= extra;
+            end += (reduced.max(min) + extra).min(budget);
+            Slot {
+                end,
+                number: tab.number,
+                activity: tab.activity && visible.start + slot != self.active,
+            }
+        })
+        .collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabLayout {
     width: u32,
     height: u32,
+    remaining_height: u32,
     scale: u16,
-    tab_height: u32,
-    tab_width: u32,
-    rule: u32,
-    number_reserve: u32,
-    slots: u32,
+    start: u32,
+    slots: Arc<[Slot]>,
     first: usize,
     active: usize,
 }
 
 impl TabLayout {
-    /// Reserve the new-tab button and keep the active tab in the visible run.
+    /// Fit measured device-pixel widths, keeping a contiguous run with the active tab visible.
     #[must_use]
     pub fn new(
         size: [u32; 2],
         scale: u16,
-        count: usize,
         active: usize,
+        measurements: &[TabMeasurement],
         label_cell: u32,
     ) -> Option<Self> {
         let [width, device_height] = size;
-        let height = tab_bar_height(count, scale, device_height);
-        if width == 0 || height == 0 || active >= count {
+        let height = tab_bar_height(measurements.len(), scale, device_height);
+        if width == 0 || height == 0 || active >= measurements.len() {
             return None;
         }
-        let tab_width = width.saturating_sub(scaled(tokens::PLUS_WIDTH, scale));
         let px = |logical| scaled(logical, scale);
-        let number_reserve = label_cell.saturating_mul(count.ilog10() + 1);
-        let minimum = (px(tokens::PADDING_LEFT)
-            + px(tokens::PADDING_RIGHT)
-            + px(tokens::CLOSE_SIZE)
-            + 3 * px(tokens::ITEM_GAP)
-            + px(tokens::DOT_SIZE)
-            - px(tokens::DOT_PULL))
-        .saturating_add(number_reserve)
-        .saturating_add(label_cell)
-        .max(1);
-        let slots = if tab_width == 0 {
-            0
-        } else {
-            (tab_width / minimum).clamp(1, u32::try_from(count).unwrap_or(u32::MAX))
+        let available = width.saturating_sub(px(tokens::PLUS_WIDTH));
+        let start = px(tokens::BAR_INSET).min(available.saturating_sub(1) / 2);
+        let budget = available - 2 * start;
+        let gap = px(tokens::ITEM_GAP);
+        let sizing = Sizing {
+            chrome: px(tokens::PADDING_LEFT)
+                + px(tokens::PADDING_RIGHT)
+                + px(tokens::CLOSE_SIZE).max(1)
+                + gap,
+            max: px(tokens::TAB_MAX_WIDTH),
+            ellipsis: label_cell,
+            gap,
+            dot: px(tokens::DOT_SIZE).max(1),
+            active,
         };
-        let first = active
-            .saturating_sub(slots as usize / 2)
-            .min(count - slots as usize);
-        let rule = px(tokens::RULE).min(height - 1);
+        let visible = sizing.visible(measurements, budget);
+        let slots = sizing.slots(measurements, visible.clone(), start, budget);
         Some(Self {
             width,
             height,
+            remaining_height: device_height - height,
             scale,
-            tab_height: px(tokens::TAB_HEIGHT).min(height - rule),
-            tab_width,
-            rule,
-            number_reserve,
+            start,
             slots,
-            first,
+            first: visible.start,
             active,
         })
     }
 
     #[must_use]
-    pub const fn visible(self) -> Range<usize> {
-        self.first..self.first + self.slots as usize
+    pub fn visible(&self) -> Range<usize> {
+        self.first..self.first + self.slots.len()
     }
 
-    fn px(self, logical: u32) -> u32 {
+    fn px(&self, logical: u32) -> u32 {
         scaled(logical, self.scale)
     }
 
-    fn edge(self, slot: u32) -> u32 {
-        u32::try_from(u64::from(self.tab_width) * u64::from(slot) / u64::from(self.slots))
-            .expect("edge within strip")
+    fn slot(&self, index: usize) -> Slot {
+        self.slots[index - self.first]
     }
 
-    fn tab(self, index: usize) -> PixelRect {
-        assert!(self.visible().contains(&index), "tab index not visible");
-        let slot = u32::try_from(index - self.first).expect("visible tab slot");
-        let left = self.edge(slot);
-        rect(left, 0, self.edge(slot + 1) - left, self.tab_height)
+    fn tab(&self, index: usize) -> PixelRect {
+        let slot = self.slot(index);
+        let left = if index == self.first {
+            self.start
+        } else {
+            self.slot(index - 1).end
+        };
+        rect(left, 0, slot.end - left, self.height)
     }
 
-    fn close(self, tab: PixelRect) -> Option<PixelRect> {
+    fn close(&self, tab: PixelRect, number: u32) -> Option<PixelRect> {
         let side = self.px(tokens::CLOSE_SIZE).max(1);
         let trailing = self.px(tokens::PADDING_RIGHT) + side;
         let reserved = self.px(tokens::PADDING_LEFT) + self.px(tokens::ITEM_GAP) + trailing;
-        if tab.size[0] < reserved.saturating_add(self.number_reserve) || tab.size[1] < side {
+        if tab.size[0] < reserved.saturating_add(number) || tab.size[1] < side {
             return None;
         }
         Some(rect(
@@ -179,13 +247,14 @@ impl TabLayout {
     /// # Panics
     /// The index must be in `visible()`.
     #[must_use]
-    pub fn label(self, index: usize) -> PixelRect {
+    pub fn label(&self, index: usize) -> PixelRect {
         let tab = self.tab(index);
+        let number = self.slot(index).number;
         let [width, height] = tab.size;
         let left = tab.origin[0].cast_unsigned();
-        let space = width.saturating_sub(self.number_reserve.max(1));
+        let space = width.saturating_sub(number.max(1));
         let padding = self.px(tokens::PADDING_LEFT).min(space);
-        let end = self.close(tab).map_or_else(
+        let end = self.close(tab, number).map_or_else(
             || left + width - self.px(tokens::PADDING_RIGHT).min(space - padding),
             |close| close.origin[0].cast_unsigned() - self.px(tokens::ITEM_GAP),
         );
@@ -197,9 +266,14 @@ impl TabLayout {
     /// # Panics
     /// The index must be in `visible()`.
     #[must_use]
-    pub fn number(self, index: usize, number_width: u32) -> PixelRect {
+    pub fn number(&self, index: usize) -> PixelRect {
         let mut label = self.label(index);
-        label.size[0] = label.size[0].min(number_width);
+        if let Some(dot) = self.dot(index, label) {
+            let offset = dot.size[0] + self.px(tokens::ITEM_GAP);
+            label.origin[0] += offset.cast_signed();
+            label.size[0] -= offset;
+        }
+        label.size[0] = label.size[0].min(self.slot(index).number);
         label
     }
 
@@ -208,31 +282,32 @@ impl TabLayout {
     /// # Panics
     /// The index must be in `visible()`.
     #[must_use]
-    pub fn title(self, index: usize, number_width: u32, activity: bool) -> PixelRect {
-        let mut label = self.label(index);
+    pub fn title(&self, index: usize) -> PixelRect {
+        let label = self.label(index);
         let gap = self.px(tokens::ITEM_GAP);
-        let mut skip = number_width.saturating_add(gap).min(label.size[0]);
-        if activity && let Some(dot) = self.dot(index, label, number_width) {
-            skip =
-                dot.origin[0].cast_unsigned() - label.origin[0].cast_unsigned() + dot.size[0] + gap;
-        }
-        label.origin[0] = (label.origin[0].cast_unsigned() + skip).cast_signed();
-        label.size[0] -= skip;
-        label
+        let dot = self.dot(index, label).map_or(0, |dot| dot.size[0] + gap);
+        let skip = self
+            .slot(index)
+            .number
+            .saturating_add(gap + dot)
+            .min(label.size[0]);
+        rect(
+            label.origin[0].cast_unsigned() + skip,
+            0,
+            label.size[0] - skip,
+            label.size[1],
+        )
     }
 
-    fn dot(self, index: usize, label: PixelRect, number_width: u32) -> Option<PixelRect> {
+    fn dot(&self, index: usize, label: PixelRect) -> Option<PixelRect> {
+        let slot = self.slot(index);
         let size = self.px(tokens::DOT_SIZE).max(1);
-        let gap = self.px(tokens::ITEM_GAP);
-        let offset = number_width.saturating_add(gap - self.px(tokens::DOT_PULL));
-        if index == self.active
-            || size > label.size[1]
-            || offset.saturating_add(size + gap) >= label.size[0]
-        {
+        let needed = slot.number.saturating_add(size + self.px(tokens::ITEM_GAP));
+        if !slot.activity || size > label.size[1] || needed > label.size[0] {
             return None;
         }
         Some(rect(
-            label.origin[0].cast_unsigned() + offset,
+            label.origin[0].cast_unsigned(),
             (label.size[1] - size) / 2,
             size,
             size,
@@ -243,52 +318,60 @@ impl TabLayout {
     ///
     /// # Panics
     /// The index must be in `visible()`.
-    pub fn activity_dot(
-        self,
-        palette: Palette,
-        index: usize,
-        number_width: u32,
-        out: &mut Vec<Fill>,
-    ) {
-        if let Some(dot) = self.dot(index, self.label(index), number_width) {
-            rounded(out, dot, dot.size[0], palette.accent);
+    pub fn activity_dot(&self, palette: TabPalette, index: usize, out: &mut Vec<Fill>) {
+        if let Some(dot) = self.dot(index, self.label(index)) {
+            rounded(out, dot, dot.size[0], palette.active_number);
         }
     }
 
-    fn plus(self) -> PixelRect {
+    /// Underline only the active label, from the number through the rendered title.
+    pub fn underline(
+        &self,
+        palette: TabPalette,
+        index: usize,
+        title_end: u32,
+        baseline: u32,
+        out: &mut Vec<Fill>,
+    ) {
+        if index != self.active || !self.visible().contains(&index) {
+            return;
+        }
+        let label = self.label(index);
+        let x = label.origin[0].cast_unsigned();
+        let y = baseline.saturating_add(self.px(tokens::RULE));
+        let width = title_end.min(x + label.size[0]).saturating_sub(x);
+        let height = self
+            .px(tokens::INDICATOR)
+            .min(self.height.saturating_sub(y));
+        fill(out, rect(x, y, width, height), palette.active_number);
+    }
+
+    fn plus(&self) -> PixelRect {
+        let left = self.slots.last().map_or(self.start, |slot| slot.end);
         rect(
-            self.tab_width,
+            left,
             0,
-            self.width - self.tab_width,
-            self.tab_height,
+            self.px(tokens::PLUS_WIDTH).min(self.width - left),
+            self.height,
         )
     }
 
-    /// A boundary pixel belongs to the button to its right. Close describes the candidate box;
-    /// the caller must check whether that close button was shown in the presented frame.
+    /// Close describes the candidate box. The caller checks whether the presented frame drew it.
     #[must_use]
-    pub fn hit(self, [x, y]: [f64; 2]) -> Option<TabHit> {
-        if !(0.0..f64::from(self.width)).contains(&x)
-            || !(0.0..f64::from(self.tab_height)).contains(&y)
+    pub fn hit(&self, [x, y]: [f64; 2]) -> Option<TabHit> {
+        if !(f64::from(self.start)..f64::from(self.width)).contains(&x)
+            || !(0.0..f64::from(self.height)).contains(&y)
         {
             return None;
         }
-        if x >= f64::from(self.tab_width) {
-            return Some(TabHit::New);
+        let slot = self.slots.partition_point(|slot| f64::from(slot.end) <= x);
+        if slot == self.slots.len() {
+            return contains(self.plus(), [x, y]).then_some(TabHit::New);
         }
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "bounded window coordinate"
-        )]
-        let pixel = x as u32;
-        let slot = (u64::from(pixel + 1) * u64::from(self.slots) - 1) / u64::from(self.tab_width);
-        let index = self.first + usize::try_from(slot).ok()?;
-        if let Some(close) = self.close(self.tab(index))
-            && (0..2).zip([x, y]).all(|(i, point)| {
-                let start = f64::from(close.origin[i]);
-                (start..start + f64::from(close.size[i])).contains(&point)
-            })
+        let index = self.first + slot;
+        if self
+            .close(self.tab(index), self.slots[slot].number)
+            .is_some_and(|close| contains(close, [x, y]))
         {
             return Some(TabHit::Close(index));
         }
@@ -296,91 +379,77 @@ impl TabLayout {
     }
 
     /// Append the bar fills and affordances in paint order, reusing the caller's buffer.
-    pub fn fills(self, palette: Palette, hover: Option<TabHit>, out: &mut Vec<Fill>) {
-        let rule = blend(palette.surface, palette.rule);
-        let rule_y = self.height - self.rule;
+    pub fn fills(&self, palette: TabPalette, hover: Option<TabHit>, out: &mut Vec<Fill>) {
         fill(out, rect(0, 0, self.width, self.height), palette.surface);
-        fill(out, rect(0, rule_y, self.width, self.rule), rule);
+        self.shadow(out);
+        self.dividers(out, tint_over(palette.surface, palette.selected, 23));
 
-        if self.slots != 0 {
-            let hovered = match hover {
-                Some(TabHit::Tab(index) | TabHit::Close(index)) => Some(index),
-                _ => None,
-            };
+        if self.visible().contains(&self.active) {
             self.paint_tab(
                 out,
                 palette,
-                self.tab(self.active),
-                true,
+                self.active,
                 hover == Some(TabHit::Close(self.active)),
             );
-            if let Some(index) =
-                hovered.filter(|&i| i != self.active && self.visible().contains(&i))
-            {
-                self.paint_tab(
+        }
+        if let Some(TabHit::Tab(index) | TabHit::Close(index)) = hover
+            && index != self.active
+            && self.visible().contains(&index)
+        {
+            self.paint_tab(out, palette, index, hover == Some(TabHit::Close(index)));
+        }
+        self.paint_plus(out, palette, hover == Some(TabHit::New));
+    }
+
+    fn shadow(&self, out: &mut Vec<Fill>) {
+        let depth = self.px(tokens::SHADOW_HEIGHT);
+        for row in 0..depth.min(self.remaining_height) {
+            let alpha = (41 * (depth - row) + depth / 2) / depth;
+            let color = black(u8::try_from(alpha).expect("shadow alpha fits in a byte"));
+            fill(out, rect(0, self.height + row, self.width, 1), color);
+        }
+        let rule = self.px(tokens::RULE).min(self.remaining_height);
+        fill(out, rect(0, self.height, self.width, rule), black(89));
+    }
+
+    fn dividers(&self, out: &mut Vec<Fill>, color: Rgba) {
+        let inset = self.px(tokens::DIVIDER_INSET);
+        let height = self.height.saturating_sub(2 * inset);
+        let rule = self.px(tokens::RULE);
+        for index in self.visible().skip(1) {
+            if index != self.active && index - 1 != self.active {
+                fill(
                     out,
-                    palette,
-                    self.tab(index),
-                    false,
-                    hover == Some(TabHit::Close(index)),
+                    rect(self.slot(index - 1).end, inset, rule, height),
+                    color,
                 );
             }
-            self.dividers(out, rule);
-        }
-        self.paint_plus(out, palette, rule, hover == Some(TabHit::New));
-    }
-
-    fn dividers(self, out: &mut Vec<Fill>, color: Rgba) {
-        let inset = self.px(tokens::DIVIDER_INSET);
-        let height = self.tab_height.saturating_sub(2 * inset);
-        for slot in 1..self.slots {
-            let index = self.first + slot as usize;
-            if index != self.active && index - 1 != self.active {
-                fill(out, rect(self.edge(slot), inset, self.rule, height), color);
-            }
         }
     }
 
-    fn paint_tab(
-        self,
-        out: &mut Vec<Fill>,
-        palette: Palette,
-        tab: PixelRect,
-        active: bool,
-        close_hover: bool,
-    ) {
-        let background = if active {
-            let rule_y = self.height - self.rule;
-            let indicator = self.px(tokens::INDICATOR).min(rule_y - self.tab_height);
-            let rail_y = rule_y - indicator;
-            let x = tab.origin[0].cast_unsigned();
-            let width = tab.size[0];
-            fill(out, rect(x, 0, width, rail_y), palette.active);
-            fill(out, rect(x, rail_y, width, indicator), palette.accent);
-            palette.active
-        } else {
-            fill(out, tab, palette.hover);
-            palette.hover
-        };
-        if let Some(close) = self.close(tab) {
+    fn paint_tab(&self, out: &mut Vec<Fill>, palette: TabPalette, index: usize, close_hover: bool) {
+        if let Some(close) = self.close(self.tab(index), self.slot(index).number) {
+            let label = if index == self.active {
+                palette.selected
+            } else {
+                palette.hovered
+            };
             let color = if close_hover {
                 rounded(
                     out,
                     close,
                     2 * self.px(tokens::CLOSE_RADIUS),
-                    blend(background, palette.close_hover),
+                    tint_over(palette.surface, palette.selected, 31),
                 );
-                palette.selected
-            } else if active {
-                palette.affordance
+                label
             } else {
-                palette.muted
+                tint_over(palette.surface, label, 179)
             };
             self.paint_close(out, close, color);
         }
     }
 
-    fn paint_close(self, out: &mut Vec<Fill>, close: PixelRect, color: Rgba) {
+    fn paint_close(&self, out: &mut Vec<Fill>, close: PixelRect, color: Rgba) {
         let [x, y] = close.origin.map(i32::cast_unsigned);
         let side = self.px(tokens::CLOSE_MARK).max(1).min(close.size[0]);
         // A diagonal needs a wider scanline than the axis-aligned rule to carry the same weight.
@@ -403,22 +472,18 @@ impl TabLayout {
         }
     }
 
-    fn paint_plus(self, out: &mut Vec<Fill>, palette: Palette, rule: Rgba, hovered: bool) {
+    fn paint_plus(&self, out: &mut Vec<Fill>, palette: TabPalette, hovered: bool) {
         let plus = self.plus();
-        let [left, _] = plus.origin.map(i32::cast_unsigned);
+        let left = plus.origin[0].cast_unsigned();
         let [width, height] = plus.size;
         let color = if hovered {
-            fill(out, plus, palette.hover);
             palette.selected
         } else {
-            palette.affordance
+            tint_over(palette.surface, palette.selected, 140)
         };
-        if left != 0 {
-            fill(out, rect(left, 0, self.rule.min(width), height), rule);
-        }
-        let side = self.px(tokens::PLUS_MARK).max(1).min(width).min(height);
+        let side = self.px(tokens::PLUS_MARK).min(width).min(height);
         if side != 0 {
-            let stroke = self.rule.clamp(1, side);
+            let stroke = self.px(tokens::RULE).clamp(1, side);
             let x = left + (width - side) / 2;
             let y = (height - side) / 2;
             let pad = (side - stroke) / 2;
@@ -435,19 +500,17 @@ fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
     }
 }
 
+fn contains(rect: PixelRect, point: [f64; 2]) -> bool {
+    (0..2).zip(point).all(|(axis, position)| {
+        let start = f64::from(rect.origin[axis]);
+        (start..start + f64::from(rect.size[axis])).contains(&position)
+    })
+}
+
 fn fill(out: &mut Vec<Fill>, rect: PixelRect, color: Rgba) {
     if !rect.size.contains(&0) {
         out.push(Fill { rect, color });
     }
-}
-
-fn blend(base: Rgba, over: Rgba) -> Rgba {
-    let alpha = u16::from(over[3]);
-    let channel = |i: usize| {
-        let sum = u16::from(base[i]) * (255 - alpha) + u16::from(over[i]) * alpha;
-        u8::try_from((sum + 127) / 255).expect("weighted color channel")
-    };
-    [channel(0), channel(1), channel(2), 255]
 }
 
 fn rounded(out: &mut Vec<Fill>, rect_box: PixelRect, diameter: u32, color: Rgba) {
@@ -493,61 +556,4 @@ fn rounded(out: &mut Vec<Fill>, rect_box: PixelRect, diameter: u32, color: Rgba)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scaled_tabs_share_edges_with_hit_regions() {
-        for (scale, body, strip, edge, close_x, close_y, side, padding, gap) in [
-            (120, 32, 629, 209, 185, 7, 18, 12, 8),
-            (150, 40, 620, 206, 175, 8, 23, 15, 10),
-            (180, 48, 611, 203, 167, 10, 27, 18, 12),
-            (240, 64, 593, 197, 149, 14, 36, 24, 16),
-        ] {
-            let layout = TabLayout::new([665, 120], scale, 3, 1, scaled(8, scale)).unwrap();
-            assert_eq!(layout.visible(), 0..3);
-            assert_eq!(
-                layout.label(0),
-                rect(padding, 0, close_x - gap - padding, body)
-            );
-            let [body, strip, edge, close_x, close_y, side] =
-                [body, strip, edge, close_x, close_y, side].map(f64::from);
-            for (point, expected) in [
-                ([close_x - 0.01, close_y], Some(TabHit::Tab(0))),
-                ([close_x, close_y - 0.01], Some(TabHit::Tab(0))),
-                ([close_x, close_y], Some(TabHit::Close(0))),
-                (
-                    [close_x + side - 0.01, close_y + side - 0.01],
-                    Some(TabHit::Close(0)),
-                ),
-                ([close_x + side, close_y], Some(TabHit::Tab(0))),
-                ([edge - 0.01, 0.0], Some(TabHit::Tab(0))),
-                ([edge, 0.0], Some(TabHit::Tab(1))),
-                ([strip - 0.01, 0.0], Some(TabHit::Tab(2))),
-                ([strip, body - 0.01], Some(TabHit::New)),
-                ([strip, body], None),
-                ([665.0, 0.0], None),
-            ] {
-                assert_eq!(
-                    layout.hit(point),
-                    expected,
-                    "scale {scale}, point {point:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn overflow_keeps_active_and_plus_in_view() {
-        assert_eq!(tab_bar_height(1, 120, 100), 0);
-        let layout = TabLayout::new([250, 100], 120, 16, 12, 8).unwrap();
-        assert_eq!(layout.visible(), 11..13);
-        assert_eq!(layout.hit([107.0, 0.0]), Some(TabHit::Tab(12)));
-        assert_eq!(layout.hit([214.0, 0.0]), Some(TabHit::New));
-
-        let clipped = TabLayout::new([35, 2], 120, 16, 12, 8).unwrap();
-        assert!(clipped.visible().is_empty());
-        assert_eq!(clipped.hit([0.0, 0.0]), Some(TabHit::New));
-        assert_eq!(clipped.hit([0.0, 1.0]), None);
-    }
-}
+mod tests;

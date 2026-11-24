@@ -54,6 +54,8 @@ pub struct Snapshot {
     pub cursor: Option<Cursor>,
     pub foreground: Rgb,
     pub background: Rgb,
+    /// Effective ANSI yellow (palette entry 3), including any OSC 4 override.
+    pub ansi_yellow: Rgb,
 }
 
 /// Viewport contents for change detection, excluding cursor and terminal metadata.
@@ -386,6 +388,11 @@ impl Terminal {
             cursor,
             foreground: colors.foreground,
             background: colors.background,
+            ansi_yellow: if let Some(palette) = &colors.palette {
+                palette[3]
+            } else {
+                self.render_palette()?[3]
+            },
         })
     }
 

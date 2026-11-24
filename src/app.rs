@@ -95,6 +95,7 @@ struct PaneState {
     id: u64,
     rect: Rect,
     cell: [u32; 2],
+    viewport_px: [u16; 2],
     exited: bool,
     paste_recipient: Option<u64>,
     search: Option<search::Bar>,
@@ -201,16 +202,22 @@ impl App {
         };
         let changes = self.config.changes(&next);
         if let Some(session) = &mut self.session {
+            let mut resize_grid = changes.padding;
             if changes.font {
                 match session.view.set_font(next.font.clone()) {
-                    Ok(true) => session.resize_grid()?,
-                    Ok(false) => (),
+                    Ok(resized) => resize_grid |= resized,
                     Err(error) => {
                         session.active_mut().frame_dirty |=
                             self.reload.show_error(format!("sumie.toml:1:1: {error}"));
                         return Ok(());
                     }
                 }
+            }
+            if changes.padding {
+                session.view.set_padding(next.window.padding());
+            }
+            if resize_grid {
+                session.resize_grid()?;
             }
             if changes.scrollback_limit {
                 for tab in session.all_panes_mut() {
@@ -329,7 +336,14 @@ impl Session {
         config: &sumie_config::Config,
     ) -> Result<Self> {
         let font = FontSettings::from_config(config.font.clone())?;
-        let view = View::new(scale, logical, device, font, &config.colors)?;
+        let view = View::new(
+            scale,
+            logical,
+            device,
+            font,
+            &config.colors,
+            config.window.padding(),
+        )?;
         let home = std::env::home_dir().ok_or("no home directory for login shell")?;
         let spawn = tabs::PaneHost::new(handle, image_dimension_limit);
         let first = spawn.open(0, view.content_rect(), &view, config, &home)?;
@@ -494,14 +508,7 @@ impl Session {
             );
         }
         self.view.end_frame();
-        self.view.draw_tabs(
-            self.tabs
-                .as_slice()
-                .iter()
-                .map(|t| (t.focused().label(&self.shell), t.activity)),
-            self.tabs.active_index().unwrap(),
-            active.snapshot.as_ref().unwrap().background,
-        );
+        self.draw_tab_strip();
         gpu.upload_atlas(&self.view.atlas());
         self.view.atlas_uploaded();
         Ok(())

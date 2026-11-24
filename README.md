@@ -53,6 +53,10 @@ include = []
 minimum-contrast = 1.1 # 1.0 disables text contrast correction
 scrollback-limit = 50000000
 
+[window]
+padding-x = 12
+padding-y = 6
+
 [font]
 family = "JetBrains Mono"
 size = 15.0 # points at 96 DPI
@@ -76,6 +80,13 @@ Sumie uses Cobalt2 by default. Colors use `#rrggbb` notation; an optional
 
 `scrollback-limit` sets the approximate scrollback limit in bytes. Lowering it
 can discard history immediately. Set it to `0` to clear and disable scrollback.
+
+| `[window]` setting | Default | Padding in logical pixels |
+| --- | ---: | --- |
+| `padding-x` | `12` | On the left and right of each terminal pane |
+| `padding-y` | `6` | At the top and bottom of each terminal pane |
+
+Set either value to `0` to remove padding on that axis.
 
 Bold and italic use the font family's matching faces when available. They do not change the grid size. SGR 2 dims the foreground to 50% opacity. Underlines can be single, double, curly, dotted or dashed; SGR 58 sets their color independently of text. Strikethrough and overline can appear together with an underline.
 

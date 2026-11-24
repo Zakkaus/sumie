@@ -23,7 +23,7 @@ use thiserror::Error;
 
 pub use atlas::{Atlas, AtlasGlyph, Rect};
 pub use decoration::Decoration;
-pub use layout::{ShapedGlyph, ShapedRun};
+pub use layout::{ShapedGlyph, ShapedRun, TextGlyph, TextRun};
 pub use metrics::CellMetrics;
 
 const MAX_PPEM: f32 = 4096.0;
@@ -215,6 +215,42 @@ impl FontSystem {
         self.faces
             .get(face.0)
             .map(|face| face.matched.family.as_str())
+    }
+
+    /// Load the ten digit glyphs of a secondary monospaced face into this atlas's namespace.
+    /// The size and returned common advance are in device pixels.
+    ///
+    /// # Errors
+    /// Returns an error on invalid size, failed discovery or load, or missing digits or metrics.
+    pub fn load_digits(
+        &mut self,
+        family: &str,
+        ppem: f32,
+    ) -> Result<([GlyphKey; 10], u32), FontError> {
+        if !(0.0 < ppem && ppem <= MAX_PPEM) {
+            return Err(FontError::InvalidSize);
+        }
+        let matched = Discovery::new(family, None)?.find(None, FontStyle::default())?;
+        let (font, weight, synthetic) = matched.load(&self.faces, None)?;
+        let metrics = CellMetrics::measure(&font, ppem)?;
+        let id = FaceId(self.faces.len());
+        let mut keys = [GlyphKey::new(id, GlyphId::new(0), ppem); 10];
+        let charmap = font.charmap();
+        for (key, digit) in keys.iter_mut().zip('0'..='9') {
+            let glyph = charmap
+                .map_unicode(digit)
+                .ok_or(FontError::MissingGlyph(u32::from(digit)))?;
+            *key = GlyphKey::new(id, glyph, ppem);
+        }
+        self.faces.push(Face {
+            matched,
+            font,
+            weight,
+            ppem,
+            baseline: metrics.baseline,
+            synthetic,
+        });
+        Ok((keys, metrics.width))
     }
 
     fn styled_primary(&mut self, style: FontStyle) -> Result<FaceId, FontError> {

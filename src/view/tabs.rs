@@ -1,12 +1,16 @@
-//! Compose native tab chrome in a label-sized font atlas; never reshape the hidden tabs.
+//! Measure and draw tab chrome in its own atlas; hit-test only the presented strip.
 
-use sumie_font::{FontOptions, FontStyle, FontSystem};
+use sumie_font::{FontError, FontOptions, FontSystem, TextGlyph, TextRun};
 use sumie_render::{AtlasRect, ChromeLayer, Fill, GlyphQuad, PixelRect, Rgba};
-use sumie_ui::{LABEL_FAMILY, LABEL_PX, LABEL_WEIGHT, Palette, TabHit, TabLayout, tab_bar_height};
-use sumie_vt::Rgb;
+use sumie_ui::{
+    LABEL_FAMILY, LABEL_PX, LABEL_WEIGHT, NUMBER_FAMILY, NUMBER_PX, TabHit, TabLayout,
+    TabMeasurement, TabPalette, tab_bar_height,
+};
+use sumie_vt::Snapshot;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    FontErrors, Glyphs, Line, View, collect_dirty, overlays::Mask, palette_for_background, upload,
+    FontErrors, Glyphs, View, attributes::glyph_quad, collect_dirty, overlays::Mask, rgba, upload,
 };
 use crate::Result;
 
@@ -32,15 +36,16 @@ impl Default for Tabs {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 struct TabPlacement {
     layout: TabLayout,
+    size: [u32; 2],
     active: usize,
     hover: Option<TabHit>,
 }
 
 impl TabPlacement {
-    fn hovered_tab(self) -> Option<usize> {
+    fn hovered_tab(&self) -> Option<usize> {
         match self.hover {
             Some(TabHit::Tab(index) | TabHit::Close(index)) => Some(index),
             _ => None,
@@ -50,15 +55,15 @@ impl TabPlacement {
 
 #[derive(Default)]
 struct TabLabel {
-    text: String,
-    ink: Glyphs,
-    activity: bool,
+    source: String,
+    run: TextRun,
+    ink: Vec<GlyphQuad>,
+    fit: Option<(u32, u32)>,
 }
 
-#[derive(Default)]
 struct TabDigits {
-    ink: Glyphs,
-    edges: Option<[usize; 11]>,
+    ink: [Option<GlyphQuad>; 10],
+    cell: u32,
 }
 
 struct TabPaint {
@@ -66,9 +71,11 @@ struct TabPaint {
     glyphs: Glyphs,
     dirty: Vec<AtlasRect>,
     labels: Vec<TabLabel>,
+    measurements: Vec<TabMeasurement>,
     digits: TabDigits,
-    scratch: Line,
-    frame: Option<(TabPlacement, Palette)>,
+    ellipsis: TextRun,
+    scratch: String,
+    frame: Option<(TabPlacement, TabPalette)>,
     fills: Vec<Fill>,
 }
 
@@ -82,7 +89,7 @@ impl Tabs {
 
     pub(super) fn layer(&self) -> Option<ChromeLayer<'_>> {
         let paint = self.paint.as_ref()?;
-        let (_, palette) = paint.frame?;
+        let (_, palette) = paint.frame.as_ref()?;
         Some(ChromeLayer {
             fills: &paint.fills,
             glyphs: &paint.glyphs.quads,
@@ -96,7 +103,7 @@ impl Tabs {
         self.presented = self
             .paint
             .as_ref()
-            .and_then(|paint| paint.frame.map(|(placement, _)| placement));
+            .and_then(|paint| paint.frame.as_ref().map(|(placement, _)| placement.clone()));
         if let Some(paint) = &mut self.paint {
             paint.font.clear_dirty_regions();
             paint.dirty.clear();
@@ -159,11 +166,15 @@ impl View {
 
     /// Includes the reserved close area, even before the hover frame reveals the button.
     pub(crate) fn tab_hover_hit(&self, position: (f64, f64)) -> Option<TabHit> {
-        self.tabs.presented?.layout.hit(self.window_pixel(position))
+        self.tabs
+            .presented
+            .as_ref()?
+            .layout
+            .hit(self.window_pixel(position))
     }
 
     pub(crate) fn tab_hit(&self, position: (f64, f64)) -> Option<TabHit> {
-        let presented = self.tabs.presented?;
+        let presented = self.tabs.presented.as_ref()?;
         match presented.layout.hit(self.window_pixel(position))? {
             TabHit::Close(index)
                 if index != presented.active && presented.hovered_tab() != Some(index) =>
@@ -180,203 +191,300 @@ impl View {
         &mut self,
         titles: impl Iterator<Item = (&'a str, bool)>,
         active: usize,
-        background: Rgb,
+        snapshot: &Snapshot,
     ) {
         let scale = self.scale_units();
         let Some(paint) = &mut self.tabs.paint else {
             return;
         };
-        let Some(layout) = TabLayout::new(
-            self.device,
-            scale,
-            self.tabs.count,
-            active,
-            paint.font.metrics().width,
-        ) else {
+        if self.tabs.height == 0 {
             paint.frame = None;
             return;
-        };
-        paint.build(
-            TabPlacement {
-                layout,
-                active,
-                hover: self.tabs.hover,
-            },
-            titles,
-            palette_for_background(background),
-            &mut self.font_errors,
+        }
+        let (measured, shaped) =
+            paint.measure(self.tabs.count, active, titles, &mut self.font_errors);
+        let palette = TabPalette::new(
+            rgba(snapshot.background),
+            rgba(snapshot.foreground),
+            rgba(snapshot.ansi_yellow),
         );
+        let layout = match &paint.frame {
+            Some((previous, previous_palette))
+                if !measured && previous.size == self.device && previous.active == active =>
+            {
+                if !shaped && previous.hover == self.tabs.hover && *previous_palette == palette {
+                    return;
+                }
+                previous.layout.clone()
+            }
+            _ => {
+                let Some(layout) = TabLayout::new(
+                    self.device,
+                    scale,
+                    active,
+                    &paint.measurements,
+                    paint.ellipsis.width().max(1),
+                ) else {
+                    paint.frame = None;
+                    return;
+                };
+                layout
+            }
+        };
+        let placement = TabPlacement {
+            layout,
+            size: self.device,
+            active,
+            hover: self.tabs.hover,
+        };
+        paint.build(placement, palette, &mut self.font_errors);
     }
 }
 
 impl TabPaint {
     fn new(scale: u32) -> Result<Self> {
+        let scale = f32::from(u16::try_from(scale)?) / 120.0;
+        let options = FontOptions {
+            weight: Some(LABEL_WEIGHT),
+            ..FontOptions::default()
+        };
+        let mut font = FontSystem::new(LABEL_FAMILY, LABEL_PX, scale, options)
+            .or_else(|_| FontSystem::new(NUMBER_FAMILY, LABEL_PX, scale, options))?;
+        let digits = TabDigits::new(&mut font, NUMBER_PX * scale)?;
+        let mut ellipsis = TextRun::default();
+        font.shape_text_into(std::iter::once("…"), &mut ellipsis)?;
         Ok(Self {
-            font: FontSystem::new(
-                LABEL_FAMILY,
-                f32::from(LABEL_PX),
-                f32::from(u16::try_from(scale)?) / 120.0,
-                FontOptions {
-                    weight: Some(LABEL_WEIGHT),
-                    ..FontOptions::default()
-                },
-            )?,
+            font,
             glyphs: Glyphs::default(),
             dirty: Vec::new(),
             labels: Vec::new(),
-            digits: TabDigits::default(),
-            scratch: Line::default(),
+            measurements: Vec::new(),
+            digits,
+            ellipsis,
+            scratch: String::new(),
             frame: None,
             fills: Vec::new(),
         })
     }
 
-    fn build<'a>(
+    fn measure<'a>(
         &mut self,
-        placement: TabPlacement,
+        count: usize,
+        active: usize,
         titles: impl Iterator<Item = (&'a str, bool)>,
-        palette: Palette,
         errors: &mut FontErrors,
-    ) {
-        let labels_changed = self.update_labels(placement, titles, errors);
-        if !labels_changed && self.frame == Some((placement, palette)) {
-            return;
+    ) -> (bool, bool) {
+        let mut measured = count != self.labels.len();
+        let mut shaped = false;
+        self.labels.resize_with(count, TabLabel::default);
+        self.measurements.resize_with(count, || TabMeasurement {
+            number: 0,
+            title: 0,
+            activity: false,
+        });
+        for (index, ((label, measurement), (title, activity))) in self
+            .labels
+            .iter_mut()
+            .zip(&mut self.measurements)
+            .zip(titles)
+            .enumerate()
+        {
+            shaped |= label.update(title, &mut self.scratch, &mut self.font, errors);
+            let next = TabMeasurement {
+                number: self.digits.width(index + 1),
+                title: label.run.width(),
+                activity: activity && index != active,
+            };
+            measured |= *measurement != next;
+            *measurement = next;
         }
-        self.digits
-            .prepare(&mut self.font, &mut self.scratch, errors);
+        (measured, shaped)
+    }
+
+    fn build(&mut self, placement: TabPlacement, palette: TabPalette, errors: &mut FontErrors) {
         self.glyphs.quads.clear();
         self.fills.clear();
-        let TabPlacement {
-            layout,
-            active,
-            hover,
-        } = placement;
-        layout.fills(palette, hover, &mut self.fills);
-        let cells = self.font.metrics();
-        let hovered = placement.hovered_tab();
-        for (index, label) in layout.visible().zip(&self.labels) {
-            let number = index + 1;
-            let number_width = number_width(number, cells.width);
-            let rect = layout.number(index, number_width);
-            let top = (rect.size[1].cast_signed() - cells.height.cast_signed()) / 2;
-            self.digits.draw(
-                number,
-                cells.width,
-                rect,
-                top,
-                if index == active {
-                    palette.active_number
-                } else {
-                    palette.muted
-                },
-                &mut self.glyphs,
-            );
-            if label.activity {
-                layout.activity_dot(palette, index, number_width, &mut self.fills);
-            }
-            let rect = layout.title(index, number_width, label.activity);
-            self.glyphs.cover = Some(Mask::Inside(rect));
-            place_ink(
-                &mut self.glyphs,
-                &label.ink.quads,
-                [rect.origin[0], top],
-                if index == active || hovered == Some(index) {
-                    palette.selected
-                } else {
-                    palette.label
-                },
-            );
+        placement
+            .layout
+            .fills(palette, placement.hover, &mut self.fills);
+        for index in placement.layout.visible() {
+            self.draw_label(index, &placement, palette, errors);
         }
         collect_dirty(&self.font, &mut self.dirty);
         self.frame = Some((placement, palette));
     }
 
-    fn update_labels<'a>(
+    fn draw_label(
         &mut self,
-        placement: TabPlacement,
-        titles: impl Iterator<Item = (&'a str, bool)>,
+        index: usize,
+        placement: &TabPlacement,
+        palette: TabPalette,
+        errors: &mut FontErrors,
+    ) {
+        let layout = &placement.layout;
+        let rect = layout.number(index);
+        let metrics = self.font.metrics();
+        let top = (rect.size[1].cast_signed() - metrics.height.cast_signed()) / 2;
+        let selected = index == placement.active;
+        let color = if selected {
+            palette.selected
+        } else if placement.hovered_tab() == Some(index) {
+            palette.hovered
+        } else {
+            palette.label
+        };
+        let digit_color = if selected {
+            palette.active_number
+        } else {
+            palette.digits()
+        };
+        self.digits
+            .draw(index + 1, rect, top, digit_color, &mut self.glyphs);
+        layout.activity_dot(palette, index, &mut self.fills);
+        let title = layout.title(index);
+        let label = &mut self.labels[index];
+        let advance = label.fit_ink(title.size[0], &self.ellipsis, &mut self.font, errors);
+        self.glyphs.cover = Some(Mask::Inside(title));
+        place_ink(&mut self.glyphs, &label.ink, [title.origin[0], top], color);
+        if selected {
+            let end = if advance == 0 {
+                rect.origin[0].cast_unsigned() + rect.size[0]
+            } else {
+                title.origin[0].cast_unsigned() + advance
+            };
+            let baseline = (top + metrics.baseline).max(0).cast_unsigned();
+            layout.underline(palette, index, end, baseline, &mut self.fills);
+        }
+    }
+}
+
+impl TabLabel {
+    fn update(
+        &mut self,
+        source: &str,
+        scratch: &mut String,
+        font: &mut FontSystem,
         errors: &mut FontErrors,
     ) -> bool {
-        let visible = placement.layout.visible();
-        self.labels
-            .resize_with(self.labels.len().max(visible.len()), TabLabel::default);
-        let cell_width = self.font.metrics().width;
-        let mut changed = false;
-        for ((index, label), (title, activity)) in visible
-            .clone()
-            .zip(&mut self.labels)
-            .zip(titles.skip(visible.start))
-        {
-            let activity = activity && index != placement.active;
-            changed |= std::mem::replace(&mut label.activity, activity) != activity;
-            let width = placement
-                .layout
-                .title(index, number_width(index + 1, cell_width), activity)
-                .size[0];
-            self.scratch.ellipsize(title, width / cell_width);
-            if label.text == self.scratch.text {
-                continue;
-            }
-            // Cache the clipped source separately: drawing can replace unsupported glyphs.
-            label.text.clone_from(&self.scratch.text);
-            label.ink.quads.clear();
-            cache_ink(&mut self.scratch, &mut self.font, errors, &mut label.ink);
-            changed = true;
+        if self.source == source {
+            return false;
         }
-        changed
+        self.source.clear();
+        self.source.push_str(source);
+        self.fit = None;
+        scratch.clear();
+        if source.chars().any(char::is_control) {
+            scratch.extend(
+                source
+                    .chars()
+                    .map(|ch| if ch.is_control() { ' ' } else { ch }),
+            );
+        }
+        loop {
+            let input = if scratch.is_empty() {
+                source
+            } else {
+                scratch.as_str()
+            };
+            let Err(error) = font.shape_text_into(input.graphemes(true), &mut self.run) else {
+                break;
+            };
+            errors.warn(&error);
+            let FontError::MissingGlyph(value) = error else {
+                break;
+            };
+            let Some(ch) = char::from_u32(value).filter(|&ch| ch != '\u{fffd}') else {
+                break;
+            };
+            if scratch.is_empty() {
+                scratch.push_str(source);
+            }
+            let mut start = 0;
+            while let Some(offset) = scratch[start..].find(ch) {
+                start += offset;
+                scratch.replace_range(start..start + ch.len_utf8(), "\u{fffd}");
+                start += '\u{fffd}'.len_utf8();
+            }
+        }
+        true
+    }
+
+    fn fit_ink(
+        &mut self,
+        width: u32,
+        ellipsis: &TextRun,
+        font: &mut FontSystem,
+        errors: &mut FontErrors,
+    ) -> u32 {
+        if let Some((cached_width, advance)) = self.fit
+            && cached_width == width
+        {
+            return advance;
+        }
+        let (prefix, suffix_x, advance) = self.run.fit(width, ellipsis);
+        self.ink.clear();
+        cache_ink(font, errors, &mut self.ink, prefix, 0);
+        if let Some(x) = suffix_x {
+            cache_ink(font, errors, &mut self.ink, &ellipsis.glyphs, x);
+        }
+        self.fit = Some((width, advance));
+        advance
+    }
+}
+
+fn cache_ink(
+    font: &mut FontSystem,
+    errors: &mut FontErrors,
+    ink: &mut Vec<GlyphQuad>,
+    run: &[TextGlyph],
+    offset: i32,
+) {
+    for glyph in run {
+        match font.rasterize(glyph.key) {
+            Ok(image) if image.rect.width != 0 && image.rect.height != 0 => {
+                ink.push(glyph_quad(
+                    image,
+                    [glyph.x + offset, glyph.y],
+                    [0, 0],
+                    [0; 4],
+                ));
+            }
+            Ok(_) => (),
+            Err(error) => errors.warn(&error),
+        }
     }
 }
 
 impl TabDigits {
-    fn prepare(&mut self, font: &mut FontSystem, scratch: &mut Line, errors: &mut FontErrors) {
-        if self.edges.is_some() {
-            return;
+    fn new(font: &mut FontSystem, ppem: f32) -> Result<Self> {
+        let (keys, cell) = font.load_digits(NUMBER_FAMILY, ppem)?;
+        let mut ink = [None; 10];
+        for (quad, key) in ink.iter_mut().zip(keys) {
+            let image = font.rasterize(key)?;
+            *quad = Some(glyph_quad(
+                image,
+                [0, font.metrics().baseline],
+                [0, 0],
+                [0; 4],
+            ));
         }
-        // The existing ChromeLayer has one atlas at the label size. Cache its ten
-        // tabular digits once, independent of which numbers happen to be visible.
-        let mut edges = [0; 11];
-        for (edge, digit) in edges[1..].iter_mut().zip('0'..='9') {
-            scratch.clear();
-            scratch.text.push(digit);
-            scratch.widths.push(1);
-            cache_ink(scratch, font, errors, &mut self.ink);
-            *edge = self.ink.quads.len();
-        }
-        self.edges = Some(edges);
+        Ok(Self { ink, cell })
     }
 
-    fn draw(
-        &self,
-        mut number: usize,
-        cell_width: u32,
-        rect: PixelRect,
-        top: i32,
-        color: Rgba,
-        glyphs: &mut Glyphs,
-    ) {
-        let edges = self.edges.as_ref().expect("tab digits prepared");
+    fn width(&self, number: usize) -> u32 {
+        (number.ilog10() + 1) * self.cell
+    }
+
+    fn draw(&self, mut number: usize, rect: PixelRect, top: i32, color: Rgba, glyphs: &mut Glyphs) {
         glyphs.cover = Some(Mask::Inside(rect));
-        let mut x = rect.origin[0] + (number.ilog10() * cell_width).cast_signed();
+        let mut x = rect.origin[0] + (number.ilog10() * self.cell).cast_signed();
         while number != 0 {
             let digit = number % 10;
-            place_ink(
-                glyphs,
-                &self.ink.quads[edges[digit]..edges[digit + 1]],
-                [x, top],
-                color,
-            );
+            place_ink(glyphs, self.ink[digit].as_slice(), [x, top], color);
             number /= 10;
-            x -= cell_width.cast_signed();
+            x -= self.cell.cast_signed();
         }
     }
-}
-
-fn number_width(number: usize, cell_width: u32) -> u32 {
-    (number.ilog10() + 1) * cell_width
-}
-
-fn cache_ink(line: &mut Line, font: &mut FontSystem, errors: &mut FontErrors, ink: &mut Glyphs) {
-    line.draw(font, errors, ink, [0, 0], [0; 4], FontStyle::default());
 }
 
 fn place_ink(target: &mut Glyphs, ink: &[GlyphQuad], [x, y]: [i32; 2], color: Rgba) {

@@ -1,6 +1,16 @@
 use super::Terminal;
 
 #[test]
+fn snapshot_keeps_effective_ansi_yellow() {
+    let mut terminal = Terminal::new(5, 2).unwrap();
+    terminal.write(b"\x1b]4;3;rgb:ab/cd/ef\x07");
+    assert_eq!(
+        terminal.render_snapshot().unwrap().ansi_yellow,
+        [0xab, 0xcd, 0xef]
+    );
+}
+
+#[test]
 fn paste_filters_controls_in_both_modes() {
     let mut terminal = Terminal::new(5, 2).unwrap();
     for (mode, input, expected) in [

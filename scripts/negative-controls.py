@@ -230,6 +230,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("self.pane.images = (!snapshot.images.is_empty()).then(|| Arc::clone(&snapshot.images));",
                            "self.pane.images = None;"),
               "test grid_tests::grid_on_selected_backend ... FAILED")
+        probe("terminal grid starts at the pane edge", "test", "src/view.rs",
+              replace_once("pane.glyphs.offset = [grid.x.cast_signed(), grid.y.cast_signed()];",
+                           "pane.glyphs.offset = [rect.x.cast_signed(), rect.y.cast_signed()];"),
+              "test grid_tests::grid_on_selected_backend ... FAILED")
         probe("two tabs lose their bar", "test", "crates/sumie-ui/src/tabs.rs",
               replace_once("if count < 2 {", "if count < 3 {"),
               "test grid_tests::grid_on_selected_backend ... FAILED")
@@ -258,7 +262,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("self.enabled_at = Some(self.serial.wrapping_add(1));",
                            "self.enabled_at = Some(self.serial);"),
               "test ime::tests::reenable_discards_pending_and_old_serials_across_wrap ... FAILED")
-        probe("search reserves a terminal row", "test", "src/view.rs",
+        probe("search reserves a terminal row", "test", "src/view/geometry.rs",
               replace_once("Size {\n            cols,\n            rows,",
                            "Size {\n            cols,\n            rows: rows - u16::from(self.search_bar.is_some()),"),
               "test grid_tests::search_keeps_terminal_dimensions ... FAILED")

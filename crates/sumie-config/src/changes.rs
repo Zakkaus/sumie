@@ -14,6 +14,7 @@ pub struct Changes {
     pub minimum_contrast: bool,
     pub scrollback_limit: bool,
     pub thumbnail_rows: bool,
+    pub padding: bool,
 }
 
 impl Config {
@@ -43,6 +44,7 @@ impl Config {
                 != next.minimum_contrast().to_bits(),
             scrollback_limit: self.scrollback_limit() != next.scrollback_limit(),
             thumbnail_rows: self.images.thumbnail_rows() != next.images.thumbnail_rows(),
+            padding: self.window.padding() != next.window.padding(),
         }
     }
 }
@@ -56,42 +58,42 @@ mod tests {
         let old = Config::default();
         let defaults = crate::defaults_toml();
         for (text, expected) in [
-            (&*defaults, [false; 7]),
+            (&*defaults, [false; 8]),
             (
                 "[font]\nsize = 18",
-                [true, false, false, false, false, false, false],
+                [true, false, false, false, false, false, false, false],
             ),
             (
                 "[font]\nhinting = 'off'",
-                [true, false, false, false, false, false, false],
+                [true, false, false, false, false, false, false, false],
             ),
             (
                 "[cursor]\nstyle = 'bar'",
-                [false, true, false, false, false, false, false],
+                [false, true, false, false, false, false, false, false],
             ),
             (
                 "[cursor]\nblink = false",
-                [false, true, false, false, false, false, false],
+                [false, true, false, false, false, false, false, false],
             ),
             (
                 "[colors]\nbackground = '#123456'",
-                [false, false, true, false, false, false, false],
+                [false, false, true, false, false, false, false, false],
             ),
             (
                 "[colors]\nselection-background = '#123456'",
-                [false, false, false, true, false, false, false],
+                [false, false, false, true, false, false, false, false],
             ),
             (
                 "minimum-contrast = 7\n[font]\nweight = 500",
-                [true, false, false, false, true, false, false],
+                [true, false, false, false, true, false, false, false],
             ),
             (
                 "scrollback-limit = 0",
-                [false, false, false, false, false, true, false],
+                [false, false, false, false, false, true, false, false],
             ),
             (
                 "[images]\nthumbnail-rows = 0",
-                [false, false, false, false, false, false, true],
+                [false, false, false, false, false, false, true, false],
             ),
         ] {
             let new = toml::from_str(text).unwrap();
@@ -103,6 +105,7 @@ mod tests {
                 minimum_contrast,
                 scrollback_limit,
                 thumbnail_rows,
+                padding,
             } = old.changes(&new);
             assert_eq!(
                 [
@@ -113,6 +116,7 @@ mod tests {
                     minimum_contrast,
                     scrollback_limit,
                     thumbnail_rows,
+                    padding,
                 ],
                 expected,
                 "{text}"

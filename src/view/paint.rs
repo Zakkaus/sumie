@@ -11,7 +11,7 @@ use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 
 use super::attributes::{Decorations, Ink, LinkHighlight};
 use super::overlays::{Glyphs, SearchBox};
-use super::{FontErrors, Line, ViewerPaint, grid_size, rgba};
+use super::{FontErrors, Line, ViewerPaint, rgba};
 
 #[derive(Clone, Copy)]
 pub(crate) struct PaneFocus<'a> {
@@ -100,19 +100,11 @@ impl PanePainter<'_> {
         hovered_link: LinkHighlight<'_>,
         banner: Option<&str>,
     ) {
-        let Rect {
-            x,
-            y,
-            width,
-            height,
-        } = self.pane.rect;
-        self.pane.grid = grid_size([width, height], self.cell);
         self.pane.backgrounds.clear();
         self.pane.images = (!snapshot.images.is_empty()).then(|| Arc::clone(&snapshot.images));
         self.pane.default_background = rgba(snapshot.background);
         self.pane.default_backgrounds.clear();
         self.pane.glyphs.quads.clear();
-        self.pane.glyphs.offset = [x.cast_signed(), y.cast_signed()];
         self.set_overlay_bounds(banner.is_some());
         let overlay = (self.pane.search_box.is_none() && !self.preedit.is_empty())
             .then(|| self.composition(snapshot))

@@ -46,7 +46,7 @@ impl PaneTab {
 
     pub(super) fn resize_grid(&mut self, view: &View) -> Result<()> {
         self.tree
-            .layout(view.content_rect(), view.cell, &mut self.layout);
+            .layout(view.content_rect(), view.pane_minimum(), &mut self.layout);
         self.layout_revision = self.layout_revision.wrapping_add(1);
         for &(id, rect) in self.layout.panes.iter().chain(&self.layout.hidden) {
             let index = self.index(id);
@@ -95,7 +95,7 @@ impl Session {
         let old = tab.tree.focused();
         let rect = tab
             .tree
-            .split_preview(axis, self.view.content_rect(), self.view.cell);
+            .split_preview(axis, self.view.content_rect(), self.view.pane_minimum());
         let pane = match self.spawn_pane(rect, config) {
             Ok(pane) => pane,
             Err(error) => {
