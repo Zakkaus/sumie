@@ -353,6 +353,8 @@ impl Terminal {
     /// # Errors
     /// Returns an error if Ghostty cannot update or read the render state.
     pub fn render_snapshot(&mut self) -> Result<Snapshot, Error> {
+        const ANSI_YELLOW: u8 = 3;
+
         let mut cols = 0_u16;
         let mut rows = 0_u16;
         // SAFETY: Both handles are live and exclusive. Each key matches the output slot type.
@@ -388,11 +390,7 @@ impl Terminal {
             cursor,
             foreground: colors.foreground,
             background: colors.background,
-            ansi_yellow: if let Some(palette) = &colors.palette {
-                palette[3]
-            } else {
-                self.render_palette()?[3]
-            },
+            ansi_yellow: self.palette_entry(ANSI_YELLOW, colors.palette.as_ref())?,
         })
     }
 

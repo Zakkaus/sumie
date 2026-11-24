@@ -1,13 +1,27 @@
 use super::Terminal;
 
 #[test]
-fn snapshot_keeps_effective_ansi_yellow() {
+fn snapshot_updates_ansi_yellow_without_changing_screen_contents() {
     let mut terminal = Terminal::new(5, 2).unwrap();
-    terminal.write(b"\x1b]4;3;rgb:ab/cd/ef\x07");
-    assert_eq!(
-        terminal.render_snapshot().unwrap().ansi_yellow,
-        [0xab, 0xcd, 0xef]
-    );
+    let mut palette = [[0; 3]; 16];
+    palette[3] = [1, 2, 3];
+    terminal
+        .set_colors([255; 3], [0; 3], None, &palette)
+        .unwrap();
+    terminal.write(b"text");
+    let mut expected = terminal.render_snapshot().unwrap();
+    assert_eq!(expected.ansi_yellow, palette[3]);
+    let contents = terminal.screen_contents().unwrap();
+
+    for (output, yellow) in [
+        (b"\x1b]4;3;rgb:ab/cd/ef\x07".as_slice(), [0xab, 0xcd, 0xef]),
+        (b"\x1b]104;3\x07".as_slice(), palette[3]),
+    ] {
+        terminal.write(output);
+        expected.ansi_yellow = yellow;
+        assert_eq!(terminal.render_snapshot().unwrap(), expected);
+        assert!(terminal.screen_contents().unwrap() == contents);
+    }
 }
 
 #[test]

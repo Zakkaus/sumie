@@ -50,6 +50,31 @@ mod linux {
     }
 
     #[test]
+    fn title_spaces_advance_even_without_ink() {
+        let mut font = FontSystem::new("sans-serif", 12.5, 1.25, FontOptions::default()).unwrap();
+        let face = &font.faces[0];
+        let space = face.font.charmap().map_unicode(' ').unwrap();
+        let advance = face
+            .font
+            .glyph_metrics()
+            .scaled_f32(face.ppem)
+            .h_advance(space);
+        let mut run = TextRun::default();
+        font.shape_text_into(["g", "i", "t", "l", "o", "g"].into_iter(), &mut run)
+            .unwrap();
+        let joined = run.glyphs.last().unwrap().x;
+        for count in [1_u16, 16] {
+            let title = ["g", "i", "t"]
+                .into_iter()
+                .chain(std::iter::repeat_n(" ", usize::from(count)))
+                .chain(["l", "o", "g"]);
+            font.shape_text_into(title, &mut run).unwrap();
+            let shift = f64::from(run.glyphs.last().unwrap().x - joined);
+            assert!((shift - f64::from(advance) * f64::from(count)).abs() < 1.0);
+        }
+    }
+
+    #[test]
     fn sprites_fill_their_grid_cells() {
         let mut fonts = FontSystem::new("monospace", 20.0, 1.25, FontOptions::default()).unwrap();
         let m = fonts.metrics();

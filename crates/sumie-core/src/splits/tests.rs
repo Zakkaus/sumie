@@ -20,7 +20,7 @@ fn nested_splits_partition_window_pixels() {
 
     let mut layout = Layout::default();
     let bounds = rect(10, 20, 10, 8);
-    tree.layout(bounds, [1; 2], &mut layout);
+    tree.layout(bounds, [1; 2], [0; 2], &mut layout);
     assert_eq!(
         layout.panes,
         [
@@ -61,7 +61,7 @@ fn tiny_windows_partition_every_pixel() {
         (4, 1, 1, 2),
         (5, 2, 1, 2),
     ] {
-        tree.layout(rect(10, 20, width, 1), [1; 2], &mut layout);
+        tree.layout(rect(10, 20, width, 1), [1; 2], [0; 2], &mut layout);
         assert_eq!(
             layout.panes,
             [
@@ -72,11 +72,11 @@ fn tiny_windows_partition_every_pixel() {
         );
         assert_eq!(layout.dividers.len(), usize::from(divider != 0));
     }
-    tree.layout(rect(10, 20, 3, 0), [1; 2], &mut layout);
+    tree.layout(rect(10, 20, 3, 0), [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.dividers, []);
     assert!(!tree.focus_neighbor(Direction::Left, &layout));
 
-    tree.layout(rect(10, 20, 2, 1), [1; 2], &mut layout);
+    tree.layout(rect(10, 20, 2, 1), [1; 2], [0; 2], &mut layout);
     assert!(tree.focus_neighbor(Direction::Left, &layout));
     assert!(!tree.resize(Direction::Right, &layout));
     assert!(!tree.drag(0, [10, 20], &layout));
@@ -89,7 +89,7 @@ fn close_promotes_the_sibling_without_changing_its_divider_identity() {
     tree.split(Axis::Vertical, 3);
     tree.split(Axis::Horizontal, 4);
     let mut layout = Layout::default();
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     let root_divider = layout.dividers[0].id;
     let promoted_divider = layout.dividers[1].id;
     assert!(tree.focus(1));
@@ -98,13 +98,13 @@ fn close_promotes_the_sibling_without_changing_its_divider_identity() {
 
     tree.close(1);
     assert_eq!(tree.focused(), 2);
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.dividers[0].id, promoted_divider);
     assert!(!tree.drag(root_divider, [40, 30], &layout));
 
     tree.close(3);
     assert_eq!(tree.focused(), 2);
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert_eq!(
         layout.panes,
         [(2, rect(10, 20, 121, 40)), (4, rect(10, 61, 121, 40))]
@@ -115,7 +115,7 @@ fn close_promotes_the_sibling_without_changing_its_divider_identity() {
     tree.close(2);
     tree.close(4);
     assert_eq!(tree.focused(), 4);
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.panes, [(4, BOUNDS)]);
     assert_eq!(layout.dividers, []);
 }
@@ -137,7 +137,7 @@ fn focus_uses_shared_edges_without_wrapping() {
     tree.split(Axis::Horizontal, 2);
     tree.split(Axis::Vertical, 3);
     let mut layout = Layout::default();
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
 
     for (from, direction, to) in [
         (1, Direction::Right, 2),
@@ -154,7 +154,7 @@ fn focus_uses_shared_edges_without_wrapping() {
     }
 
     assert!(tree.drag(layout.dividers[1].id, [0, 30], &layout));
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert!(tree.focus(1));
     assert!(tree.focus_neighbor(Direction::Right, &layout));
     assert_eq!(tree.focused(), 3);
@@ -167,22 +167,22 @@ fn keyboard_resize_uses_the_divider_on_the_requested_side_first() {
     tree.split(Axis::Horizontal, 3);
     assert!(tree.focus(2));
     let mut layout = Layout::default();
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert!(!tree.resize(Direction::Up, &layout));
 
     assert!(tree.resize(Direction::Right, &layout));
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.dividers[0].rect.x, 70);
     assert_eq!(layout.dividers[1].rect.x, 108);
 
     assert!(tree.resize(Direction::Left, &layout));
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.dividers[0].rect.x, 62);
     assert_eq!(layout.dividers[1].rect.x, 105);
 
     assert!(tree.focus(1));
     assert!(tree.resize(Direction::Left, &layout));
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.dividers[0].rect.x, 54);
 }
 
@@ -192,22 +192,22 @@ fn drag_uses_absolute_coordinates_and_keeps_its_fraction_on_window_resize() {
     tree.split(Axis::Vertical, 2);
     let mut layout = Layout::default();
     let bounds = rect(10, 20, 121, 101);
-    tree.layout(bounds, [1; 2], &mut layout);
+    tree.layout(bounds, [1; 2], [0; 2], &mut layout);
     let id = layout.dividers[0].id;
     assert!(!tree.drag(u64::MAX, [0, 47], &layout));
     assert!(!tree.drag(id, [0, 70], &layout));
     assert!(tree.drag(id, [0, 47], &layout));
-    tree.layout(bounds, [1; 2], &mut layout);
+    tree.layout(bounds, [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.dividers[0].rect.y, 47);
 
-    tree.layout(rect(10, 20, 121, 201), [1; 2], &mut layout);
+    tree.layout(rect(10, 20, 121, 201), [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.dividers[0].id, id);
     assert_eq!(layout.dividers[0].rect.y, 74);
 
     for (requested, actual) in [(0, 21), (u32::MAX, 119)] {
-        tree.layout(bounds, [1; 2], &mut layout);
+        tree.layout(bounds, [1; 2], [0; 2], &mut layout);
         assert!(tree.drag(id, [0, requested], &layout));
-        tree.layout(bounds, [1; 2], &mut layout);
+        tree.layout(bounds, [1; 2], [0; 2], &mut layout);
         assert_eq!(layout.dividers[0].rect.y, actual);
         assert!(!tree.drag(id, [0, requested], &layout));
     }
@@ -222,13 +222,13 @@ fn moving_parent_divider_keeps_nested_panes_navigable() {
     let mut layout = Layout::default();
     let bounds = rect(0, 0, 801, 40);
     let cell = [12, 20];
-    tree.layout(bounds, cell, &mut layout);
+    tree.layout(bounds, cell, [0; 2], &mut layout);
     let parent = layout.dividers[0].id;
 
     assert!(tree.drag(parent, [771, 0], &layout));
-    tree.layout(bounds, cell, &mut layout);
+    tree.layout(bounds, cell, [0; 2], &mut layout);
     assert!(tree.resize(Direction::Right, &layout));
-    tree.layout(bounds, cell, &mut layout);
+    tree.layout(bounds, cell, [0; 2], &mut layout);
     assert_eq!(
         layout.panes[1..],
         [(2, rect(776, 0, 12, 40)), (3, rect(789, 0, 12, 40))]
@@ -237,7 +237,7 @@ fn moving_parent_divider_keeps_nested_panes_navigable() {
     assert!(tree.focus_neighbor(Direction::Right, &layout));
     assert_eq!(tree.focused(), 2);
 
-    tree.layout(rect(0, 0, 2, 40), cell, &mut layout);
+    tree.layout(rect(0, 0, 2, 40), cell, [0; 2], &mut layout);
     assert_eq!(layout.dividers, []);
     assert!(tree.focus_neighbor(Direction::Right, &layout));
     assert_eq!(tree.focused(), 3);
@@ -248,15 +248,15 @@ fn zoom_preserves_split_ratios_and_hidden_pty_sizes() {
     let mut tree = SplitTree::new(1);
     tree.split(Axis::Horizontal, 2);
     let mut layout = Layout::default();
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     let id = layout.dividers[0].id;
     assert!(tree.drag(id, [40, 20], &layout));
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     let hidden = layout.panes[0];
     let unzoomed = layout.dividers[0];
 
     tree.toggle_zoom();
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.panes, [(2, BOUNDS)]);
     assert_eq!(layout.hidden, [hidden]);
     assert_eq!(layout.dividers, []);
@@ -265,7 +265,7 @@ fn zoom_preserves_split_ratios_and_hidden_pty_sizes() {
 
     assert!(tree.focus_neighbor(Direction::Left, &layout));
     assert_eq!(tree.focused(), 1);
-    tree.layout(BOUNDS, [1; 2], &mut layout);
+    tree.layout(BOUNDS, [1; 2], [0; 2], &mut layout);
     assert_eq!(layout.dividers, [unzoomed]);
     assert_eq!(layout.hidden, []);
 }
@@ -276,26 +276,61 @@ fn preview_uses_the_unzoomed_split_bounds_and_does_not_change_state() {
     tree.split(Axis::Horizontal, 2);
     let mut layout = Layout::default();
     let cell = [12, 20];
-    tree.layout(BOUNDS, cell, &mut layout);
+    tree.layout(BOUNDS, cell, [0; 2], &mut layout);
     assert!(tree.drag(layout.dividers[0].id, [u32::MAX, 20], &layout));
     tree.toggle_zoom();
 
-    let preview = tree.split_preview(Axis::Horizontal, BOUNDS, cell);
+    let preview = tree.split_preview(Axis::Horizontal, BOUNDS, cell, [0; 2]);
     assert_eq!(tree.focused(), 2);
-    tree.layout(BOUNDS, cell, &mut layout);
+    tree.layout(BOUNDS, cell, [0; 2], &mut layout);
     assert_eq!(layout.panes, [(2, BOUNDS)]);
     assert_eq!(layout.hidden, [(1, rect(10, 20, 108, 81))]);
 
     tree.split(Axis::Horizontal, 3);
-    tree.layout(BOUNDS, cell, &mut layout);
+    tree.layout(BOUNDS, cell, [0; 2], &mut layout);
     assert_eq!(preview, rect(119, 20, 12, 81));
     assert_eq!(layout.panes[2], (3, preview));
 
     tree.toggle_zoom();
     tree.close(1);
-    tree.layout(BOUNDS, cell, &mut layout);
+    tree.layout(BOUNDS, cell, [0; 2], &mut layout);
     assert_eq!(layout.panes, [(3, BOUNDS)]);
     tree.close(3);
-    tree.layout(BOUNDS, cell, &mut layout);
+    tree.layout(BOUNDS, cell, [0; 2], &mut layout);
     assert_eq!(layout.panes, [(2, BOUNDS)]);
+}
+
+#[test]
+fn oversized_padding_yields_to_cells_and_dividers() {
+    let mut tree = SplitTree::new(1);
+    let mut layout = Layout::default();
+    let cell = [12, 20];
+    let padding = [240; 2];
+    tree.split(Axis::Horizontal, 2);
+    let wide = rect(0, 0, 800, 41);
+    tree.layout(wide, cell, padding, &mut layout);
+    let parent = layout.dividers[0].id;
+    assert_eq!(layout.dividers[0].rect, rect(399, 0, 1, 41));
+    assert!(tree.resize(Direction::Left, &layout));
+    tree.layout(wide, cell, padding, &mut layout);
+    assert_eq!(layout.dividers[0].rect.x, 391);
+    assert!(tree.drag(parent, [u32::MAX, 0], &layout));
+    tree.layout(wide, cell, padding, &mut layout);
+    assert_eq!(layout.pane(2), Some(rect(788, 0, 12, 41)));
+
+    let bounds = rect(0, 0, 40, 41);
+    for (id, axis, dividers) in [(3, Axis::Horizontal, 2), (4, Axis::Vertical, 3)] {
+        let preview = tree.split_preview(axis, bounds, cell, padding);
+        tree.split(axis, id);
+        tree.layout(bounds, cell, padding, &mut layout);
+        assert_eq!(layout.pane(id), Some(preview));
+        assert_eq!(layout.dividers.len(), dividers);
+    }
+    assert!(tree.drag(parent, [0, 0], &layout));
+    tree.layout(bounds, cell, padding, &mut layout);
+    assert_eq!(layout.pane(1), Some(rect(0, 0, 12, 41)));
+    assert_eq!(layout.dividers.len(), 3);
+    for (_, pane) in layout.panes {
+        assert!(pane.width >= cell[0] && pane.height >= cell[1]);
+    }
 }

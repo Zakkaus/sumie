@@ -23,6 +23,8 @@ pub struct MouseEvent {
     pub phase: MousePhase,
     pub cell: CellPosition,
     pub pixel: [f32; 2],
+    /// Whether the pointer actually hit a visible cell rather than clamping to one.
+    pub over_grid: bool,
     pub modifiers: KeyModifiers,
     /// Whether this Ctrl+left press found a link or this release hit the captured target.
     pub link: bool,
@@ -196,10 +198,9 @@ impl MouseState {
             }
             MousePhase::Press(button, time) => self.press(
                 button,
-                modes.tracking && !event.modifiers.shift,
                 time,
-                event.cell,
-                event.modifiers,
+                event,
+                modes.tracking && !event.modifiers.shift,
             ),
             MousePhase::Release(button) => self.release(button, event),
             MousePhase::Motion if self.link_press.is_some() || self.selecting.is_some() => {
@@ -250,14 +251,7 @@ impl MouseState {
         }
     }
 
-    fn press(
-        &mut self,
-        button: Button,
-        report: bool,
-        time: u32,
-        cell: CellPosition,
-        modifiers: KeyModifiers,
-    ) -> Dispatch {
+    fn press(&mut self, button: Button, time: u32, event: MouseEvent, report: bool) -> Dispatch {
         let last = self.last_click.take();
         if report {
             if self.held.contains(&Some(button)) {
@@ -265,15 +259,15 @@ impl MouseState {
             } else {
                 Dispatch::Press(button)
             }
-        } else if button == Button::Left {
+        } else if button == Button::Left && event.over_grid {
             let unit =
                 match last.filter(|&(at, _, _, _)| time.wrapping_sub(at) <= self.click_interval) {
                     Some((_, _, _, SelectionUnit::Cell)) => SelectionUnit::Word,
                     Some((_, _, _, SelectionUnit::Word)) => SelectionUnit::Line,
                     _ => SelectionUnit::Cell,
                 };
-            self.last_click = Some((time, cell, modifiers, unit));
-            self.selecting = Some((unit, cell));
+            self.last_click = Some((time, event.cell, event.modifiers, unit));
+            self.selecting = Some((unit, event.cell));
             Dispatch::Select(SelectStep::Begin(unit))
         } else {
             Dispatch::Ignore
@@ -352,6 +346,7 @@ mod tests {
                 phase,
                 cell: CellPosition { row: 0, column },
                 pixel: [0.0; 2],
+                over_grid: true,
                 modifiers,
                 link: false,
             };
@@ -417,6 +412,7 @@ mod tests {
             phase,
             cell: CellPosition { row: 0, column },
             pixel: [0.0; 2],
+            over_grid: true,
             modifiers: KeyModifiers::default(),
             link: false,
         };

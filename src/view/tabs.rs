@@ -19,7 +19,7 @@ pub(super) struct Tabs {
     height: u32,
     presented_height: u32,
     paint: Option<TabPaint>,
-    hover: Option<TabHit>,
+    pointer: Option<(f64, f64)>,
     presented: Option<TabPlacement>,
 }
 
@@ -30,7 +30,7 @@ impl Default for Tabs {
             height: 0,
             presented_height: 0,
             paint: None,
-            hover: None,
+            pointer: None,
             presented: None,
         }
     }
@@ -147,7 +147,6 @@ impl View {
     /// A layout change must not turn a hit on old chrome into an action on a different tab.
     pub(crate) fn reset_hits(&mut self) {
         self.tabs.presented = None;
-        self.tabs.hover = None;
         if let Some(paint) = &mut self.tabs.paint {
             paint.frame = None;
         }
@@ -160,11 +159,22 @@ impl View {
         (0.0..f64::from(self.device[0])).contains(&x) && (0.0..f64::from(occluded)).contains(&y)
     }
 
-    pub(crate) fn set_tab_hover(&mut self, hover: Option<TabHit>) -> bool {
-        std::mem::replace(&mut self.tabs.hover, hover) != hover
+    /// Remember the logical position even when the pointer is outside the current strip.
+    /// Returns whether the built frame needs a hover repaint.
+    pub(crate) fn set_tab_pointer(&mut self, position: Option<(f64, f64)>) -> bool {
+        self.tabs.pointer = position;
+        self.tabs
+            .paint
+            .as_ref()
+            .and_then(|paint| paint.frame.as_ref())
+            .is_some_and(|(placement, _)| {
+                let hover = position.and_then(|p| placement.layout.hit(self.window_pixel(p)));
+                hover != placement.hover
+            })
     }
 
     /// Includes the reserved close area, even before the hover frame reveals the button.
+    #[cfg(test)]
     pub(crate) fn tab_hover_hit(&self, position: (f64, f64)) -> Option<TabHit> {
         self.tabs
             .presented
@@ -194,6 +204,7 @@ impl View {
         snapshot: &Snapshot,
     ) {
         let scale = self.scale_units();
+        let pointer = self.tabs.pointer.map(|p| self.window_pixel(p));
         let Some(paint) = &mut self.tabs.paint else {
             return;
         };
@@ -208,14 +219,20 @@ impl View {
             rgba(snapshot.foreground),
             rgba(snapshot.ansi_yellow),
         );
-        let layout = match &paint.frame {
+        // Paint follows the new layout; actions continue to use only the presented placement.
+        let hit = |layout: &TabLayout| pointer.and_then(|point| layout.hit(point));
+        let placement = match &paint.frame {
             Some((previous, previous_palette))
                 if !measured && previous.size == self.device && previous.active == active =>
             {
-                if !shaped && previous.hover == self.tabs.hover && *previous_palette == palette {
+                let hover = hit(&previous.layout);
+                if !shaped && previous.hover == hover && *previous_palette == palette {
                     return;
                 }
-                previous.layout.clone()
+                TabPlacement {
+                    hover,
+                    ..previous.clone()
+                }
             }
             _ => {
                 let Some(layout) = TabLayout::new(
@@ -223,19 +240,18 @@ impl View {
                     scale,
                     active,
                     &paint.measurements,
-                    paint.ellipsis.width().max(1),
+                    paint.ellipsis.width(),
                 ) else {
                     paint.frame = None;
                     return;
                 };
-                layout
+                TabPlacement {
+                    hover: hit(&layout),
+                    layout,
+                    size: self.device,
+                    active,
+                }
             }
-        };
-        let placement = TabPlacement {
-            layout,
-            size: self.device,
-            active,
-            hover: self.tabs.hover,
         };
         paint.build(placement, palette, &mut self.font_errors);
     }
@@ -251,8 +267,7 @@ impl TabPaint {
         let mut font = FontSystem::new(LABEL_FAMILY, LABEL_PX, scale, options)
             .or_else(|_| FontSystem::new(NUMBER_FAMILY, LABEL_PX, scale, options))?;
         let digits = TabDigits::new(&mut font, NUMBER_PX * scale)?;
-        let mut ellipsis = TextRun::default();
-        font.shape_text_into(std::iter::once("…"), &mut ellipsis)?;
+        let ellipsis = shape_truncation_suffix(&mut font, ["…", "..."]);
         Ok(Self {
             font,
             glyphs: Glyphs::default(),
@@ -356,6 +371,19 @@ impl TabPaint {
             layout.underline(palette, index, end, baseline, &mut self.fills);
         }
     }
+}
+
+fn shape_truncation_suffix(font: &mut FontSystem, candidates: [&str; 2]) -> TextRun {
+    let mut run = TextRun::default();
+    for candidate in candidates {
+        if font
+            .shape_text_into(candidate.graphemes(true), &mut run)
+            .is_ok()
+        {
+            break;
+        }
+    }
+    run
 }
 
 impl TabLabel {
@@ -494,5 +522,26 @@ fn place_ink(target: &mut Glyphs, ink: &[GlyphQuad], [x, y]: [i32; 2], color: Rg
         glyph.dest.origin[1] += y;
         glyph.color = color;
         target.push(glyph);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_truncation_glyph_tries_dots_then_omits_the_suffix() {
+        const MISSING: &str = "\u{10ffff}";
+        let mut font =
+            FontSystem::new(LABEL_FAMILY, LABEL_PX, 1.0, FontOptions::default()).unwrap();
+        let mut dots = TextRun::default();
+        font.shape_text_into("...".graphemes(true), &mut dots)
+            .unwrap();
+
+        for (fallback, width, glyphs) in [("...", dots.width(), dots.glyphs.len()), (MISSING, 0, 0)]
+        {
+            let suffix = shape_truncation_suffix(&mut font, [MISSING, fallback]);
+            assert_eq!((suffix.width(), suffix.glyphs.len()), (width, glyphs));
+        }
     }
 }

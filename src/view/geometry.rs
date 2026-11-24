@@ -21,8 +21,8 @@ impl View {
         }
     }
 
-    pub(crate) fn pane_minimum(&self) -> [u32; 2] {
-        std::array::from_fn(|i| self.cell[i] + 2 * self.device_padding[i])
+    pub(crate) const fn pane_padding(&self) -> [u32; 2] {
+        self.device_padding
     }
 
     pub(super) fn pane_grid(&self, rect: Rect) -> Rect {
@@ -55,7 +55,7 @@ impl View {
         &self,
         position: (f64, f64),
         rect: Rect,
-    ) -> (CellPosition, [f32; 2]) {
+    ) -> (CellPosition, [f32; 2], bool) {
         let rect = self.pane_grid(rect);
         let relative = self.pane_pixel(position, rect);
         let grid = grid_size(rect, self.cell);
@@ -68,7 +68,8 @@ impl View {
                 pos as f32
             }
         });
-        (self.pointer_cell(relative, grid), pixel)
+        let over_grid = contains_grid_pixel(relative, rect, grid, self.cell);
+        (self.pointer_cell(relative, grid), pixel, over_grid)
     }
 
     fn pane_pixel(&self, position: (f64, f64), rect: Rect) -> [f64; 2] {
@@ -98,18 +99,21 @@ impl View {
     ) -> Option<CellPosition> {
         let rect = self.pane_grid(rect);
         let pixel = self.pane_pixel(position, rect);
-        let size = [rect.width, rect.height];
         let grid = grid_size(rect, self.cell);
-        let inside = (0..2).all(|i| {
-            let end = f64::from(size[i].min(grid[i] * self.cell[i]));
-            (0.0..end).contains(&pixel[i])
-        });
-        if !inside || self.over_tab_bar(position) {
+        if !contains_grid_pixel(pixel, rect, grid, self.cell) || self.over_tab_bar(position) {
             return None;
         }
         let hit = self.pointer_cell(pixel, grid);
         (!banner || hit.row != 0).then_some(hit)
     }
+}
+
+fn contains_grid_pixel(pixel: [f64; 2], rect: Rect, grid: [u32; 2], cell: [u32; 2]) -> bool {
+    let size = [rect.width, rect.height];
+    (0..2).all(|i| {
+        let end = f64::from(size[i].min(grid[i] * cell[i]));
+        (0.0..end).contains(&pixel[i])
+    })
 }
 
 pub(super) fn scaled_padding(logical: [u16; 2], scale: u32) -> [u32; 2] {

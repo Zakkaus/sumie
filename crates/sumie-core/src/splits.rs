@@ -190,12 +190,25 @@ impl SplitTree {
         self.focused
     }
 
-    /// Return the new pane's bounds after a split, with the same minimum pane
-    /// dimensions in device pixels as [`Self::layout`]. Like [`Self::split`],
-    /// this uses unzoomed geometry without changing the tree.
+    /// Return the new pane's bounds after a split, using the same `cell` and
+    /// `padding` as [`Self::layout`]. Like [`Self::split`], this uses unzoomed
+    /// geometry without changing the tree.
     #[must_use]
-    pub fn split_preview(&self, axis: Axis, bounds: Rect, cell: [u32; 2]) -> Rect {
-        geometry::split_preview(&self.root, self.focused, axis, bounds.clipped(), cell)
+    pub fn split_preview(
+        &self,
+        axis: Axis,
+        bounds: Rect,
+        cell: [u32; 2],
+        padding: [u32; 2],
+    ) -> Rect {
+        geometry::split_preview(
+            &self.root,
+            self.focused,
+            axis,
+            bounds.clipped(),
+            cell,
+            padding,
+        )
     }
 
     /// Split the focused pane evenly, focus `new_id`, and exit zoom.
@@ -320,17 +333,18 @@ impl SplitTree {
         self.move_divider(divider, position)
     }
 
-    /// Replace `layout` while retaining its allocations. Use `cell` as the
-    /// minimum pane dimensions in device pixels when space permits. Exclusive
-    /// edges beyond `u32::MAX` are clipped.
-    pub fn layout(&self, bounds: Rect, cell: [u32; 2], layout: &mut Layout) {
+    /// Replace `layout` while retaining its allocations. Reserve `cell` device
+    /// pixels per pane and one pixel per divider when space permits. Use `padding`
+    /// per pane edge as a minimum only where it fits. Clip exclusive edges at `u32::MAX`.
+    pub fn layout(&self, bounds: Rect, cell: [u32; 2], padding: [u32; 2], layout: &mut Layout) {
         layout.panes.clear();
         layout.hidden.clear();
         layout.zoom_origin = None;
         layout.dividers.clear();
         let bounds = bounds.clipped();
+        let minimum = geometry::pane_minimum(bounds, self.root.tracks(), cell, padding);
         self.root
-            .layout(bounds, cell, layout, self.zoomed.then_some(self.focused));
+            .layout(bounds, minimum, layout, self.zoomed.then_some(self.focused));
         if self.zoomed {
             layout.panes.push((self.focused, bounds));
         }
@@ -397,10 +411,10 @@ impl Branch {
         self.tracks = combined_tracks(self.axis, self.first.tracks(), self.second.tracks());
     }
 
-    fn layout(&self, rect: Rect, cell: [u32; 2], layout: &mut Layout, zoom: Option<u64>) {
+    fn layout(&self, rect: Rect, minimum: [u32; 2], layout: &mut Layout, zoom: Option<u64>) {
         let axis = self.axis as usize;
         let tracks = [self.first.tracks()[axis], self.second.tracks()[axis]];
-        let partition = partition(rect, self.axis, self.ratio, tracks, cell[axis]);
+        let partition = partition(rect, self.axis, self.ratio, tracks, minimum[axis]);
         let [first, divider, second] = partition.rects;
         if zoom.is_none() && !divider.is_empty() {
             let Span { start, len } = rect.span(self.axis);
@@ -413,8 +427,8 @@ impl Branch {
                 limits: partition.limits,
             });
         }
-        self.first.layout(first, cell, layout, zoom);
-        self.second.layout(second, cell, layout, zoom);
+        self.first.layout(first, minimum, layout, zoom);
+        self.second.layout(second, minimum, layout, zoom);
     }
 }
 
@@ -504,12 +518,12 @@ impl Node {
         }
     }
 
-    fn layout(&self, rect: Rect, cell: [u32; 2], layout: &mut Layout, zoom: Option<u64>) {
+    fn layout(&self, rect: Rect, minimum: [u32; 2], layout: &mut Layout, zoom: Option<u64>) {
         match self {
             Self::Leaf(id) if zoom.is_none() => layout.panes.push((*id, rect)),
             Self::Leaf(id) if zoom != Some(*id) => layout.hidden.push((*id, rect)),
             Self::Leaf(_) => layout.zoom_origin = Some(rect),
-            Self::Split(branch) => branch.layout(rect, cell, layout, zoom),
+            Self::Split(branch) => branch.layout(rect, minimum, layout, zoom),
         }
     }
 }

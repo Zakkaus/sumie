@@ -377,6 +377,7 @@ fn search_pointer_only_scrolls_history() {
         phase,
         cell: CellPosition { column: 0, row: 0 },
         pixel: [0.0; 2],
+        over_grid: true,
         modifiers: KeyModifiers::default(),
         link: false,
     };
@@ -463,6 +464,7 @@ fn ctrl_click_a_link_bypasses_mouse_tracking() {
             phase,
             cell: CellPosition { column, row: 0 },
             pixel: [x, 0.0],
+            over_grid: true,
             modifiers: KeyModifiers {
                 control: matches!(phase, Press(..)),
                 ..KeyModifiers::default()
@@ -519,6 +521,7 @@ fn switching_tabs_finishes_a_reported_drag() {
             phase,
             cell: CellPosition { column, row: 0 },
             pixel: [f32::from(column) * 12.0, 0.0],
+            over_grid: true,
             modifiers: KeyModifiers::default(),
             link: false,
         })

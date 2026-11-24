@@ -1,12 +1,21 @@
-//! Fingerprint the live viewport without copying rows or consuming renderer dirty bits.
+//! Read live viewport contents and colors without consuming renderer dirty bits.
 const std = @import("std");
 const options = @import("terminal_options");
 const terminal = @import("terminal/c/terminal.zig");
 const color = @import("terminal/color.zig");
+const Result = @import("terminal/c/result.zig").Result;
 const Color = @import("terminal/style.zig").Style.Color;
 
 pub fn install() void {
     @export(&stamp, .{ .name = "sumie_screen_stamp" });
+    @export(&paletteColor, .{ .name = "sumie_palette_color" });
+}
+
+fn paletteColor(raw: terminal.Terminal, index: u8, out: *[3]u8) callconv(.c) Result {
+    const t = terminal.zigTerminal(raw) orelse return .invalid_value;
+    const rgb = t.colors.palette.current[index];
+    out.* = .{ rgb.r, rgb.g, rgb.b };
+    return .success;
 }
 
 fn stamp(raw: terminal.Terminal, has_placements: *bool) callconv(.c) u64 {

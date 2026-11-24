@@ -315,12 +315,8 @@ impl Session {
     }
 
     fn update_tab_hover(&mut self, position: Option<(f64, f64)>) {
-        let hit = if self.pointer.grid.contains(&true) || self.pointer.captured.contains(&true) {
-            None
-        } else {
-            position.and_then(|position| self.view.tab_hover_hit(position))
-        };
-        if self.view.set_tab_hover(hit) {
+        let pressed = self.pointer.grid.contains(&true) || self.pointer.captured.contains(&true);
+        if self.view.set_tab_pointer(position.filter(|_| !pressed)) {
             self.active_mut().frame_dirty = true;
         }
     }

@@ -286,7 +286,7 @@ impl App {
                         session.active_mut().frame_dirty = true;
                         if !activated {
                             session.link_pointer.clear_link();
-                            session.view.set_tab_hover(None);
+                            session.view.set_tab_pointer(None);
                         }
                     }
                 }

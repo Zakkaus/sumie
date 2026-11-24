@@ -417,7 +417,7 @@ pub(crate) fn key_modifiers(modifiers: sumie_wayland::Modifiers) -> KeyModifiers
 pub(crate) fn mouse_event(
     phase: sumie_wayland::PointerPhase,
     modifiers: sumie_wayland::Modifiers,
-    (cell, pixel): (sumie_core::CellPosition, [f32; 2]),
+    (cell, pixel, over_grid): (sumie_core::CellPosition, [f32; 2], bool),
 ) -> MouseEvent {
     use sumie_wayland::{PointerButton, PointerPhase};
     let button = |b| match b {
@@ -436,6 +436,7 @@ pub(crate) fn mouse_event(
         phase,
         cell,
         pixel,
+        over_grid,
         modifiers: key_modifiers(modifiers),
         link: false,
     }

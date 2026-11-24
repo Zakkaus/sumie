@@ -6,7 +6,7 @@ use sumie_render::PixelRect;
 use sumie_vt::{Snapshot, Terminal};
 
 use super::{FontSettings, LinkHighlight, PaneFocus, View};
-use crate::input::SearchTarget;
+use crate::input::{self, SearchTarget};
 
 fn view() -> View {
     let config = sumie_config::Config::default();
@@ -114,13 +114,74 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
 
     let [x, y] = right_draw.origin;
     let first_cell = logical(x + 1, y + 1);
-    let (hit, pixel) = view.pointer_position(first_cell, right);
+    let (hit, pixel, over_grid) = view.pointer_position(first_cell, right);
     assert_eq!([hit.column, hit.row], [0, 0]);
     assert!(pixel.into_iter().all(|value| (0.99..1.01).contains(&value)));
+    assert!(over_grid);
     assert_eq!(view.link_cell(first_cell, right, false), Some(hit));
     assert!(
         view.link_cell(logical(x - 1, y + 1), right, false)
             .is_none()
+    );
+}
+
+#[test]
+fn padding_breaks_click_counts_but_clamps_an_active_selection() {
+    use sumie_core::mouse::{Dispatch, MouseModes, MouseState, SelectStep, SelectionUnit};
+    use sumie_wayland::{
+        Modifiers,
+        PointerButton::Left,
+        PointerPhase::{Motion, Press, Release},
+    };
+
+    let mut view = view();
+    view.set_padding([8; 2]);
+    let mut rect = view.content_rect();
+    rect.width = 2 * (view.cell[0] + view.pane_padding()[0]) + 1;
+    let grid = view.pane_grid(rect);
+    let logical = |px| f64::from(px) * 120.0 / f64::from(view.scale);
+    let event = |phase, x| {
+        input::mouse_event(
+            phase,
+            Modifiers::default(),
+            view.pointer_position((logical(x), logical(grid.y + 1)), rect),
+        )
+    };
+    let inside = grid.x + 1;
+    let left_padding = grid.x - 1;
+    let right_padding = grid.x + grid.width;
+    let release = Release(Left);
+    let mut state = MouseState::default();
+    let modes = MouseModes {
+        tracking: false,
+        alternate: false,
+        alternate_scroll: false,
+    };
+    let mut select = |phase, x| match state.dispatch(event(phase, x), modes) {
+        Dispatch::Select(step) => Some(step),
+        Dispatch::Ignore => None,
+        _ => panic!("unexpected terminal mouse report"),
+    };
+
+    for (time, x, unit) in [
+        (1, inside, Some(SelectionUnit::Cell)),
+        (2, left_padding, None),
+        (3, left_padding, None),
+        (4, left_padding, None),
+    ] {
+        assert_eq!(select(Press(Left, time), x), unit.map(SelectStep::Begin));
+        assert_eq!(select(release, x), unit.map(SelectStep::Finish));
+    }
+    let cell = SelectionUnit::Cell;
+    assert_eq!(
+        select(Press(Left, 5), inside),
+        Some(SelectStep::Begin(cell))
+    );
+    assert_eq!(event(Motion, right_padding).cell.column, 1);
+    assert_eq!(select(Motion, right_padding), Some(SelectStep::Drag(cell)));
+    assert_eq!(
+        select(release, right_padding),
+        Some(SelectStep::Finish(cell))
     );
 }
 

@@ -66,9 +66,17 @@ impl TabPalette {
             if is_light(luminance) { 10 } else { 56 },
         );
         let bar = relative_luminance(surface) + 0.05;
-        let accent = relative_luminance(yellow) + 0.05;
-        if bar.max(accent) < 3.0 * bar.min(accent) {
-            yellow = Palette::for_luminance(luminance).accent;
+        let contrasts = |color| {
+            let accent = relative_luminance(color) + 0.05;
+            bar.max(accent) >= 3.0 * bar.min(accent)
+        };
+        if !contrasts(yellow) {
+            let accent = Palette::for_luminance(luminance).accent;
+            yellow = if contrasts(accent) {
+                accent
+            } else {
+                foreground
+            };
         }
         yellow[3] = 255;
         Self {
@@ -136,5 +144,11 @@ mod tests {
         assert_eq!(light.surface, [245, 245, 245, 255]);
         assert_eq!(light.selected, black(255));
         assert_eq!(light.active_number, tokens::LIGHT.accent);
+
+        let gray = [128, 128, 128, 255];
+        assert_eq!(
+            TabPalette::new(gray, [255; 4], gray).active_number,
+            [255; 4]
+        );
     }
 }

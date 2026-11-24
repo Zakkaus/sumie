@@ -419,7 +419,7 @@ mod tests {
             width: 81,
             height: 80,
         };
-        tree.layout(bounds, [1; 2], &mut layout);
+        tree.layout(bounds, [1; 2], [0; 2], &mut layout);
         let divider = layout.dividers[0].id;
         for (pixel, target) in [
             ([-0.1, 60.0], None),
@@ -437,7 +437,7 @@ mod tests {
         let press = Phase::Press(Button::Left, 0);
         let mut pointer = pointer();
         tree.toggle_zoom();
-        tree.layout(bounds, [1; 2], &mut layout);
+        tree.layout(bounds, [1; 2], [0; 2], &mut layout);
         let hit = || Target::at(&layout, [39.9, 20.0], [81, 100]);
         assert_eq!(pointer.route(press, PENDING, hit), None);
         assert!(pointer.take_frame_recovery());

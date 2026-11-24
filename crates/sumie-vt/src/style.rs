@@ -106,7 +106,21 @@ impl Terminal {
         }
     }
 
-    pub(super) fn render_palette(&self) -> Result<[Rgb; 256], Error> {
+    pub(super) fn palette_entry(
+        &self,
+        index: u8,
+        palette: Option<&[Rgb; 256]>,
+    ) -> Result<Rgb, Error> {
+        if let Some(colors) = palette {
+            return Ok(colors[usize::from(index)]);
+        }
+        let mut rgb = [0; 3];
+        // SAFETY: The terminal is live and the bridge writes exactly one RGB value.
+        check(unsafe { ffi::sumie_palette_color(self.raw, index, &raw mut rgb) })?;
+        Ok(rgb)
+    }
+
+    fn render_palette(&self) -> Result<[Rgb; 256], Error> {
         let mut palette = [[0; 3]; 256];
         // SAFETY: The render state is live and COLOR_PALETTE writes 256 RGB values.
         unsafe {
