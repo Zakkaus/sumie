@@ -91,7 +91,8 @@ fn wide_link_snapshot(vt: &mut Terminal, column: usize) -> sumie_vt::Snapshot {
     let mut snapshot = vt.render_snapshot().unwrap();
     // Supply a wide blank directly so the VT width probe can fail independently.
     let cells = &mut snapshot.rows[0][column..];
-    cells[1].text = "\u{3000}".into();
+    // An empty wide cell avoids depending on a CJK font, which CI runners lack.
+    cells[1].text.clear();
     cells[1].width = 2;
     cells[2].text.clear();
     cells[2].width = 0;
