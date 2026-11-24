@@ -23,6 +23,7 @@ pub(super) const TAB_MAX_WIDTH: u32 = 190;
 pub(super) const DIVIDER_INSET: u32 = 10;
 pub(super) const PLUS_MARK: u32 = 10;
 pub(super) const DOT_SIZE: u32 = 5;
+pub(super) const UNDERLINE_INSET: u32 = 2;
 pub const LABEL_PX: f32 = 12.5;
 pub const LABEL_WEIGHT: u16 = 400;
 pub const NUMBER_PX: f32 = 11.0;

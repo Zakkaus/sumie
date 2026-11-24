@@ -108,11 +108,11 @@ fn underline_and_divider_follow_content_not_close_controls() {
         color: palette.active_number,
     }));
 
-    layout.underline(palette, 1, 171, 20, &mut fills);
+    layout.underline(palette, 1, 171, &mut fills);
     assert_eq!(
         fills.last(),
         Some(&Fill {
-            rect: rect(123, 21, 48, 2),
+            rect: rect(123, 30, 48, 2),
             color: palette.active_number,
         })
     );

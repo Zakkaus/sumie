@@ -330,7 +330,6 @@ impl TabLayout {
         palette: TabPalette,
         index: usize,
         title_end: u32,
-        baseline: u32,
         out: &mut Vec<Fill>,
     ) {
         if index != self.active || !self.visible().contains(&index) {
@@ -338,11 +337,12 @@ impl TabLayout {
         }
         let label = self.label(index);
         let x = label.origin[0].cast_unsigned();
-        let y = baseline.saturating_add(self.px(tokens::RULE));
+        // Sit on the bar's bottom edge, well clear of descenders, under the title only.
+        let height = self.px(tokens::INDICATOR).min(self.height);
+        let y = self
+            .height
+            .saturating_sub(height + self.px(tokens::UNDERLINE_INSET));
         let width = title_end.min(x + label.size[0]).saturating_sub(x);
-        let height = self
-            .px(tokens::INDICATOR)
-            .min(self.height.saturating_sub(y));
         fill(out, rect(x, y, width, height), palette.active_number);
     }
 

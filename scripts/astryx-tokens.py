@@ -67,7 +67,7 @@ def main():
     lines.append(f"pub const IMAGE_VIEWER_MARGIN: u32 = {pixels(scalar('spacing-4'))};")
     lines += ["", "// Sumie-local D3+ layout and type sizes."]
     for key, value in {"TAB_HEIGHT": 34, "TAB_MAX_WIDTH": 190, "DIVIDER_INSET": 10,
-                       "PLUS_MARK": 10, "DOT_SIZE": 5}.items():
+                       "PLUS_MARK": 10, "DOT_SIZE": 5, "UNDERLINE_INSET": 2}.items():
         lines.append(f"pub(super) const {key}: u32 = {value};")
     lines += ["pub const LABEL_PX: f32 = 12.5;", "pub const LABEL_WEIGHT: u16 = 400;",
               "pub const NUMBER_PX: f32 = 11.0;"]

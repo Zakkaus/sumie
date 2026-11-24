@@ -367,8 +367,7 @@ impl TabPaint {
             } else {
                 title.origin[0].cast_unsigned() + advance
             };
-            let baseline = (top + metrics.baseline).max(0).cast_unsigned();
-            layout.underline(palette, index, end, baseline, &mut self.fills);
+            layout.underline(palette, index, end, &mut self.fills);
         }
     }
 }
