@@ -25,6 +25,18 @@ fn view() -> View {
     view
 }
 
+#[test]
+fn configure_burst_applies_only_the_last_size_at_the_next_frame() {
+    let mut view = view();
+    view.request_resize(120, [900, 600], [900, 600]);
+    view.request_resize(150, [960, 640], [1200, 800]);
+    assert_eq!(view.device, [1000, 625]);
+    assert!(view.apply_pending_resize().unwrap());
+    assert_eq!(view.device, [1200, 800]);
+    assert_eq!(view.logical, [960, 640]);
+    assert!(!view.apply_pending_resize().unwrap());
+}
+
 fn snapshot(view: &View, rect: Rect) -> Snapshot {
     let size = view.pane_size(rect);
     Terminal::new(size.cols, size.rows)

@@ -173,6 +173,10 @@ impl App {
                     && gpu.frame_slot_available()
                     && session.frame_retry.is_none_or(|at| Instant::now() >= at);
                 if ready {
+                    if session.view.apply_pending_resize()? {
+                        session.resize_grid()?;
+                        gpu.resize(session.view.device);
+                    }
                     session.tabs.active_mut().unwrap().refresh_visible()?;
                 }
                 let banner = self.reload.banner.as_deref();
@@ -303,7 +307,9 @@ impl App {
                 let logical = logical.into();
                 let device = [width, height];
                 if let Some(session) = &mut self.session {
-                    session.resize(scale, logical, device)?;
+                    session.view.request_resize(scale, logical, device);
+                    let tab = session.tabs.active_mut().unwrap();
+                    tab.layout_revision = tab.layout_revision.wrapping_add(1);
                 } else {
                     let gpu = self.gpu.as_mut().unwrap();
                     let mut session = Session::new(
@@ -316,9 +322,9 @@ impl App {
                     )?;
                     let (alpha, _) = gpu.set_background(&self.config.window);
                     session.view.set_background_alpha(alpha);
+                    gpu.resize(device);
                     self.session = Some(session);
                 }
-                self.gpu.as_mut().unwrap().resize(device);
             }
             event => {
                 if let Some(session) = &mut self.session {
@@ -373,11 +379,6 @@ impl Session {
             pane_pointer: pane_input::Pointer::default(),
             link_pointer: links::Pointer::default(),
         })
-    }
-
-    fn resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<()> {
-        self.view.resize(scale, logical, device)?;
-        self.resize_grid()
     }
 
     fn resize_grid(&mut self) -> Result<()> {

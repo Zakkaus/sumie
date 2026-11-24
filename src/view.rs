@@ -36,6 +36,12 @@ mod tests;
 pub(crate) use settings::FontSettings;
 use tabs::Tabs;
 
+struct WindowSize {
+    scale: u32,
+    logical: [u32; 2],
+    device: [u32; 2],
+}
+
 pub(crate) struct View {
     font: FontSystem,
     font_settings: FontSettings,
@@ -43,6 +49,7 @@ pub(crate) struct View {
     font_errors: FontErrors,
     logical: [u32; 2],
     scale: u32,
+    pending_resize: Option<WindowSize>,
     padding: [u16; 2],
     device_padding: [u32; 2],
     tabs: Tabs,
@@ -115,6 +122,7 @@ impl View {
             zoom_points: None,
             font_errors: FontErrors::default(),
             scale,
+            pending_resize: None,
             padding,
             device_padding: scaled_padding(padding, scale),
             tabs: Tabs::default(),
@@ -142,7 +150,25 @@ impl View {
         })
     }
 
-    pub(crate) fn resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) -> Result<()> {
+    pub(crate) fn request_resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) {
+        self.pending_resize = Some(WindowSize {
+            scale,
+            logical,
+            device,
+        });
+        self.reset_hits();
+        self.presented_images.clear();
+    }
+
+    pub(crate) fn apply_pending_resize(&mut self) -> Result<bool> {
+        let Some(WindowSize {
+            scale,
+            logical,
+            device,
+        }) = self.pending_resize.take()
+        else {
+            return Ok(false);
+        };
         u16::try_from(device[0])?;
         u16::try_from(device[1])?;
         if scale != self.scale {
@@ -157,9 +183,7 @@ impl View {
         self.logical = logical;
         self.device = device;
         self.resize_strip();
-        self.reset_hits();
-        self.presented_images.clear();
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) fn set_padding(&mut self, padding: [u16; 2]) {
