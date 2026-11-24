@@ -71,7 +71,7 @@ pub(super) fn assert_tab_bar(renderer: &mut Renderer, device: &wgpu::Device, que
         assert_eq!(pixel(590, top + 10), background);
         assert_eq!(view.tab_hit((475.0, 16.0)), None, "empty strip after +");
         if count > 1 {
-            let hits = presented_buttons(&view, !shrinking && hover == Some(TabHit::Close(0)));
+            let hits = presented_buttons(&view, hover == Some(TabHit::Close(0)));
             close = Some(hits[0]);
             new = Some(hits[1]);
             assert_colors(pixel, top, background, light);

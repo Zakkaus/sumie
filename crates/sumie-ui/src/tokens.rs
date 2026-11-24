@@ -5,8 +5,7 @@ use super::Palette;
 
 pub(super) const PLUS_WIDTH: u32 = 32;
 pub(super) const BAR_INSET: u32 = 6;
-pub(super) const PADDING_LEFT: u32 = 12;
-pub(super) const PADDING_RIGHT: u32 = 8;
+pub(super) const TAB_PADDING: u32 = 12;
 pub(super) const ITEM_GAP: u32 = 8;
 pub(super) const RULE: u32 = 1;
 pub(super) const INDICATOR: u32 = 2;

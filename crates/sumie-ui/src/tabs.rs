@@ -50,7 +50,7 @@ struct Sizing {
 }
 
 impl Sizing {
-    fn widths(self, index: usize, tab: TabMeasurement) -> (u32, u32) {
+    fn minimum(self, index: usize, tab: TabMeasurement) -> u32 {
         let dot = if tab.activity && index != self.active {
             self.dot + self.gap
         } else {
@@ -58,12 +58,9 @@ impl Sizing {
         };
         let gap = if tab.title != 0 { self.gap } else { 0 };
         let fixed = (self.chrome + dot + gap).saturating_add(tab.number);
-        (
-            fixed
-                .saturating_add(self.ellipsis.min(tab.title))
-                .min(self.max),
-            fixed.saturating_add(tab.title).min(self.max),
-        )
+        fixed
+            .saturating_add(self.ellipsis.min(tab.title))
+            .min(self.max)
     }
 
     // Add neighboring tabs while the minimum widths of the contiguous run still fit.
@@ -72,18 +69,18 @@ impl Sizing {
             return self.active..self.active;
         }
         let (mut first, mut end) = (self.active, self.active + 1);
-        let mut remaining = budget.saturating_sub(self.widths(first, tabs[first]).0);
+        let mut remaining = budget.saturating_sub(self.minimum(first, tabs[first]));
         loop {
             let before = first..end;
             if first > 0 {
-                let min = self.widths(first - 1, tabs[first - 1]).0;
+                let min = self.minimum(first - 1, tabs[first - 1]);
                 if min <= remaining {
                     remaining -= min;
                     first -= 1;
                 }
             }
             if end < tabs.len() {
-                let min = self.widths(end, tabs[end]).0;
+                let min = self.minimum(end, tabs[end]);
                 if min <= remaining {
                     remaining -= min;
                     end += 1;
@@ -103,40 +100,37 @@ impl Sizing {
         budget: u32,
     ) -> Arc<[Slot]> {
         let tabs = tabs[visible.clone()].iter().enumerate();
-        let widths = |index, &tab| self.widths(visible.start + index, tab);
-        let total = |shrink: u32| {
+        if visible.is_empty() {
+            return Arc::default();
+        }
+        let count = u32::try_from(visible.len()).expect("visible tabs fit in the strip");
+        let used = |width: u32| {
             tabs.clone()
-                .map(|(slot, tab)| {
-                    let (min, ideal) = widths(slot, tab);
-                    ideal.saturating_sub(shrink).max(min)
-                })
-                .fold(0_u32, u32::saturating_add)
+                .map(|(i, &tab)| u64::from(width.max(self.minimum(visible.start + i, tab))))
+                .sum::<u64>()
         };
-        let (mut lo, mut hi) = (0, self.max);
-        if total(0) > budget {
-            // Find the same reduction for every tab that can still shrink.
-            while lo < hi {
-                let mid = u32::midpoint(lo, hi);
-                if total(mid) > budget {
-                    lo = mid + 1;
+        // Only tabs at their minimum can force their peers below the equal share.
+        let mut width = (budget / count).min(self.max);
+        let mut total = used(width);
+        if total > u64::from(budget) {
+            let mut low = 0;
+            while low < width {
+                let mid = low + (width - low).div_ceil(2);
+                if used(mid) <= u64::from(budget) {
+                    low = mid;
                 } else {
-                    hi = mid;
+                    width = mid - 1;
                 }
             }
+            total = used(width);
         }
-        let mut spare = if lo == 0 {
-            0
-        } else {
-            budget.saturating_sub(total(lo))
-        };
+        let mut spare = u64::from(budget).saturating_sub(total);
         let mut end = start;
-        // Distribute leftover pixels from rounding only among tabs that can still shrink.
-        tabs.map(|(slot, tab)| {
-            let (min, ideal) = widths(slot, tab);
-            let reduced = ideal.saturating_sub(lo);
-            let extra = u32::from(spare > 0 && reduced >= min && reduced < ideal);
-            spare -= extra;
-            end += (reduced.max(min) + extra).min(budget);
+        tabs.map(|(slot, &tab)| {
+            let min = self.minimum(visible.start + slot, tab);
+            let extra = u32::from(spare > 0 && width < self.max && width >= min);
+            spare -= u64::from(extra);
+            end += (width.max(min) + extra).min(budget);
             Slot {
                 end,
                 number: tab.number,
@@ -160,7 +154,7 @@ pub struct TabLayout {
 }
 
 impl TabLayout {
-    /// Fit measured device-pixel widths, keeping a contiguous run with the active tab visible.
+    /// Share space equally up to the preferred width, keeping the active tab visible on overflow.
     #[must_use]
     pub fn new(
         size: [u32; 2],
@@ -180,10 +174,7 @@ impl TabLayout {
         let budget = available - 2 * start;
         let gap = px(tokens::ITEM_GAP);
         let sizing = Sizing {
-            chrome: px(tokens::PADDING_LEFT)
-                + px(tokens::PADDING_RIGHT)
-                + px(tokens::CLOSE_SIZE).max(1)
-                + gap,
+            chrome: 2 * px(tokens::TAB_PADDING) + px(tokens::CLOSE_SIZE).max(1) + gap,
             max: px(tokens::TAB_MAX_WIDTH),
             ellipsis: label_cell,
             gap,
@@ -227,16 +218,27 @@ impl TabLayout {
         rect(left, 0, slot.end - left, self.height)
     }
 
-    fn close(&self, tab: PixelRect, number: u32) -> Option<PixelRect> {
+    fn content(&self, index: usize) -> PixelRect {
+        let mut content = self.tab(index);
+        let spare = content.size[0].saturating_sub(self.slot(index).number.max(1));
+        let pad = self.px(tokens::TAB_PADDING).min(spare / 2);
+        content.origin[0] += pad.cast_signed();
+        content.size[0] -= 2 * pad;
+        content
+    }
+
+    fn close(&self, index: usize) -> Option<PixelRect> {
+        let content = self.content(index);
         let side = self.px(tokens::CLOSE_SIZE).max(1);
-        let trailing = self.px(tokens::PADDING_RIGHT) + side;
-        let reserved = self.px(tokens::PADDING_LEFT) + self.px(tokens::ITEM_GAP) + trailing;
-        if tab.size[0] < reserved.saturating_add(number) || tab.size[1] < side {
+        let reserved = side + self.px(tokens::ITEM_GAP);
+        if content.size[0] < reserved.saturating_add(self.slot(index).number)
+            || content.size[1] < side
+        {
             return None;
         }
         Some(rect(
-            tab.origin[0].cast_unsigned() + tab.size[0] - trailing,
-            (tab.size[1] - side) / 2,
+            content.origin[0].cast_unsigned() + content.size[0] - side,
+            (content.size[1] - side) / 2,
             side,
             side,
         ))
@@ -248,17 +250,11 @@ impl TabLayout {
     /// The index must be in `visible()`.
     #[must_use]
     pub fn label(&self, index: usize) -> PixelRect {
-        let tab = self.tab(index);
-        let number = self.slot(index).number;
-        let [width, height] = tab.size;
-        let left = tab.origin[0].cast_unsigned();
-        let space = width.saturating_sub(number.max(1));
-        let padding = self.px(tokens::PADDING_LEFT).min(space);
-        let end = self.close(tab, number).map_or_else(
-            || left + width - self.px(tokens::PADDING_RIGHT).min(space - padding),
-            |close| close.origin[0].cast_unsigned() - self.px(tokens::ITEM_GAP),
-        );
-        rect(left + padding, 0, end - left - padding, height)
+        let mut label = self.content(index);
+        if let Some(close) = self.close(index) {
+            label.size[0] -= close.size[0] + self.px(tokens::ITEM_GAP);
+        }
+        label
     }
 
     /// The leading number box, given its measured width in device pixels.
@@ -324,26 +320,22 @@ impl TabLayout {
         }
     }
 
-    /// Underline only the active label, from the number through the rendered title.
-    pub fn underline(
-        &self,
-        palette: TabPalette,
-        index: usize,
-        title_end: u32,
-        out: &mut Vec<Fill>,
-    ) {
-        if index != self.active || !self.visible().contains(&index) {
-            return;
-        }
-        let label = self.label(index);
-        let x = label.origin[0].cast_unsigned();
-        // Sit on the bar's bottom edge, well clear of descenders, under the title only.
+    fn underline(&self, palette: TabPalette, out: &mut Vec<Fill>) {
+        let content = self.content(self.active);
         let height = self.px(tokens::INDICATOR).min(self.height);
         let y = self
             .height
             .saturating_sub(height + self.px(tokens::UNDERLINE_INSET));
-        let width = title_end.min(x + label.size[0]).saturating_sub(x);
-        fill(out, rect(x, y, width, height), palette.active_number);
+        fill(
+            out,
+            rect(
+                content.origin[0].cast_unsigned(),
+                y,
+                content.size[0],
+                height,
+            ),
+            palette.active_number,
+        );
     }
 
     fn plus(&self) -> PixelRect {
@@ -370,7 +362,7 @@ impl TabLayout {
         }
         let index = self.first + slot;
         if self
-            .close(self.tab(index), self.slots[slot].number)
+            .close(index)
             .is_some_and(|close| contains(close, [x, y]))
         {
             return Some(TabHit::Close(index));
@@ -385,6 +377,7 @@ impl TabLayout {
         self.dividers(out, tint_over(palette.surface, palette.selected, 23));
 
         if self.visible().contains(&self.active) {
+            self.underline(palette, out);
             self.paint_tab(
                 out,
                 palette,
@@ -428,7 +421,7 @@ impl TabLayout {
     }
 
     fn paint_tab(&self, out: &mut Vec<Fill>, palette: TabPalette, index: usize, close_hover: bool) {
-        if let Some(close) = self.close(self.tab(index), self.slot(index).number) {
+        if let Some(close) = self.close(index) {
             let label = if index == self.active {
                 palette.selected
             } else {

@@ -58,7 +58,7 @@ struct TabLabel {
     source: String,
     run: TextRun,
     ink: Vec<GlyphQuad>,
-    fit: Option<(u32, u32)>,
+    fit: Option<u32>,
 }
 
 struct TabDigits {
@@ -358,17 +358,9 @@ impl TabPaint {
         layout.activity_dot(palette, index, &mut self.fills);
         let title = layout.title(index);
         let label = &mut self.labels[index];
-        let advance = label.fit_ink(title.size[0], &self.ellipsis, &mut self.font, errors);
+        label.fit_ink(title.size[0], &self.ellipsis, &mut self.font, errors);
         self.glyphs.cover = Some(Mask::Inside(title));
         place_ink(&mut self.glyphs, &label.ink, [title.origin[0], top], color);
-        if selected {
-            let end = if advance == 0 {
-                rect.origin[0].cast_unsigned() + rect.size[0]
-            } else {
-                title.origin[0].cast_unsigned() + advance
-            };
-            layout.underline(palette, index, end, &mut self.fills);
-        }
     }
 }
 
@@ -442,20 +434,17 @@ impl TabLabel {
         ellipsis: &TextRun,
         font: &mut FontSystem,
         errors: &mut FontErrors,
-    ) -> u32 {
-        if let Some((cached_width, advance)) = self.fit
-            && cached_width == width
-        {
-            return advance;
+    ) {
+        if self.fit == Some(width) {
+            return;
         }
-        let (prefix, suffix_x, advance) = self.run.fit(width, ellipsis);
+        let (prefix, suffix_x, _) = self.run.fit(width, ellipsis);
         self.ink.clear();
         cache_ink(font, errors, &mut self.ink, prefix, 0);
         if let Some(x) = suffix_x {
             cache_ink(font, errors, &mut self.ink, &ellipsis.glyphs, x);
         }
-        self.fit = Some((width, advance));
-        advance
+        self.fit = Some(width);
     }
 }
 
