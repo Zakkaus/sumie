@@ -153,27 +153,140 @@ fn kitty_commands_query_transmit_place_and_delete() {
 }
 
 #[test]
+fn kitty_snapshot_skips_only_images_behind_an_opaque_cover() {
+    let mut vt = Terminal::new(6, 3).unwrap();
+    vt.resize_pixels(6, 3, [8, 16]).unwrap();
+    vt.set_image_dimension_limit(1);
+    for (command, visible_ids) in [
+        ("a=T,f=24,i=8,C=1,s=1,v=1,c=1,r=1,q=2;AAD/", &[8][..]),
+        ("a=T,f=24,i=7,C=1,s=1,v=1,c=1,r=1,q=2;/wAA", &[8]),
+        ("a=T,f=24,i=10,C=1,s=2,v=1,c=1,r=1,q=2;AAAAAAAA", &[8]),
+        ("a=T,f=32,i=9,C=1,s=1,v=1,c=1,r=1,q=2;AAAAAA==", &[8, 9]),
+        ("a=d,d=I,i=8,q=2", &[7, 9]),
+    ] {
+        vt.write(format!("\x1b_G{command}\x1b\\").as_bytes());
+        let snapshot = vt.render_snapshot().unwrap();
+        assert!(
+            snapshot
+                .images
+                .iter()
+                .map(|p| p.image_id)
+                .eq(visible_ids.iter().copied()),
+            "{command}"
+        );
+    }
+}
+
+const KITTY_RED: &str = "a=T,f=32,i=7,p=2,s=1,v=1,C=1;/wAA/w==";
+const KITTY_BLUE_FRAME: &str = "a=f,f=32,i=7,s=1,v=1,z=40;AAD//w==";
+
+#[test]
+fn kitty_animation_commands_update_current_snapshot_pixels() {
+    const RED: [u8; 4] = [255, 0, 0, 255];
+    const GREEN: [u8; 4] = [0, 255, 0, 255];
+    const BLUE: [u8; 4] = [0, 0, 255, 255];
+    const YELLOW: [u8; 4] = [255, 255, 0, 255];
+    let mut vt = Terminal::new(6, 3).unwrap();
+    vt.resize_pixels(6, 3, [8, 16]).unwrap();
+    for (command, reply, now, next, pixel) in [
+        (KITTY_RED, "i=7,p=2;OK", 1000, None, RED),
+        (
+            "a=f,f=32,i=7,s=1,v=1,z=-1;AP8A/w==",
+            "i=7,r=2;OK",
+            1000,
+            None,
+            RED,
+        ),
+        (KITTY_BLUE_FRAME, "i=7,r=3;OK", 1000, None, RED),
+        ("a=a,i=7,r=1,z=30,s=2", "", 1000, Some(1030), RED),
+        (
+            "a=f,f=32,i=7,s=1,v=1,z=20,m=1;//8A",
+            "",
+            1010,
+            Some(1030),
+            RED,
+        ),
+        ("", "", 1030, Some(1070), BLUE),
+        ("a=f,m=0;/w==", "i=7,r=4;OK", 1030, Some(1070), BLUE),
+        ("", "", 1070, Some(1090), YELLOW),
+        ("", "", 1090, None, YELLOW),
+        ("a=c,i=7,r=2,c=4", "i=7;OK", 1090, None, GREEN),
+        ("a=a,i=7,s=3", "", 1090, Some(1120), RED),
+        ("a=a,i=7,c=2,s=1", "", 1120, None, GREEN),
+        (
+            "a=d,d=I,i=7\x1b\\\x1b_Ga=T,f=32,i=7,p=2,s=1,v=1,C=1;AAD//w==",
+            "i=7,p=2;OK",
+            1120,
+            None,
+            BLUE,
+        ),
+    ] {
+        if !command.is_empty() {
+            vt.write(format!("\x1b_G{command}\x1b\\").as_bytes());
+        }
+        let mut actual = Vec::new();
+        vt.drain_replies(|bytes| actual.extend_from_slice(bytes));
+        if reply.is_empty() {
+            assert!(actual.is_empty(), "{command} at {now}");
+        } else {
+            assert_eq!(
+                actual,
+                format!("\x1b_G{reply}\x1b\\").as_bytes(),
+                "{command}"
+            );
+        }
+        assert_eq!(vt.animation_tick(now).unwrap(), next, "{command} at {now}");
+        let snapshot = vt.render_snapshot().unwrap();
+        assert_eq!(snapshot.images.len(), 1, "{command} at {now}");
+        assert_eq!(snapshot.images[0].image.rgba, pixel, "{command} at {now}");
+    }
+}
+
+#[test]
+fn kitty_viewer_refreshes_offscreen_frames_until_placement_is_replaced() {
+    let mut vt = Terminal::new(6, 3).unwrap();
+    vt.resize_pixels(6, 3, [8, 16]).unwrap();
+    vt.write(format!("\x1b_G{KITTY_RED}\x1b\\\x1b_G{KITTY_BLUE_FRAME}\x1b\\").as_bytes());
+    let snapshot = vt.render_snapshot().unwrap();
+    let mut viewer = snapshot.images[0].clone();
+    vt.write(b"A\r\nB\r\nC\r\nD\r\n\x1b_Ga=a,i=7,c=2\x1b\\");
+    assert!(vt.render_snapshot().unwrap().images.is_empty());
+    assert!(!vt.has_image_placement(&viewer));
+    assert!(vt.refresh_viewer(&mut viewer).unwrap());
+    assert!(vt.has_image_placement(&viewer));
+    assert_eq!(viewer.image.rgba, [0, 0, 255, 255]);
+    assert_eq!(snapshot.images[0].image.rgba, [255, 0, 0, 255]);
+
+    vt.write(format!("\x1b_G{KITTY_RED}\x1b\\").as_bytes());
+    assert!(!vt.refresh_viewer(&mut viewer).unwrap());
+}
+
+#[test]
 fn kitty_thumbnails_size_and_advance_before_rendering() {
     let pixels = "AAAA".repeat(12 * 80);
     let transmit = format!("\x1b_Ga=t,i=7,f=24,s=12,v=80,q=2;{pixels}\x1b\\");
-    for (prefix, rows, args, size, cursor, thumbnail) in [
-        (b"".as_slice(), 3, "", [7, 48], [1, 2], true),
-        (b"", 0, "", [12, 80], [2, 4], false),
-        (b"", 3, ",r=10", [24, 160], [3, 9], false),
-        (b"", 2, ",c=2", [16, 107], [2, 6], false),
-        (b"", 2, ",c=3,r=5", [24, 80], [3, 4], false),
-        (b"", 2, ",h=24", [12, 24], [2, 1], false),
-        (b"", 2, ",h=32", [12, 32], [2, 1], false),
-        (b"", 1, ",w=1", [1, 16], [1, 0], true),
-        (b"", 2, ",C=1", [12, 80], [0, 0], false),
-        (b"", 1, ",Y=4294967295", [1, 1], [1, 0], true),
-        (b"\x1b[?1049h", 2, "", [12, 80], [2, 4], false),
+    for (prefix, animated, rows, args, size, cursor, thumbnail) in [
+        (b"".as_slice(), false, 3, "", [7, 48], [1, 2], true),
+        (b"", false, 0, "", [12, 80], [2, 4], false),
+        (b"", false, 3, ",r=10", [24, 160], [3, 9], false),
+        (b"", false, 2, ",c=2", [16, 107], [2, 6], false),
+        (b"", false, 2, ",c=3,r=5", [24, 80], [3, 4], false),
+        (b"", false, 2, ",h=24", [12, 24], [2, 1], false),
+        (b"", false, 2, ",h=32", [12, 32], [2, 1], false),
+        (b"", false, 1, ",w=1", [1, 16], [1, 0], true),
+        (b"", false, 2, ",C=1", [12, 80], [0, 0], false),
+        (b"", false, 1, ",Y=4294967295", [1, 1], [1, 0], true),
+        (b"\x1b[?1049h", false, 2, "", [12, 80], [2, 4], false),
+        (b"", true, 2, "", [12, 80], [2, 4], false),
     ] {
         let mut vt = Terminal::new(12, 12).unwrap();
         vt.resize_pixels(12, 12, [8, 16]).unwrap();
         vt.write(prefix);
         vt.set_thumbnail_rows(3);
         vt.write(transmit.as_bytes());
+        if animated {
+            vt.write(format!("\x1b_G{KITTY_BLUE_FRAME}\x1b\\").as_bytes());
+        }
         vt.set_thumbnail_rows(rows);
         vt.write(format!("\x1b_Ga=p,i=7,p=2,q=2{args}\x1b\\@").as_bytes());
         let snapshot = vt.render_snapshot().unwrap();

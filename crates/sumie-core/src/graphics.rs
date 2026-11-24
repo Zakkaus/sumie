@@ -32,7 +32,7 @@ pub struct Placement {
     pub image_id: u32,
     pub placement_id: u32,
     /// Opaque VT identity for this stored placement; zero for synthetic geometry.
-    pub storage_key: [u64; 2],
+    pub storage_key: [u64; 3],
     pub z: i32,
     /// Top-left cell relative to the viewport; either coordinate can be negative.
     pub cell: [i32; 2],

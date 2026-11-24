@@ -1,7 +1,7 @@
 //! Copies pixels and placement geometry from the live terminal into owned snapshots.
 
 use crate::{Error, Terminal, check, ffi};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_int, c_void};
 use std::ptr::{from_mut, from_ref, null, null_mut};
 use std::sync::Arc;
@@ -46,6 +46,8 @@ const FORMAT_GRAY: c_int = 4;
 pub(super) struct Graphics {
     iter: ffi::RenderStateImageIterator,
     images: HashMap<u32, CachedImage>,
+    geometries: Vec<(usize, Geometry)>,
+    covered: HashSet<Footprint>,
     generation: Option<u64>,
     max_dimension: u32,
     placements: Arc<Vec<Placement>>,
@@ -53,7 +55,16 @@ pub(super) struct Graphics {
 
 struct CachedImage {
     image: Arc<Image>,
+    opaque: bool,
     visible: bool,
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct Footprint {
+    z: i32,
+    cell: [i32; 2],
+    offset: [u32; 2],
+    size: [u32; 2],
 }
 
 #[derive(Default)]
@@ -61,13 +72,34 @@ struct Geometry {
     image_id: u32,
     generation: u64,
     placement_id: u32,
-    storage_key: [u64; 2],
+    storage_key: [u64; 3],
     z: i32,
     cell: [i32; 2],
     offset: [u32; 2],
     size: [u32; 2],
     source: [u32; 4],
     thumbnail: bool,
+}
+
+impl Geometry {
+    const fn footprint(&self) -> Footprint {
+        Footprint {
+            z: self.z,
+            cell: self.cell,
+            offset: self.offset,
+            size: self.size,
+        }
+    }
+
+    fn can_cover(&self, image: &Image) -> bool {
+        // Keep decorated thumbnails out of occlusion and match the renderer's crop validation.
+        !self.thumbnail
+            && (0..2).all(|i| {
+                self.source[i]
+                    .checked_add(self.source[2 + i])
+                    .is_some_and(|end| end <= image.size[i])
+            })
+    }
 }
 
 impl Graphics {
@@ -78,6 +110,8 @@ impl Graphics {
         Ok(Self {
             iter,
             images: HashMap::new(),
+            geometries: Vec::new(),
+            covered: HashSet::new(),
             generation: Some(0),
             max_dimension: u32::MAX,
             placements: Arc::default(),
@@ -145,6 +179,27 @@ impl Drop for Graphics {
 }
 
 impl Terminal {
+    /// Advance Kitty animations by at most one frame each on the active screen.
+    /// Use milliseconds from the same monotonic clock throughout this terminal's lifetime.
+    /// Returns the next frame deadline on that clock, or `None` when no tick is needed.
+    /// Call before taking the snapshot for a frame.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot access or advance its Kitty graphics storage.
+    pub fn animation_tick(&mut self, now_ms: u64) -> Result<Option<u64>, Error> {
+        let storage = self.kitty_graphics()?;
+        let mut next_ms = 0;
+        // SAFETY: Storage belongs to this exclusively borrowed terminal, and the output is a u64.
+        let result = unsafe {
+            ffi::ghostty_kitty_graphics_animation_tick(storage, now_ms, &raw mut next_ms)
+        };
+        if result == ffi::NO_VALUE {
+            return Ok(None);
+        }
+        check(result)?;
+        Ok(Some(next_ms))
+    }
+
     /// Cap new natural-size Kitty placements that advance the primary-screen cursor.
     /// Zero disables the cap.
     pub fn set_thumbnail_rows(&mut self, rows: u16) {
@@ -156,17 +211,42 @@ impl Terminal {
     /// image storage, even when outside the viewport. Does not update the render state.
     #[must_use]
     pub fn has_image_placement(&self, placement: &Placement) -> bool {
-        let [storage_id, revision] = placement.storage_key;
+        self.placement_image_generation(placement) == Some(placement.image.generation)
+    }
+
+    /// Update a viewer's pixels from the same placement, even outside the viewport.
+    /// Returns `false` if the placement or image was removed or replaced, or its pixels do not fit.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the current image.
+    pub fn refresh_viewer(&mut self, placement: &mut Placement) -> Result<bool, Error> {
+        let Some(generation) = self.placement_image_generation(placement) else {
+            return Ok(false);
+        };
+        if generation != placement.image.generation {
+            let Some((image, _)) =
+                self.cache_image(placement.image_id, generation, &mut null_mut(), false)?
+            else {
+                return Ok(false);
+            };
+            placement.image = image;
+        }
+        Ok(true)
+    }
+
+    fn placement_image_generation(&self, placement: &Placement) -> Option<u64> {
+        let [storage_id, revision, transmission] = placement.storage_key;
         // SAFETY: The terminal is live and Ghostty only reads its active storage.
-        unsafe {
-            ffi::sumie_has_image_placement(
+        let generation = unsafe {
+            ffi::sumie_placement_image_generation(
                 self.raw,
                 placement.image_id,
-                placement.image.generation,
                 storage_id,
                 revision,
+                transmission,
             )
-        }
+        };
+        (generation != 0).then_some(generation)
     }
 
     /// Changes on a full display erase or full terminal reset, including when
@@ -231,6 +311,21 @@ impl Terminal {
     }
 
     fn collect_images(&mut self) -> Result<Vec<Placement>, Error> {
+        let mut geometries = std::mem::take(&mut self.graphics.geometries);
+        let mut covered = std::mem::take(&mut self.graphics.covered);
+        let result = self.copy_uncovered_images(&mut geometries, &mut covered);
+        geometries.clear();
+        covered.clear();
+        self.graphics.geometries = geometries;
+        self.graphics.covered = covered;
+        result
+    }
+
+    fn copy_uncovered_images(
+        &mut self,
+        geometries: &mut Vec<(usize, Geometry)>,
+        covered: &mut HashSet<Footprint>,
+    ) -> Result<Vec<Placement>, Error> {
         // SAFETY: IMAGE_ITERATOR fills the existing iterator from the just-updated render state.
         check(unsafe {
             ffi::ghostty_render_state_get(
@@ -239,8 +334,6 @@ impl Terminal {
                 from_mut(&mut self.graphics.iter).cast(),
             )
         })?;
-        let mut placements = Vec::new();
-        let mut storage = null_mut();
         // SAFETY: The iterator was filled above and the render state is not updated in this loop.
         while unsafe { ffi::ghostty_render_state_image_iterator_next(self.graphics.iter) } {
             let geometry = self.graphics.geometry()?;
@@ -248,9 +341,25 @@ impl Terminal {
             if geometry.source[2..].contains(&0) {
                 continue;
             }
-            let Some(image) = self.cache_image(&geometry, &mut storage)? else {
+            geometries.push((geometries.len(), geometry));
+        }
+        // Use the renderer's painter order, including native iterator order for ties.
+        geometries.sort_unstable_by_key(|(index, g)| (g.z, g.image_id, g.placement_id, *index));
+        let mut placements = Vec::new();
+        let mut storage = null_mut();
+        for (_, geometry) in geometries.drain(..).rev() {
+            let footprint = geometry.footprint();
+            if covered.contains(&footprint) {
+                continue;
+            }
+            let Some((image, opaque)) =
+                self.cache_image(geometry.image_id, geometry.generation, &mut storage, true)?
+            else {
                 continue;
             };
+            if opaque && geometry.can_cover(&image) {
+                covered.insert(footprint);
+            }
             placements.push(Placement {
                 image,
                 image_id: geometry.image_id,
@@ -264,50 +373,55 @@ impl Terminal {
                 thumbnail: geometry.thumbnail,
             });
         }
+        placements.reverse();
         Ok(placements)
     }
 
     fn cache_image(
         &mut self,
-        geometry: &Geometry,
+        id: u32,
+        generation: u64,
         storage: &mut ffi::KittyGraphics,
-    ) -> Result<Option<Arc<Image>>, Error> {
-        if let Some(cached) = self.graphics.images.get_mut(&geometry.image_id)
-            && cached.image.generation == geometry.generation
+        visible: bool,
+    ) -> Result<Option<(Arc<Image>, bool)>, Error> {
+        if let Some(cached) = self.graphics.images.get_mut(&id)
+            && cached.image.generation == generation
         {
-            cached.visible = true;
-            return Ok(Some(Arc::clone(&cached.image)));
+            cached.visible |= visible;
+            return Ok(Some((Arc::clone(&cached.image), cached.opaque)));
         }
         if storage.is_null() {
-            // SAFETY: The live terminal writes a borrowed KittyGraphics handle to `storage`.
-            check(unsafe {
-                ffi::ghostty_terminal_get(
-                    self.raw,
-                    TERMINAL_KITTY_GRAPHICS,
-                    from_mut(storage).cast(),
-                )
-            })?;
+            *storage = self.kitty_graphics()?;
         }
         // SAFETY: Storage belongs to this terminal, which is unchanged during image extraction.
-        let image = unsafe {
-            read_image(
-                *storage,
-                geometry.image_id,
-                geometry.generation,
-                self.graphics.max_dimension,
-            )
-        }?;
-        let Some(image) = image.map(Arc::new) else {
+        let Some((image, opaque)) =
+            (unsafe { read_image(*storage, id, generation, self.graphics.max_dimension) })?
+        else {
             return Ok(None);
         };
+        let image = Arc::new(image);
         self.graphics.images.insert(
-            geometry.image_id,
+            id,
             CachedImage {
                 image: Arc::clone(&image),
-                visible: true,
+                opaque,
+                visible,
             },
         );
-        Ok(Some(image))
+        Ok(Some((image, opaque)))
+    }
+
+    fn kitty_graphics(&self) -> Result<ffi::KittyGraphics, Error> {
+        let mut storage: ffi::KittyGraphics = null_mut();
+        // SAFETY: The live terminal writes a borrowed KittyGraphics handle to the output slot.
+        check(unsafe {
+            ffi::ghostty_terminal_get(
+                self.raw,
+                TERMINAL_KITTY_GRAPHICS,
+                from_mut(&mut storage).cast(),
+            )
+        })?;
+        Ok(storage)
     }
 }
 
@@ -317,7 +431,7 @@ unsafe fn read_image(
     id: u32,
     generation: u64,
     max_dimension: u32,
-) -> Result<Option<Image>, Error> {
+) -> Result<Option<(Image, bool)>, Error> {
     let mut size = [0_u32; 2];
     let [width, height] = &mut size;
     let mut format: c_int = 0;
@@ -360,11 +474,14 @@ unsafe fn read_image(
     // SAFETY: The getter lends initialized terminal memory until the next mutation. The
     // non-null buffer has exactly the expected byte length, bounded by IMAGE_BUDGET.
     let pixels = unsafe { std::slice::from_raw_parts(pixels.ptr, pixels.len) };
-    Ok(Some(Image {
-        generation,
-        size,
-        rgba: to_rgba(pixels, channels, rgba_len),
-    }))
+    Ok(Some((
+        Image {
+            generation,
+            size,
+            rgba: to_rgba(pixels, channels, rgba_len),
+        },
+        matches!(format, FORMAT_RGB | FORMAT_GRAY),
+    )))
 }
 
 fn to_rgba(pixels: &[u8], channels: usize, rgba_len: usize) -> Vec<u8> {

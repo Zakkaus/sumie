@@ -261,7 +261,7 @@ fn thumbnail_snapshot(view: &View) -> Snapshot {
         }),
         image_id: 1,
         placement_id: 1,
-        storage_key: [0; 2],
+        storage_key: [0; 3],
         z: 0,
         cell: [1, -1],
         offset: [0, h - 2],

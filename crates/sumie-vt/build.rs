@@ -6,6 +6,8 @@ use std::process::Command;
 const GHOSTTY_COMMIT: &str = "108cacb17ed8990840cd14abfce43d8ed8503ca1";
 const GHOSTTY_ARCHIVE_SHA256: &str =
     "2c276d3e62cb15fb38f0d7f621f199029d1d4df86538096c6bec2a107cad7159";
+// Bump when changing patches already applied to a cached extraction.
+const GHOSTTY_PATCH_LEVEL: u32 = 2;
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
@@ -36,6 +38,7 @@ fn main() {
     install_selection_bridge(&source);
     install_screen_bridge(&source);
     install_graphics_policy(&source);
+    preserve_chunked_animation_frames(&source);
     install_thumbnail_policy(&source);
     expose_thumbnail_flag(&source.join("src/terminal"));
     install_placement_lifetime(&source);
@@ -240,9 +243,10 @@ fn cap_new_placements(path: &Path) {
         // Change the footprint only for inline output that advances the cursor.
         const rows = terminal.sumie_thumbnail_rows;
         const cell_height = terminal.height_px / terminal.rows;
+        const animated = if (img.animation) |anim| anim.frameCount() > 1 else false;
         if (terminal.screens.active_key == .primary and location == .pin and
             d.cursor_movement == .after and rows > 0 and cell_height > 0 and
-            p.columns == 0 and p.rows == 0)
+            !animated and p.columns == 0 and p.rows == 0)
         {
             const source = p.sourceRect(img);
             // cellOffset clamps Y to cell_height - 1, even for oversized requests.
@@ -301,28 +305,28 @@ fn install_placement_lifetime(source: &Path) {
         &terminal.join("c/terminal.zig"),
         "    wrapper.terminal.sumie_thumbnail_rows = rows;\n}\n",
         r"
-pub fn sumie_has_image_placement(
+pub fn sumie_placement_image_generation(
     terminal: Terminal,
     image_id: u32,
-    image_generation: u64,
     storage_id: u64,
     revision: u64,
-) callconv(lib.calling_conv) bool {
-    if (comptime !build_options.kitty_graphics) return false;
-    const wrapper = terminal orelse return false;
+    transmission: u64,
+) callconv(lib.calling_conv) u64 {
+    if (comptime !build_options.kitty_graphics) return 0;
+    const wrapper = terminal orelse return 0;
     const storage = &wrapper.terminal.screens.active.kitty_images;
-    const image = storage.images.getPtr(image_id) orelse return false;
-    if (image.generation != image_generation or revision == 0) return false;
+    const image = storage.images.getPtr(image_id) orelse return 0;
+    if (image.transmission != transmission or revision == 0) return 0;
 
     const Storage = @TypeOf(storage.*);
     const key: Storage.PlacementKey = .{
         .image_id = image_id,
-        .placement_id = @bitCast(std.math.cast(u33, storage_id) orelse return false),
+        .placement_id = @bitCast(std.math.cast(u33, storage_id) orelse return 0),
     };
-    const placement = storage.placements.getPtr(key) orelse return false;
-    if (placement.sumie_revision != revision) return false;
+    const placement = storage.placements.getPtr(key) orelse return 0;
+    if (placement.sumie_revision != revision) return 0;
 
-    return switch (placement.location) {
+    const live = switch (placement.location) {
         .pin => |pin| !pin.garbage,
         .virtual => true,
         .relative => |rel| if (storage.resolveChain(rel)) |chain| switch (chain.root.location) {
@@ -331,6 +335,7 @@ pub fn sumie_has_image_placement(
             .relative => unreachable,
         } else false,
     };
+    return if (live) image.generation else 0;
 }
 
 pub fn sumie_screen_clear_epoch(terminal: Terminal) callconv(lib.calling_conv) u64 {
@@ -343,7 +348,7 @@ pub fn sumie_screen_clear_epoch(terminal: Terminal) callconv(lib.calling_conv) u
         &source.join("src/lib_vt.zig"),
         "        @export(&@import(\"terminal/c/terminal.zig\").sumie_set_thumbnail_rows, .{ .name = \"sumie_set_thumbnail_rows\" });\n",
         concat!(
-            "        @export(&@import(\"terminal/c/terminal.zig\").sumie_has_image_placement, .{ .name = \"sumie_has_image_placement\" });\n",
+            "        @export(&@import(\"terminal/c/terminal.zig\").sumie_placement_image_generation, .{ .name = \"sumie_placement_image_generation\" });\n",
             "        @export(&@import(\"terminal/c/terminal.zig\").sumie_screen_clear_epoch, .{ .name = \"sumie_screen_clear_epoch\" });\n",
         ),
     );
@@ -354,12 +359,12 @@ fn expose_placement_key(terminal: &Path) {
     insert_once(
         &render,
         "        sumie_thumbnail: bool = false,\n",
-        "        sumie_storage_key: [2]u64 = .{ 0, 0 },\n",
+        "        sumie_storage_key: [3]u64 = .{ 0, 0, 0 },\n",
     );
     insert_once(
         &render,
         "                .sumie_thumbnail = p.sumie_thumbnail,\n",
-        "                .sumie_storage_key = .{ @as(u33, @bitCast(key.placement_id)), p.sumie_revision },\n",
+        "                .sumie_storage_key = .{ @as(u33, @bitCast(key.placement_id)), p.sumie_revision, image.transmission },\n",
     );
     insert_once(
         &render,
@@ -369,12 +374,12 @@ fn expose_placement_key(terminal: &Path) {
     insert_once(
         &render,
         "        pub const Geometry = struct {\n            image_generation: u64,\n",
-        "            sumie_storage_key: [2]u64 = .{ 0, 0 },\n",
+        "            sumie_storage_key: [3]u64 = .{ 0, 0, 0 },\n",
     );
     insert_once(
         &render,
         "        run.geometry = .{\n",
-        "            .sumie_storage_key = .{ @as(u33, @bitCast(target.key.placement_id)), target.placement.sumie_revision },\n",
+        "            .sumie_storage_key = .{ @as(u33, @bitCast(target.key.placement_id)), target.placement.sumie_revision, image.transmission },\n",
     );
     let c_render = terminal.join("c/render.zig");
     insert_once(
@@ -385,7 +390,7 @@ fn expose_placement_key(terminal: &Path) {
     insert_once(
         &c_render,
         "            .sumie_thumbnail => bool,\n",
-        "            .sumie_storage_key => [2]u64,\n",
+        "            .sumie_storage_key => [3]u64,\n",
     );
     insert_once(
         &c_render,
@@ -416,6 +421,81 @@ fn install_screen_clear_epoch(source: &Path) {
         "pub fn fullReset(self: *Terminal) void {\n",
         "    self.sumie_screen_clear_epoch +%= 1;\n",
     );
+}
+
+fn preserve_chunked_animation_frames(source: &Path) {
+    let kitty = source.join("src/terminal/kitty");
+    // Playback can update the pixel generation between reads of the same transmission.
+    replace_once(
+        &kitty.join("graphics_image.zig"),
+        &[(
+            concat!(
+                "        /// The generation of the target image when the load began.\n",
+                "        /// A different generation at completion means the image was\n",
+                "        /// replaced or evicted mid-transmission and the frame must be\n",
+                "        /// discarded rather than composed onto the wrong image.\n",
+                "        image_generation: u64,",
+            ),
+            concat!(
+                "        /// The target image's transmission stamp survives playback but\n",
+                "        /// changes when the image is replaced.\n",
+                "        image_transmission: u64,",
+            ),
+        )],
+    );
+    replace_once(
+        &kitty.join("graphics_exec.zig"),
+        &[
+            (
+                ".image_generation = img.generation,",
+                ".image_transmission = img.transmission,",
+            ),
+            (
+                "// generation pins the exact image the load started against.",
+                "// transmission stamp pins the image the load started against.",
+            ),
+            (
+                "img.generation != loading.frame.?.image_generation",
+                "img.transmission != loading.frame.?.image_transmission",
+            ),
+        ],
+    );
+    replace_once(
+        &source.join("src/terminal/snapshot/kitty.zig"),
+        &[(
+            concat!(
+                "    // is identified by its generation. Stamps are process-local, so use\n",
+                "    // the restored image's fresh one.\n",
+                "    if (frame) |f| loading.frame = .{\n",
+                "        .cmd = f,\n",
+                "        .image_generation = if (storage.imagePtrByIdOrNumber(id, number)) |img|\n",
+                "            img.generation\n",
+            ),
+            concat!(
+                "    // is identified by its transmission stamp. Stamps are process-local,\n",
+                "    // so use the restored image's fresh one.\n",
+                "    if (frame) |f| loading.frame = .{\n",
+                "        .cmd = f,\n",
+                "        .image_transmission = if (storage.imagePtrByIdOrNumber(id, number)) |img|\n",
+                "            img.transmission\n",
+            ),
+        )],
+    );
+}
+
+fn replace_once(path: &Path, edits: &[(&str, &str)]) {
+    let mut text = fs::read_to_string(path).expect("read pinned Ghostty source");
+    let mut changed = false;
+    for &(old, new) in edits {
+        if !text.contains(new) {
+            let at = text.find(old).expect("find pinned Ghostty patch anchor");
+            text.replace_range(at..at + old.len(), new);
+            changed = true;
+        }
+    }
+    if changed {
+        fs::write(path, text).expect("patch pinned Ghostty source");
+    }
 }
 
 fn insert_once(path: &Path, anchor: &str, addition: &str) {
@@ -455,7 +535,7 @@ fn zig() -> PathBuf {
 }
 
 fn source(out: &Path) -> PathBuf {
-    let source = out.join(format!("ghostty-{GHOSTTY_COMMIT}"));
+    let source = out.join(format!("ghostty-{GHOSTTY_COMMIT}-{GHOSTTY_PATCH_LEVEL}"));
     if source.is_dir() {
         return source;
     }

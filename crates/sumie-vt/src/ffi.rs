@@ -303,13 +303,13 @@ unsafe extern "C" {
     pub fn ghostty_terminal_vt_write(terminal: Terminal, data: *const u8, len: usize);
     pub fn ghostty_terminal_set(terminal: Terminal, option: c_int, value: *const c_void) -> c_int;
     pub fn sumie_set_thumbnail_rows(terminal: Terminal, rows: u16);
-    pub fn sumie_has_image_placement(
+    pub fn sumie_placement_image_generation(
         terminal: Terminal,
         image_id: u32,
-        image_generation: u64,
         storage_id: u64,
         revision: u64,
-    ) -> bool;
+        transmission: u64,
+    ) -> u64;
     pub fn sumie_screen_clear_epoch(terminal: Terminal) -> u64;
     pub fn sumie_screen_stamp(terminal: Terminal, has_placements: *mut bool) -> u64;
     pub fn sumie_palette_color(terminal: Terminal, index: u8, out: *mut [u8; 3]) -> c_int;
@@ -419,6 +419,11 @@ unsafe extern "C" {
         keys: *const c_int,
         values: *mut *mut c_void,
         written: *mut usize,
+    ) -> c_int;
+    pub fn ghostty_kitty_graphics_animation_tick(
+        graphics: KittyGraphics,
+        now_ms: u64,
+        next_ms: *mut u64,
     ) -> c_int;
     pub fn ghostty_kitty_graphics_image(
         graphics: KittyGraphics,

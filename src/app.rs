@@ -1,3 +1,4 @@
+mod animation;
 mod directory;
 mod highlights;
 mod links;
@@ -109,6 +110,7 @@ struct PaneState {
     snapshot: Option<Snapshot>,
     snapshot_dirty: bool,
     frame_dirty: bool,
+    playback: animation::Playback,
     activity_after: Option<Instant>,
     hover: links::Hover,
 }
@@ -116,6 +118,7 @@ struct PaneState {
 impl App {
     fn drive(&mut self) -> Result<()> {
         let handle = self.gpu.as_ref().unwrap().loop_handle();
+        let mut animation = animation::Wake::new(handle.clone());
         loop {
             let retry = self
                 .session
@@ -172,19 +175,25 @@ impl App {
                 let ready = !self.suspended
                     && gpu.frame_slot_available()
                     && session.frame_retry.is_none_or(|at| Instant::now() >= at);
-                if ready {
+                let next = if ready {
                     if session.view.apply_pending_resize()? {
                         session.resize_grid()?;
                         gpu.resize(session.view.device);
                     }
-                    session.tabs.active_mut().unwrap().refresh_visible()?;
-                }
+                    let now = session.frame_retry.is_none().then(|| animation.now_ms());
+                    session.tabs.active_mut().unwrap().refresh_visible(now)?
+                } else {
+                    None
+                };
                 let banner = self.reload.banner.as_deref();
                 session.update_link_hover(gpu, banner.is_some(), self.focused)?;
                 session.watch_blink(self.focused && !self.suspended, banner)?;
                 if ready && session.draw(gpu, &self.capture, banner, self.focused)? {
                     return Ok(());
                 }
+                animation.arm(
+                    next.filter(|_| session.frame_retry.is_none() && gpu.frame_slot_available()),
+                )?;
             }
         }
     }
@@ -570,7 +579,7 @@ impl Session {
                 self.pane_pointer.present_layout(tab);
                 self.panes_presented(gpu)?;
                 self.cursor_hidden = cursor_hidden;
-                tracing::debug!(count = gpu.present_count(), "submitted terminal frame");
+                gpu.log_present();
                 if suboptimal {
                     gpu.resize(self.view.device);
                 }

@@ -8,8 +8,10 @@ use crate::{DrawList, PaneDraw, PixelRect, atlas, grid::Instance};
 
 mod cache;
 mod quad;
+mod upload;
 
 use quad::Quad;
+pub(crate) use upload::Upload;
 
 const BELOW_BACKGROUND: i32 = -(1 << 30);
 pub(crate) const QUAD_SIZE: usize = size_of::<Quad>();
@@ -21,7 +23,7 @@ type Exclusions = [[f32; 4]; 2];
 pub(crate) struct Images {
     format: wgpu::TextureFormat,
     pipeline: Option<BoundPipeline>,
-    cache: cache::Cache<wgpu::BindGroup>,
+    cache: cache::Cache<BoundTexture>,
     draws: Vec<Draw>,
 }
 
@@ -45,7 +47,6 @@ pub(crate) struct Candidates {
 struct Draw {
     index: usize,
     generation: u64,
-    bytes: usize,
     quad: Quad,
     bounds: PixelRect,
 }
@@ -68,7 +69,6 @@ impl Draw {
         Some(Self {
             index,
             generation: p.image.generation,
-            bytes,
             quad: Quad::clipped(p, origin, size, bounds, ndc)?,
             bounds: bounds.pixel_rect(),
         })
@@ -87,6 +87,10 @@ impl Images {
 
     pub(crate) fn clear(&mut self) {
         self.draws.clear();
+    }
+
+    pub(crate) fn texture_count(&self) -> usize {
+        self.cache.len()
     }
 
     pub(crate) fn gather(
@@ -153,16 +157,13 @@ impl Images {
 
     pub(crate) fn reserve_viewer(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        upload: &mut Upload<'_>,
         placement: &Placement,
         candidates: &mut Candidates,
         remaining: &mut u64,
     ) {
         if candidates.viewer {
-            if *remaining >= VIEWER_SIZE
-                && self.acquire(device, queue, candidates.range.end - 1, placement)
-            {
+            if *remaining >= VIEWER_SIZE && self.acquire(upload, &placement.image) {
                 *remaining -= VIEWER_SIZE;
             } else {
                 candidates.range.end -= 1;
@@ -171,25 +172,23 @@ impl Images {
         }
     }
 
-    fn acquire(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        index: usize,
-        placement: &Placement,
-    ) -> bool {
-        let draw = &self.draws[index];
-        self.cache.acquire(draw.generation, draw.bytes, || {
-            self.pipeline
-                .get_or_insert_with(|| BoundPipeline::new(device, self.format))
-                .bind_texture(device, queue, &placement.image)
-        })
+    fn acquire(&mut self, upload: &mut Upload<'_>, image: &Image) -> bool {
+        self.cache
+            .acquire(image.generation, image.size, image.rgba.len(), |recycled| {
+                let reused = recycled.is_some();
+                let bound = recycled.unwrap_or_else(|| {
+                    self.pipeline
+                        .get_or_insert_with(|| BoundPipeline::new(upload.device, self.format))
+                        .bind_texture(upload.device, image.size)
+                });
+                upload.write(&bound.texture, image, reused);
+                bound
+            })
     }
 
     pub(crate) fn admit(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        upload: &mut Upload<'_>,
         list: &DrawList<'_>,
         candidates: &Candidates,
         remaining: &mut u64,
@@ -208,7 +207,7 @@ impl Images {
             if *remaining < cost {
                 break;
             }
-            if self.acquire(device, queue, index, placement) {
+            if self.acquire(upload, &placement.image) {
                 *remaining -= cost;
                 has_base |= needs_base;
                 first -= 1;
@@ -322,7 +321,7 @@ impl Images {
         let draws = &self.draws[range.start as usize..range.end as usize];
         for group in draws.chunk_by(|a, b| a.generation == b.generation) {
             let end = start + u32::try_from(group.len()).unwrap();
-            pass.set_bind_group(0, self.cache.get(group[0].generation), &[]);
+            pass.set_bind_group(0, &self.cache.get(group[0].generation).bindings, &[]);
             pass.draw(0..4, start..end);
             start = end;
         }
@@ -459,16 +458,10 @@ impl BoundPipeline {
         }
     }
 
-    fn bind_texture(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        image: &Image,
-    ) -> wgpu::BindGroup {
-        let size = atlas::extent(image.size);
+    fn bind_texture(&self, device: &wgpu::Device, size: [u32; 2]) -> BoundTexture {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("sumie terminal image"),
-            size,
+            size: atlas::extent(size),
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -476,17 +469,7 @@ impl BoundPipeline {
             usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        queue.write_texture(
-            texture.as_image_copy(),
-            &image.rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(image.size[0] * 4),
-                rows_per_image: None,
-            },
-            size,
-        );
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sumie image texture bindings"),
             layout: &self.texture_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -495,8 +478,14 @@ impl BoundPipeline {
                     &texture.create_view(&wgpu::TextureViewDescriptor::default()),
                 ),
             }],
-        })
+        });
+        BoundTexture { texture, bindings }
     }
+}
+
+struct BoundTexture {
+    texture: wgpu::Texture,
+    bindings: wgpu::BindGroup,
 }
 
 fn exclusions_buffer(

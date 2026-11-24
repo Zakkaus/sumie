@@ -59,11 +59,27 @@ impl PaneTab {
         Ok(())
     }
 
-    pub(super) fn refresh_visible(&mut self) -> Result<()> {
+    pub(super) fn refresh_visible(&mut self, now: Option<u64>) -> Result<Option<u64>> {
+        let mut next = None;
         for i in 0..self.layout.panes.len() {
-            self.get_mut(self.layout.panes[i].0).update_snapshot()?;
+            let pane = self.get_mut(self.layout.panes[i].0);
+            if let Some(now) = now {
+                let changed = pane.playback.tick(&mut pane.pane.terminal, now)?;
+                pane.snapshot_dirty |= changed;
+                if changed && pane.viewer.is_some() {
+                    // A clock tick cannot remove a placement. Refresh its viewer even
+                    // when scrolling has moved the inline image out of the viewport.
+                    pane.viewer_removed()?;
+                }
+            }
+            pane.update_snapshot()?;
+            if (pane.viewer.is_some() || !pane.snapshot.as_ref().unwrap().images.is_empty())
+                && let Some(at) = pane.playback.next_ms
+            {
+                next = Some(next.map_or(at, |earliest: u64| earliest.min(at)));
+            }
         }
-        Ok(())
+        Ok(now.and(next))
     }
 }
 

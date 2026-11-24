@@ -187,6 +187,14 @@ impl Gpu {
         self.target.present_count()
     }
 
+    pub(crate) fn log_present(&self) {
+        tracing::debug!(
+            count = self.present_count(),
+            image_textures = self.target.image_texture_count(),
+            "submitted terminal frame"
+        );
+    }
+
     pub(crate) const fn device(&self) -> &wgpu::Device {
         &self.device
     }

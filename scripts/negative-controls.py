@@ -216,6 +216,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                        "== next.minimum_contrast().to_bits()"),
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("early animation wake dirties the frame", "test", "src/app/animation.rs",
+              replace_once("|at| now >= at", "|at| now <= at"),
+              "test app::animation::tests::playback_deadline_survives_early_wakes_and_disarms_on_stop ... FAILED")
         probe("explicit cell backgrounds become translucent", "test", "src/view/paint.rs",
               replace_once("if default {", "if !highlighted && !covered {"),
               "test view::tests::background_opacity_respects_vt_colors_and_opaque_overlays ... FAILED")

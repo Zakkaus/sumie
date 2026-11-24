@@ -12,13 +12,13 @@ pub(super) struct Viewer {
 
 #[derive(Default)]
 pub(super) struct Click {
-    pressed: Option<((f64, f64), u64, [u64; 2])>,
+    pressed: Option<((f64, f64), [u64; 3])>,
 }
 
 impl Click {
     /// Track the click alongside selection so a drag can select text from a thumbnail.
     fn clicked(&mut self, phase: Phase, position: (f64, f64), hit: Option<&Placement>) -> bool {
-        let target = hit.map(|p| (position, p.image.generation, p.storage_key));
+        let target = hit.map(|p| (position, p.storage_key));
         match phase {
             Phase::Press(Button::Left, _) => self.pressed = target,
             Phase::Motion if self.pressed == target => (),
@@ -48,12 +48,14 @@ impl Click {
             if open {
                 self.dismiss(pane, Some((view, routing, gpu)));
             } else {
-                let Some(placement) = hit.filter(|p| pane.pane.terminal.has_image_placement(p))
-                else {
+                let Some(mut placement) = hit.cloned() else {
                     return Ok(false);
                 };
+                if !pane.pane.terminal.refresh_viewer(&mut placement)? {
+                    return Ok(false);
+                }
                 pane.viewer = Some(Viewer {
-                    placement: placement.clone(),
+                    placement,
                     clear_epoch: pane.pane.terminal.screen_clear_epoch(),
                     presented: false,
                 });
@@ -99,12 +101,16 @@ impl PaneState {
             && modifiers.shift == self.pane.mouse_tracking()
     }
 
-    pub(super) fn viewer_removed(&self) -> bool {
-        self.viewer.as_ref().is_some_and(|viewer| {
-            let terminal = &self.pane.terminal;
-            terminal.screen_clear_epoch() != viewer.clear_epoch
-                || !terminal.has_image_placement(&viewer.placement)
-        })
+    pub(super) fn viewer_removed(&mut self) -> Result<bool> {
+        let Some(viewer) = &mut self.viewer else {
+            return Ok(false);
+        };
+        let terminal = &mut self.pane.terminal;
+        let generation = viewer.placement.image.generation;
+        let removed = terminal.screen_clear_epoch() != viewer.clear_epoch
+            || !terminal.refresh_viewer(&mut viewer.placement)?;
+        self.frame_dirty |= generation != viewer.placement.image.generation;
+        Ok(removed)
     }
 
     pub(super) fn viewer_presented(&self) -> bool {

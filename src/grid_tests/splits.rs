@@ -319,7 +319,7 @@ fn image(generation: u64, color: Rgba, offset: [u32; 2], size: [u32; 2], z: i32)
         }),
         image_id: 1,
         placement_id: 1,
-        storage_key: [0; 2],
+        storage_key: [0; 3],
         z,
         cell: [0, 0],
         offset,

@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use super::{AlphaPipelines, Batches, LayeredFrame, PaneBatch, Renderer, pixel_rect};
+use crate::images::{Images, Upload};
 use crate::{Fill, PaneDraw, PixelRect, Rgba, wgpu};
 
 impl PaneBatch {
@@ -97,19 +98,15 @@ impl Renderer {
     }
 
     fn reserve_viewers<'a>(
-        &mut self,
+        images: &mut Images,
+        batches: &mut [PaneBatch],
+        upload: &mut Upload<'_>,
         panes: impl Iterator<Item = PaneDraw<'a>>,
         remaining: &mut u64,
     ) {
-        for (pane, batch) in panes.zip(&mut self.panes) {
+        for (pane, batch) in panes.zip(batches) {
             if let (Some(viewer), Some(candidates)) = (pane.viewer, &mut batch.candidates) {
-                self.images.reserve_viewer(
-                    &self.device,
-                    &self.queue,
-                    viewer.placement,
-                    candidates,
-                    remaining,
-                );
+                images.reserve_viewer(upload, viewer.placement, candidates, remaining);
             }
         }
     }
@@ -120,17 +117,24 @@ impl Renderer {
         batches: &mut Batches,
         mut remaining: u64,
         has_viewers: bool,
+        encoder: &mut wgpu::CommandEncoder,
     ) {
+        let mut upload = Upload::new(&self.device, &self.queue, &mut self.staging, encoder);
         // Pin viewers and reserve their instance bytes before any terminal image can fill them.
         if has_viewers {
-            self.reserve_viewers(panes.clone(), &mut remaining);
+            Self::reserve_viewers(
+                &mut self.images,
+                &mut self.panes,
+                &mut upload,
+                panes.clone(),
+                &mut remaining,
+            );
         }
         batches.grid = 0;
         for (pane, batch) in panes.zip(&mut self.panes) {
             if let Some(candidates) = &batch.candidates
                 && let Some(images) = self.images.admit(
-                    &self.device,
-                    &self.queue,
+                    &mut upload,
                     &pane.draw,
                     candidates,
                     &mut remaining,

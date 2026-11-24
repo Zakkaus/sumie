@@ -256,6 +256,12 @@ impl<'window> SurfaceRenderer<'window> {
         self.renderer.thumbnail_layers()
     }
 
+    /// Number of image textures in this surface's renderer cache.
+    #[must_use]
+    pub fn image_texture_count(&self) -> usize {
+        self.renderer.image_texture_count()
+    }
+
     /// Number of calls to wgpu's present for this surface over its lifetime.
     #[must_use]
     pub const fn present_count(&self) -> u64 {

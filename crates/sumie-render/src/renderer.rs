@@ -137,6 +137,12 @@ impl Renderer {
         self.minimum_contrast = minimum_contrast;
     }
 
+    /// Number of image textures in this renderer's cache, excluding other GPU resources.
+    #[must_use]
+    pub fn image_texture_count(&self) -> usize {
+        self.images.texture_count()
+    }
+
     pub(crate) fn set_surface_alpha(&mut self, mode: Option<wgpu::CompositeAlphaMode>) {
         self.presentation = mode.map(|mode| Presentation::new(&self.device, self.format, mode));
     }
@@ -248,7 +254,7 @@ impl Renderer {
                 label: Some("sumie frame"),
             });
         let full = full_rect(size);
-        let batches = self.prepare(frame, full, draw_bases);
+        let batches = self.prepare(frame, full, draw_bases, &mut encoder);
         if batches.translucent && self.alpha_pipelines.is_none() {
             self.alpha_pipelines = Some(AlphaPipelines::new(
                 &self.device,
@@ -371,6 +377,7 @@ impl Renderer {
         frame: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
         full: Rect,
         draw_bases: bool,
+        encoder: &mut wgpu::CommandEncoder,
     ) -> Batches {
         let mut batches = Batches {
             fills: u32::try_from(frame.fills.len()).expect("too many fills"),
@@ -425,7 +432,13 @@ impl Renderer {
             .expect("too many frame instances");
         if self.images.begin_frame() {
             let remaining = u64::from(self.frame_limit.saturating_sub(grid_limit)) * INSTANCE_SIZE;
-            self.prepare_images(frame.panes.clone(), &mut batches, remaining, has_viewers);
+            self.prepare_images(
+                frame.panes.clone(),
+                &mut batches,
+                remaining,
+                has_viewers,
+                encoder,
+            );
         }
         batches
     }

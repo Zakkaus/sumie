@@ -50,7 +50,7 @@ pub type Rgb = [u8; 3];
 #[derive(Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub rows: Vec<Vec<Cell>>,
-    /// Visible placements shared by snapshots until Ghostty changes their geometry or pixels.
+    /// Drawable placements, excluding images hidden by an opaque cover of the same footprint.
     pub images: std::sync::Arc<Vec<Placement>>,
     pub cursor: Option<Cursor>,
     pub foreground: Rgb,
