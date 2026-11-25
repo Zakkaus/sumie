@@ -62,9 +62,9 @@ impl Wake {
         readiness: &Readiness,
         window: Platform,
     ) -> Result<Self> {
-        let (output, writer) = UnixStream::pair()?;
+        let (output, writer) = sumie_pty::socket_pair()?;
         output.set_nonblocking(true)?;
-        let (exit, exit_writer) = UnixStream::pair()?;
+        let (exit, exit_writer) = sumie_pty::socket_pair()?;
         let mut watches = Watches::new(readiness.clone());
         watches.register_pane(PANE, output.as_fd(), exit.as_fd())?;
         let probe = Rc::new(Probe::default());

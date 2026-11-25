@@ -1,13 +1,15 @@
 //! Starts child processes so that none inherits a descriptor before it is close-on-exec.
 //!
-//! Darwin has no `pipe2`, `SOCK_CLOEXEC` or close-on-exec `posix_openpt`, so such a
-//! descriptor exists briefly without `FD_CLOEXEC`; a `fork` on another thread in that window
-//! copies it into a child, which keeps it across `exec`. Creating one holds this lock shared
-//! and every spawn holds it exclusively, so a creation never overlaps a spawn, and two spawns
-//! cannot copy each other's internal pipes either. Atomic creators (`open` with `O_CLOEXEC`,
-//! `F_DUPFD_CLOEXEC`, `kqueue`, which XNU never copies into a child) need no lock. A spawn that
-//! bypasses this module must name every descriptor its child inherits, as `posix_spawn` with
-//! `POSIX_SPAWN_CLOEXEC_DEFAULT` does for the link opener.
+//! A descriptor created without `O_CLOEXEC` exists briefly without `FD_CLOEXEC`; a `fork` on
+//! another thread in that window copies it into a child, which keeps it across `exec`.
+//! Creating one holds this lock shared and every spawn holds it exclusively, so a creation
+//! never overlaps a spawn, and two spawns cannot copy each other's internal pipes either.
+//! Linux needs the lock too: `pty-process` opens the PTY master without `O_CLOEXEC` on every
+//! platform. Darwin also has no `pipe2` or `SOCK_CLOEXEC`, so its wake pipes and socket pairs
+//! take it; Linux creates those atomically. Atomic creators (`open` with `O_CLOEXEC`,
+//! `F_DUPFD_CLOEXEC`, `kqueue`, which XNU never copies into a child) need no lock. A spawn
+//! that bypasses this module must name every descriptor its child inherits, as `posix_spawn`
+//! with `POSIX_SPAWN_CLOEXEC_DEFAULT` does for the link opener.
 
 use std::io;
 use std::os::unix::net::UnixStream;
@@ -40,6 +42,7 @@ pub fn spawn(command: &mut Command) -> io::Result<Child> {
 /// # Errors
 /// Returns the socket error.
 pub fn socket_pair() -> io::Result<(UnixStream, UnixStream)> {
+    #[cfg(target_os = "macos")]
     let _creating = creating();
     UnixStream::pair()
 }

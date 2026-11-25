@@ -6,6 +6,7 @@ use crate::platform::PaneWatches as _;
 
 use super::*;
 
+mod bash;
 mod session;
 
 const NOT_A_LOCALE: &str = "xx_YY.UTF-8";
@@ -59,20 +60,28 @@ fn without_any_usable_shell_login_fails() {
 }
 
 #[test]
-fn a_locale_is_added_only_when_none_valid_is_named() {
+fn a_utf8_locale_is_added_unless_one_is_in_effect() {
     let exists = |name: &str| name != NOT_A_LOCALE && locale_exists(name);
     for (vars, added) in [
         (&[][..], Some("en_US.UTF-8")),
         (&[("LANG", "")][..], Some("en_US.UTF-8")),
         (&[("LANG", NOT_A_LOCALE)][..], Some("en_US.UTF-8")),
         (&[("LC_CTYPE", "../../etc")][..], Some("en_US.UTF-8")),
+        (&[("LC_CTYPE", ".UTF-8")][..], Some("en_US.UTF-8")),
+        (&[("LANG", "C")][..], Some("en_US.UTF-8")),
+        (&[("LANG", "POSIX")][..], Some("en_US.UTF-8")),
+        (&[("LANG", "fr_FR.ISO8859-1")][..], Some("en_US.UTF-8")),
         (&[("LANG", "fr_FR.UTF-8")][..], None),
-        (&[("LANG", "C")][..], None),
+        (
+            &[("LC_CTYPE", "C"), ("LANG", "fr_FR.UTF-8")][..],
+            Some("en_US.UTF-8"),
+        ),
         (&[("LC_CTYPE", "UTF-8"), ("LANG", NOT_A_LOCALE)][..], None),
         (
             &[("LC_CTYPE", NOT_A_LOCALE), ("LANG", "fr_FR.UTF-8")][..],
             Some("en_US.UTF-8"),
         ),
+        (&[("LC_ALL", "C")][..], None),
         (&[("LC_ALL", NOT_A_LOCALE)][..], None),
     ] {
         let env = vars
@@ -106,18 +115,24 @@ fn assert_clean(session: &Session) {
         "not found",
         "conditional binary operator",
         "bad substitution",
+        "No such file",
     ] {
         assert!(!all.contains(error), "shell reported {error:?}: {all:?}");
     }
 }
 
-/// A command's marks: start (C), its status (D), then the next prompt (A, B).
+/// A command's marks: start (C), its status (D), then the next prompt (A, B) with no
+/// command start inside it.
 fn assert_command(session: &mut Session, command: &str, status: u8, prompt: &str) -> String {
     session.send(&format!("{command}\r"));
     session.until("\x1b]133;C\x07");
     let output = session.until(&format!("\x1b]133;D;{status}\x07"));
     session.until("\x1b]133;A\x07");
-    session.until(&format!("{prompt}\x1b]133;B\x07"));
+    let prompting = session.until(&format!("{prompt}\x1b]133;B\x07"));
+    assert!(
+        !prompting.contains("133;C"),
+        "a prompt was marked as a command: {prompting:?}"
+    );
     output
 }
 

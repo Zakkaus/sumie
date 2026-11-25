@@ -428,6 +428,12 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("PS0 exported to Bash 3.2", "test", "shell-integration/bash/sumie.bash",
               replace_once("\n_sumie_ran=0\n", "\n_sumie_ran=0\nexport PS0='\\e]133;C\\a'\n"),
               login + "bash_3_2_login_shell_reads_its_profile_once_and_marks_prompts ... FAILED")
+        probe("Bash 3.2 bootstrap no-op resets $?", "test", "shell-integration/bash/sumie.bash",
+              replace_once("""//"$_sumie_boot"/'${_sumie_ran+_sumie_keep}'}""", """//"$_sumie_boot"/:}"""),
+              login + "bash::bash_3_2_profile_appends_after_the_bootstrap ... FAILED")
+        probe("Bash 3.2 DEBUG trap not reinstalled", "test", "shell-integration/bash/sumie.bash",
+              replace_once('|| eval "${_sumie_trap-}"', "|| :"),
+              login + "bash::bash_3_2_chains_a_debug_trap_installed_at_the_first_prompt ... FAILED")
 
 
 def interrupted(_signum, _frame):

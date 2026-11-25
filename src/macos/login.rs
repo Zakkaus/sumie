@@ -1,10 +1,11 @@
 //! Resolves the macOS login shell and character locale for a pane's environment.
 //!
 //! The shell is the requester's `SHELL` when that is an absolute path to an executable file,
-//! else the account's shell from the user database; with neither, no pane can start. The
-//! requester's locale stays unless it names no valid character locale: then the child gets a
-//! UTF-8 `LC_CTYPE` that exists on this system. Everything else passes through unchanged,
-//! including agent sockets and a `ZDOTDIR`.
+//! else the account's shell from the user database; with neither, no pane can start. Unless
+//! the requester set `LC_ALL`, a character locale that is not UTF-8 (`C` and `POSIX`
+//! included) or does not exist gets a UTF-8 `LC_CTYPE` that exists on this system: the
+//! terminal speaks UTF-8. Everything else passes through unchanged, including agent sockets
+//! and a `ZDOTDIR`.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -67,7 +68,7 @@ fn account_shell() -> Result<Option<PathBuf>> {
     Ok(User::from_uid(getuid())?.map(|user| user.shell))
 }
 
-/// The locale to set as `LC_CTYPE`, or `None` if the requester named a valid one.
+/// The locale to set as `LC_CTYPE`, or `None` if the requester's character locale is UTF-8.
 /// `LC_ALL` overrides every category, so a requester who set it keeps it.
 fn missing_locale(
     env: &BTreeMap<OsString, OsString>,
@@ -78,14 +79,18 @@ fn missing_locale(
         return None;
     }
     let requested = named("LC_CTYPE").or_else(|| named("LANG"));
-    if requested.is_some_and(|name| name.to_str().is_some_and(|name| valid(name, &exists))) {
+    if requested.is_some_and(|name| name.to_str().is_some_and(|name| utf8(name, &exists))) {
         return None;
     }
     UTF8_LOCALES.into_iter().find(|name| exists(name))
 }
 
-fn valid(name: &str, exists: impl Fn(&str) -> bool) -> bool {
-    matches!(name, "C" | "POSIX") || (!name.contains('/') && !name.starts_with('.') && exists(name))
+/// Darwin names its UTF-8 character locales `UTF-8` and `<language>_<region>.UTF-8`.
+fn utf8(name: &str, exists: impl Fn(&str) -> bool) -> bool {
+    (name == "UTF-8" || name.ends_with(".UTF-8"))
+        && !name.contains('/')
+        && !name.starts_with('.')
+        && exists(name)
 }
 
 fn locale_exists(name: &str) -> bool {

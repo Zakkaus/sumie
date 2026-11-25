@@ -23,8 +23,10 @@ const SCRIPTS: &[(&str, &str)] = &[
 ];
 
 /// Runs the bash hooks from `PROMPT_COMMAND` on macOS; `bash/sumie.bash` replaces this text.
+/// A nested bash that inherits it without `SUMIE_BASH_SCRIPT` skips it.
 #[cfg(target_os = "macos")]
-const BASH_BOOT: &str = r#". "$SUMIE_BASH_SCRIPT" && eval "$_sumie_start""#;
+const BASH_BOOT: &str =
+    r#"[[ -n ${SUMIE_BASH_SCRIPT-} ]] && . "$SUMIE_BASH_SCRIPT" && eval "$_sumie_start""#;
 
 static DIRECTORY: LazyLock<Option<PathBuf>> = LazyLock::new(|| match install() {
     Ok(dir) => Some(dir),
@@ -80,11 +82,15 @@ pub(super) fn inject(env: &mut BTreeMap<OsString, OsString>) -> Option<[OsString
                 "SUMIE_BASH_SCRIPT".into(),
                 dir.join("bash/sumie.bash").into(),
             );
-            let mut command = OsString::from(BASH_BOOT);
-            if let Some(requested) = env.remove(OsStr::new("PROMPT_COMMAND")) {
-                command.push("\n");
-                command.push(requested);
-            }
+            // The requester's commands run before the hooks load, as they will after.
+            let mut command = env
+                .remove(OsStr::new("PROMPT_COMMAND"))
+                .map(|mut requested| {
+                    requested.push("\n");
+                    requested
+                })
+                .unwrap_or_default();
+            command.push(BASH_BOOT);
             env.insert("PROMPT_COMMAND".into(), command);
             None
         }

@@ -1,7 +1,7 @@
 //! Builds the login shell a new pane starts: its environment and its command line.
 //!
 //! The environment is the requester's plus the terminal identity. On macOS it also names the
-//! resolved login shell and, when the requester named none, a character locale. Shell
+//! resolved login shell and, when the requester's is not UTF-8, a character locale. Shell
 //! integration then adjusts it for supported shells; nothing here edits a profile.
 
 #[path = "shell_integration.rs"]
