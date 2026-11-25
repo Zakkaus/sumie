@@ -5,6 +5,7 @@ pub(crate) use driver::run;
 mod highlights;
 mod lifetime;
 mod links;
+mod notices;
 mod pane_input;
 mod pane_layout;
 mod scroll;
@@ -17,6 +18,7 @@ use std::time::{Duration, Instant};
 use sumie_core::{
     CellPosition, CellRange, Pane, PaneCommand, PaneEffect, Selection, WindowTabs,
     mouse::{SelectStep, SelectionUnit},
+    notify::{Gate, Progress},
     splits::{Layout, Rect, SplitTree},
 };
 use sumie_render::{SurfaceError, SurfaceFrame};
@@ -50,6 +52,7 @@ struct Session {
     link_pointer: links::Pointer,
     clock: scroll::FrameClock,
     smooth_scroll: bool,
+    notices: Gate,
 }
 
 struct PaneTab {
@@ -81,6 +84,8 @@ struct PaneState {
     activity_after: Option<Instant>,
     hover: links::Hover,
     scroll: scroll::PaneScroll,
+    /// The latest OSC 9;4 report and when it arrived.
+    progress: Option<(Progress, Instant)>,
 }
 
 impl Session {
@@ -121,6 +126,7 @@ impl Session {
             link_pointer: links::Pointer::default(),
             clock: scroll::FrameClock::new(),
             smooth_scroll: config.scroll.smooth(),
+            notices: Gate::default(),
         })
     }
 

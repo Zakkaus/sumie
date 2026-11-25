@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+sumie-core = { path = "../sumie-core" }
 sumie-render = { path = "../sumie-render" }
 
 [lints]

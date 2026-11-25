@@ -1,5 +1,6 @@
 mod activity;
 mod pace;
+mod strip;
 
 pub(super) use pace::SnapshotPace;
 
@@ -10,8 +11,8 @@ use std::time::Instant;
 use crate::platform::{Event, PointerButton as Button, PointerEvent, PointerPhase as Phase};
 use sumie_core::{Pane, PaneAction, PaneCommand, Selection, TabAction, splits::Rect};
 use sumie_ui::TabHit;
-use sumie_vt::Event as TerminalEvent;
 
+use super::notices::{Alerts, Serviced};
 use super::{LocalPane, PaneState, PaneTab, Result, Session, View, directory};
 use crate::platform::{PaneWatches, WindowOps};
 
@@ -149,6 +150,7 @@ impl PaneHost {
             activity_after: None,
             hover: super::links::Hover::default(),
             scroll: super::scroll::PaneScroll::default(),
+            progress: None,
         })
     }
 }
@@ -229,21 +231,23 @@ impl PaneState {
     fn service(
         &mut self,
         window: &mut impl WindowOps,
-        now: Instant,
         active: bool,
         host: &[u8],
         watch_at: Option<Instant>,
         labels_changed: &mut bool,
-    ) -> Result<(bool, bool)> {
+        alerts: &mut Alerts,
+    ) -> Result<Serviced> {
+        let now = alerts.now;
         self.snapshot_dirty |= self.snapshot_pace.released(now);
         let ready = window.take_ready(self.id);
+        let mut serviced = Serviced::default();
         if ready.exit {
             self.pane.pty.service_child()?;
             if self.pane.pty.exit_fd().is_none() {
-                return Ok((true, false));
+                serviced.exited = true;
+                return Ok(serviced);
             }
         }
-        let mut activity = false;
         if ready.output {
             let batch =
                 activity::Batch::begin(&mut self.pane.terminal, watch_at, self.activity_after)?;
@@ -252,25 +256,14 @@ impl PaneState {
             if dirty {
                 self.snapshot_dirty |= self.snapshot_pace.output(now, self.snapshot_dirty, drained);
                 self.follow_output()?;
-                activity = batch.changed(&mut self.pane.terminal)?;
+                serviced.activity |= batch.changed(&mut self.pane.terminal)?;
                 window.reset_blink(self.id);
             }
             if dirty && let Some(bar) = &mut self.search {
                 bar.output(&self.pane.terminal)?;
                 self.frame_dirty = true;
             }
-            for event in self.pane.terminal.drain_events() {
-                match event {
-                    TerminalEvent::Clipboard(bytes) if active => {
-                        window.write_terminal_clipboard(bytes);
-                    }
-                    TerminalEvent::Clipboard(_) => (),
-                    TerminalEvent::Title(title) => {
-                        *labels_changed |= self.title != title;
-                        self.title = title;
-                    }
-                }
-            }
+            self.handle_events(window, active, labels_changed, alerts, &mut serviced);
             if dirty {
                 let changed = self
                     .pane
@@ -282,7 +275,8 @@ impl PaneState {
                 window.stop_output(self.id);
             }
         }
-        Ok((ready.input && !self.pane.pty.flush_input()?, activity))
+        serviced.exited = ready.input && !self.pane.pty.flush_input()?;
+        Ok(serviced)
     }
 }
 
@@ -292,25 +286,6 @@ impl Session {
     }
     pub(super) fn active_mut(&mut self) -> &mut PaneState {
         self.tabs.active_mut().expect("live window").focused_mut()
-    }
-
-    pub(super) fn draw_tab_strip(&mut self) {
-        let tabs = self.tabs.as_slice();
-        if tabs.len() < 2 {
-            return;
-        }
-        let active = self.tabs.active_index().expect("live window");
-        let snapshot = tabs[active]
-            .focused()
-            .snapshot
-            .as_ref()
-            .expect("visible pane snapshot");
-        self.view.draw_tabs(
-            tabs.iter()
-                .map(|tab| (tab.focused().label(&self.shell), tab.activity)),
-            active,
-            snapshot,
-        );
     }
 
     pub(super) fn bar_input(&mut self, event: &Event) -> ControlFlow<Option<Action>> {
@@ -490,6 +465,7 @@ impl Session {
     pub(super) fn service_pty(
         &mut self,
         now: Instant,
+        window_visible: bool,
         window: &mut impl WindowOps,
     ) -> Result<bool> {
         let Some(active_index) = self.tabs.active_index() else {
@@ -499,24 +475,31 @@ impl Session {
         let mut labels_changed = false;
         let active = self.active().id;
         let mut activity_changed = false;
+        let mut alerts = Alerts {
+            gate: &mut self.notices,
+            now,
+            visible: false,
+            background: false,
+        };
         for (index, tab) in self.tabs.as_mut_slice().iter_mut().enumerate() {
             let focused = tab.tree.focused();
+            alerts.visible = window_visible && index == active_index;
+            alerts.background = index != active_index;
             for pane in &mut tab.panes {
                 let mut changed = false;
                 let watch_at = (index != active_index && !tab.activity).then_some(now);
-                let (pane_exited, activity) = pane.service(
+                let mut serviced = pane.service(
                     window,
-                    now,
                     pane.id == active,
                     self.host.as_bytes(),
                     watch_at,
                     &mut changed,
+                    &mut alerts,
                 )?;
-                pane.exited |= pane_exited;
-                if activity {
-                    tab.activity = true;
-                    activity_changed = true;
-                }
+                pane.settle_progress(&mut serviced, now);
+                pane.exited |= serviced.exited;
+                activity_changed |= serviced.activity || serviced.progress;
+                tab.activity |= serviced.activity;
                 if pane.snapshot_dirty {
                     self.pane_pointer.image_click.refresh_viewer(
                         pane,

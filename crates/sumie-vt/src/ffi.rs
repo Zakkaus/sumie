@@ -66,6 +66,19 @@ pub struct Str {
 }
 
 #[repr(C)]
+pub struct DesktopNotification {
+    pub title: Str,
+    pub body: Str,
+}
+
+#[repr(C)]
+pub struct ProgressReport {
+    pub state: c_int,
+    /// 0 through 100, or -1 when omitted.
+    pub progress: i8,
+}
+
+#[repr(C)]
 pub struct ClipboardContent {
     pub mime: Str,
     pub data: Str,
@@ -210,6 +223,7 @@ pub const OUT_OF_SPACE: c_int = -3;
 pub const NO_VALUE: c_int = -4;
 pub const TERMINAL_OPT_USERDATA: c_int = 1;
 pub const TERMINAL_OPT_WRITE_PTY: c_int = 2;
+pub const TERMINAL_OPT_BELL: c_int = 3;
 pub const TERMINAL_OPT_XTVERSION: c_int = 5;
 pub const TERMINAL_OPT_COLOR_FOREGROUND: c_int = 12;
 pub const TERMINAL_OPT_COLOR_BACKGROUND: c_int = 13;
@@ -220,6 +234,8 @@ pub const TERMINAL_OPT_DEFAULT_CURSOR_BLINK: c_int = 24;
 pub const TERMINAL_OPT_TERMINFO_NAME: c_int = 38;
 pub const TERMINAL_OPT_TITLE_CHANGED: c_int = 6;
 pub const TERMINAL_OPT_CLIPBOARD_WRITE: c_int = 27;
+pub const TERMINAL_OPT_DESKTOP_NOTIFICATION: c_int = 30;
+pub const TERMINAL_OPT_PROGRESS_REPORT: c_int = 31;
 pub const TERMINAL_OPT_CLIPBOARD_READ: c_int = 39;
 pub const TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES: c_int = 40;
 pub const TERMINAL_DATA_COLS: c_int = 1;
@@ -227,6 +243,10 @@ pub const TERMINAL_DATA_TITLE: c_int = 12;
 pub const TERMINAL_DATA_TOTAL_ROWS: c_int = 14;
 pub const TERMINAL_DATA_COLOR_PALETTE: c_int = 21;
 pub const TERMINAL_DATA_MODE: c_int = 37;
+pub const PROGRESS_SET: c_int = 1;
+pub const PROGRESS_ERROR: c_int = 2;
+pub const PROGRESS_INDETERMINATE: c_int = 3;
+pub const PROGRESS_PAUSE: c_int = 4;
 pub const CLIPBOARD_LOCATION_STANDARD: c_int = 0;
 pub const CLIPBOARD_WRITE_SUCCESS: c_int = 0;
 pub const CLIPBOARD_WRITE_DENIED: c_int = 1;

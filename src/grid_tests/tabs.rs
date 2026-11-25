@@ -42,7 +42,7 @@ pub(super) fn assert_tab_bar(renderer: &mut Renderer, device: &wgpu::Device, que
         ansi[3] = [255, 198, 0];
         vt.set_colors([100; 3], bg, None, &ansi).unwrap();
         let snapshot = vt.render_snapshot().unwrap();
-        let labels = [(title, true), ("shell", true)];
+        let labels = [(title, true, None), ("shell", true, None)];
         view.build(&snapshot, None, &[], None, true);
         view.draw_tabs(labels.into_iter().take(count), count - 1, &snapshot);
         if hover == Some(TabHit::Close(0)) {

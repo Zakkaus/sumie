@@ -52,13 +52,15 @@ pub struct TabPalette {
     pub hovered: Rgba,
     pub selected: Rgba,
     pub active_number: Rgba,
+    /// A failed progress report, from the terminal's ANSI red.
+    pub error: Rgba,
     digits: Rgba,
 }
 
 impl TabPalette {
-    /// Derive the strip from the terminal's default colors and ANSI yellow, ignoring input alpha.
+    /// Derive the strip from the terminal's default colors, ANSI yellow and red, ignoring input alpha.
     #[must_use]
-    pub fn new(background: Rgba, foreground: Rgba, mut yellow: Rgba) -> Self {
+    pub fn new(background: Rgba, foreground: Rgba, mut yellow: Rgba, mut red: Rgba) -> Self {
         let luminance = relative_luminance(background);
         let surface = tint_over(
             background,
@@ -79,12 +81,18 @@ impl TabPalette {
             };
         }
         yellow[3] = 255;
+        let selected = tint_over(surface, foreground, 255);
+        if !contrasts(red) {
+            red = selected;
+        }
+        red[3] = 255;
         Self {
             surface,
             label: tint_over(surface, foreground, 128),
             hovered: tint_over(surface, foreground, 209),
-            selected: tint_over(surface, foreground, 255),
+            selected,
             active_number: yellow,
+            error: red,
             digits: tint_over(surface, foreground, 153),
         }
     }
@@ -133,22 +141,26 @@ mod tests {
     #[test]
     fn terminal_colors_determine_tints_and_contrasting_accent() {
         let yellow = [255, 198, 0, 255];
-        let cobalt = TabPalette::new([18, 39, 56, 255], [255; 4], yellow);
+        let red = [255, 70, 80, 255];
+        let cobalt = TabPalette::new([18, 39, 56, 255], [255; 4], yellow, red);
         assert_eq!(cobalt.surface, [14, 30, 44, 255]);
         assert_eq!(cobalt.label, [135, 143, 150, 255]);
         assert_eq!(cobalt.hovered, [212, 214, 217, 255]);
         assert_eq!(cobalt.digits(), [159, 165, 171, 255]);
         assert_eq!(cobalt.active_number, yellow);
+        assert_eq!(cobalt.error, red);
 
-        let light = TabPalette::new([255; 4], black(255), yellow);
+        let light = TabPalette::new([255; 4], black(255), yellow, red);
         assert_eq!(light.surface, [245, 245, 245, 255]);
         assert_eq!(light.selected, black(255));
         assert_eq!(light.active_number, tokens::LIGHT.accent);
 
         let gray = [128, 128, 128, 255];
         assert_eq!(
-            TabPalette::new(gray, [255; 4], gray).active_number,
+            TabPalette::new(gray, [255; 4], gray, gray).active_number,
             [255; 4]
         );
+        // A red that vanishes into the strip falls back to the foreground.
+        assert_eq!(TabPalette::new(gray, [255; 4], gray, gray).error, [255; 4]);
     }
 }

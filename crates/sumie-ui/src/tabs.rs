@@ -3,10 +3,14 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use sumie_core::notify::Progress;
 use sumie_render::{Fill, PixelRect, Rgba};
 
 use crate::palette::{TabPalette, black, tint_over};
 use crate::{scaled, tokens};
+
+mod progress;
+pub use progress::progress_bar;
 
 /// Height in device pixels at a scale given in 120ths. Leave at least one pixel for the PTY.
 #[must_use]
@@ -30,6 +34,7 @@ pub struct TabMeasurement {
     pub number: u32,
     pub title: u32,
     pub activity: bool,
+    pub progress: Option<Progress>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +42,7 @@ struct Slot {
     end: u32,
     number: u32,
     activity: bool,
+    progress: Option<Progress>,
 }
 
 #[derive(Clone, Copy)]
@@ -135,6 +141,7 @@ impl Sizing {
                 end,
                 number: tab.number,
                 activity: tab.activity && visible.start + slot != self.active,
+                progress: tab.progress,
             }
         })
         .collect()
@@ -391,6 +398,7 @@ impl TabLayout {
             self.paint_tab(out, palette, index, hover == Some(TabHit::Close(index)));
         }
         self.paint_plus(out, palette, hover == Some(TabHit::New));
+        self.progress_bars(palette, out);
     }
 
     fn shadow(&self, out: &mut Vec<Fill>) {

@@ -441,3 +441,42 @@ fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
     let cleared = view.hover_thumbnail(Some((0, inside)), |_| true);
     assert_eq!((cleared, view.thumbnail_hover_dirty()), (false, true));
 }
+
+#[test]
+fn a_lone_tab_shows_progress_along_the_top_edge_and_only_while_reported() {
+    use sumie_core::notify::{Progress, ProgressState};
+
+    let mut view = view();
+    view.set_tab_count(1).unwrap();
+    let rect = view.content_rect();
+    let snapshot = snapshot(&view, rect);
+    let report = |state, percent| Some(Progress { state, percent });
+    // (report, fills: the track and one for the state)
+    for (progress, fills) in [
+        (None, 0),
+        (report(ProgressState::Set, Some(40)), 2),
+        (report(ProgressState::Error, None), 2),
+    ] {
+        view.build(&snapshot, None, &[], None, true);
+        view.draw_edge_progress(progress, &snapshot);
+        let frame = view.frame(false, |_| None);
+        assert_eq!(frame.fills.len(), fills, "{progress:?}");
+        assert!(frame.chrome.is_none());
+        for fill in frame.fills {
+            assert_eq!(fill.rect.origin[1], 0);
+            assert_eq!(fill.rect.size[1], 3, "2 logical px at scale 1.25");
+        }
+        if progress.is_some_and(|p| p.state == ProgressState::Error) {
+            assert_eq!(
+                frame.fills[1].color,
+                [
+                    snapshot.ansi_red[0],
+                    snapshot.ansi_red[1],
+                    snapshot.ansi_red[2],
+                    255
+                ]
+            );
+            assert_eq!(frame.fills[1].rect.size[0], view.device[0]);
+        }
+    }
+}

@@ -36,6 +36,8 @@ pub(crate) trait WindowOps: PaneWatches + crate::frame_window::FrameWindow {
     fn write_clipboard(&mut self, text: String);
     fn write_terminal_clipboard(&mut self, bytes: Option<Vec<u8>>);
     fn queue_title(&mut self, title: String);
+    /// Queue a desktop notification without waiting. A platform without a service drops it.
+    fn notify(&mut self, request: sumie_core::notify::Notification);
     fn set_background_effects(&mut self, transparent: bool, blur: bool) -> bool;
     fn background_commit_needed(&self) -> bool;
 }

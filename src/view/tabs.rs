@@ -1,5 +1,6 @@
 //! Measure and draw tab chrome in its own atlas; hit-test only the presented strip.
 
+use sumie_core::notify::Progress;
 use sumie_font::{FontError, FontOptions, FontSystem, TextGlyph, TextRun};
 use sumie_render::{AtlasRect, ChromeLayer, Fill, GlyphQuad, PixelRect, Rgba};
 use sumie_ui::{
@@ -195,11 +196,11 @@ impl View {
         }
     }
 
-    /// Call after composing the terminal panes, before presenting. Labels and activity flags
+    /// Call after composing the terminal panes, before presenting. Labels, activity flags and progress
     /// are in window order.
     pub(crate) fn draw_tabs<'a>(
         &mut self,
-        titles: impl Iterator<Item = (&'a str, bool)>,
+        titles: impl Iterator<Item = (&'a str, bool, Option<Progress>)>,
         active: usize,
         snapshot: &Snapshot,
     ) {
@@ -218,6 +219,7 @@ impl View {
             rgba(snapshot.background),
             rgba(snapshot.foreground),
             rgba(snapshot.ansi_yellow),
+            rgba(snapshot.ansi_red),
         );
         // Paint follows the new layout; actions continue to use only the presented placement.
         let hit = |layout: &TabLayout| pointer.and_then(|point| layout.hit(point));
@@ -281,7 +283,7 @@ impl TabPaint {
         &mut self,
         count: usize,
         active: usize,
-        titles: impl Iterator<Item = (&'a str, bool)>,
+        titles: impl Iterator<Item = (&'a str, bool, Option<Progress>)>,
         errors: &mut FontErrors,
     ) -> (bool, bool) {
         let mut measured = count != self.labels.len();
@@ -291,8 +293,9 @@ impl TabPaint {
             number: 0,
             title: 0,
             activity: false,
+            progress: None,
         });
-        for (index, ((label, measurement), (title, activity))) in self
+        for (index, ((label, measurement), (title, activity, progress))) in self
             .labels
             .iter_mut()
             .zip(&mut self.measurements)
@@ -304,6 +307,7 @@ impl TabPaint {
                 number: self.digits.width(index + 1),
                 title: label.run.width(),
                 activity: activity && index != active,
+                progress,
             };
             measured |= *measurement != next;
             *measurement = next;

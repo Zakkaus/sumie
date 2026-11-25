@@ -1,4 +1,5 @@
 mod events;
+mod notify;
 pub(crate) mod sources;
 use sources::Watches;
 
@@ -6,6 +7,8 @@ use std::{collections::VecDeque, time::Duration};
 
 use sumie_render::{backends, instance_descriptor, wgpu};
 use sumie_wayland::Platform;
+
+use sumie_core::notify::Notification;
 
 use crate::{
     Result,
@@ -19,6 +22,7 @@ pub(crate) struct LinuxWindow {
     platform: Platform,
     batch: VecDeque<sumie_wayland::Event>,
     copy_serial: Option<u32>,
+    notifier: notify::Notifier,
 }
 
 impl LinuxWindow {
@@ -82,6 +86,7 @@ impl FrameWindow for LinuxWindow {
             platform,
             batch: VecDeque::new(),
             copy_serial: None,
+            notifier: notify::Notifier::new(),
         })
     }
 
@@ -162,6 +167,10 @@ impl WindowOps for LinuxWindow {
 
     fn queue_title(&mut self, title: String) {
         self.platform.queue_title(title);
+    }
+
+    fn notify(&mut self, request: Notification) {
+        self.notifier.send(request);
     }
 
     fn set_background_effects(&mut self, transparent: bool, blur: bool) -> bool {

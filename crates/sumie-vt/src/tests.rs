@@ -8,6 +8,7 @@ use super::Terminal;
 fn snapshot_updates_ansi_yellow_without_changing_screen_contents() {
     let mut terminal = Terminal::new(5, 2).unwrap();
     let mut palette = [[0; 3]; 16];
+    palette[1] = [4, 5, 6];
     palette[3] = [1, 2, 3];
     terminal
         .set_colors([255; 3], [0; 3], None, &palette)
@@ -15,6 +16,7 @@ fn snapshot_updates_ansi_yellow_without_changing_screen_contents() {
     terminal.write(b"text");
     let mut expected = terminal.render_snapshot().unwrap();
     assert_eq!(expected.ansi_yellow, palette[3]);
+    assert_eq!(expected.ansi_red, palette[1]);
     let contents = terminal.screen_contents().unwrap();
 
     for (output, yellow) in [

@@ -33,6 +33,7 @@ mod images;
 use images::{PresentedImages, ViewerPaint};
 mod overlays;
 use overlays::{Glyphs, PresentedSearch};
+mod edge;
 mod paint;
 mod settings;
 mod tabs;

@@ -23,7 +23,7 @@ pub use style::{CellStyle, Underline};
 
 use effects::Effects;
 use graphics::Graphics;
-use std::ffi::{c_int, c_void};
+use std::ffi::c_int;
 use std::fmt;
 use std::ptr::{from_mut, null, null_mut};
 use sumie_core::graphics::Placement;
@@ -59,6 +59,8 @@ pub struct Snapshot {
     pub background: Rgb,
     /// Effective ANSI yellow (palette entry 3), including any OSC 4 override.
     pub ansi_yellow: Rgb,
+    /// Effective ANSI red (palette entry 1), including any OSC 4 override.
+    pub ansi_red: Rgb,
 }
 
 /// Viewport contents for change detection, excluding cursor and terminal metadata.
@@ -152,26 +154,7 @@ impl Terminal {
                 ffi::TERMINAL_OPT_USERDATA,
                 terminal.effects.cast(),
             ))?;
-            for (option, callback) in [
-                (
-                    ffi::TERMINAL_OPT_WRITE_PTY,
-                    effects::queue_reply as *const c_void,
-                ),
-                (
-                    ffi::TERMINAL_OPT_CLIPBOARD_WRITE,
-                    effects::queue_clipboard as *const c_void,
-                ),
-                (
-                    ffi::TERMINAL_OPT_CLIPBOARD_READ,
-                    effects::deny_clipboard_read as *const c_void,
-                ),
-                (
-                    ffi::TERMINAL_OPT_TITLE_CHANGED,
-                    effects::queue_title as *const c_void,
-                ),
-            ] {
-                check(ffi::ghostty_terminal_set(terminal.raw, option, callback))?;
-            }
+            check(effects::register(terminal.raw))?;
             check(ffi::ghostty_terminal_set(
                 terminal.raw,
                 ffi::TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,
@@ -357,6 +340,7 @@ impl Terminal {
     /// # Errors
     /// Returns an error if Ghostty cannot update or read the render state.
     pub fn render_snapshot(&mut self) -> Result<Snapshot, Error> {
+        const ANSI_RED: u8 = 1;
         const ANSI_YELLOW: u8 = 3;
 
         let mut cols = 0_u16;
@@ -397,6 +381,7 @@ impl Terminal {
             foreground: colors.foreground,
             background: colors.background,
             ansi_yellow: self.palette_entry(ANSI_YELLOW, colors.palette.as_ref())?,
+            ansi_red: self.palette_entry(ANSI_RED, colors.palette.as_ref())?,
         })
     }
 

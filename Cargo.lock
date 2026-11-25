@@ -1893,6 +1893,7 @@ dependencies = [
 name = "sumie-ui"
 version = "0.0.0"
 dependencies = [
+ "sumie-core",
  "sumie-render",
 ]
 

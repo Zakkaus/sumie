@@ -99,6 +99,7 @@ impl App {
                 .chain(paced)
                 .chain(self.reload.deadline)
                 .chain(self.session.as_ref().and_then(Session::closing_deadline))
+                .chain(self.session.as_ref().and_then(Session::progress_deadline))
                 .chain(
                     self.session
                         .as_ref()
@@ -112,7 +113,7 @@ impl App {
             if let Some(session) = &mut self.session {
                 let now = Instant::now();
                 session.service_closing(now, window)?;
-                exited = session.service_pty(now, window)?;
+                exited = session.service_pty(now, self.focused && !self.suspended, window)?;
             }
             // Each event takes effect before the next; child exits cannot retarget input.
             if window.deliver_events(|event, window| self.handle_event(event, window))? {

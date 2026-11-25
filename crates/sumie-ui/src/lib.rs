@@ -8,7 +8,7 @@ mod tabs;
 mod tokens;
 
 pub use palette::{Palette, TabPalette};
-pub use tabs::{TabHit, TabLayout, TabMeasurement, tab_bar_height};
+pub use tabs::{TabHit, TabLayout, TabMeasurement, progress_bar, tab_bar_height};
 pub use tokens::{
     IMAGE_VIEWER_MARGIN, LABEL_FAMILY, LABEL_PX, LABEL_WEIGHT, NUMBER_FAMILY, NUMBER_PX,
 };
