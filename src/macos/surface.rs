@@ -87,9 +87,14 @@ impl FrameSlot {
         true
     }
 
-    /// The window became visible or active again: free the slot now.
-    pub(super) fn release(&mut self, now: Instant) {
-        self.free_at = self.free_at.min(now);
+    /// The window became visible or active again: free a slot held for pacing. A drawable
+    /// back-off stays; only a visibility change ends it. Returns whether the slot was freed.
+    pub(super) fn release(&mut self, now: Instant) -> bool {
+        if self.backoff.is_some() || self.available(now) {
+            return false;
+        }
+        self.free_at = now;
+        true
     }
 
     fn hold(&mut self, until: Instant) -> Instant {
@@ -152,5 +157,19 @@ mod tests {
         assert!(slot.available(start));
         // The back-off keeps growing until a frame presents.
         assert_eq!(slot.timed_out(start) - start, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_refocus_frees_pacing_but_not_a_backoff() {
+        let start = Instant::now();
+        let mut slot = FrameSlot::new(60);
+        slot.present(start);
+        assert!(slot.release(start));
+        assert!(slot.available(start));
+        assert!(!slot.release(start), "a free slot has nothing to release");
+        slot.timed_out(start);
+        assert!(!slot.release(start));
+        assert!(!slot.available(start + Duration::from_millis(999)));
+        assert!(slot.available(start + FIRST_BACKOFF));
     }
 }

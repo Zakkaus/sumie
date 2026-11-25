@@ -253,8 +253,9 @@ impl WindowOps for MacWindow {
     }
 
     fn recover_frame_slot(&mut self) {
-        self.slot.release(Instant::now());
-        self.readiness.remove(SLOT);
+        if self.slot.release(Instant::now()) {
+            self.readiness.remove(SLOT);
+        }
     }
 
     fn set_cursor_rectangle(&mut self, _: LogicalRect) {}
