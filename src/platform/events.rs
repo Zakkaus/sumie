@@ -40,7 +40,7 @@ impl LogicalKey {
 /// both spaces to the device pixels of the presented buffer.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Position {
-    /// Device pixels of the buffer, already scaled by the platform (AppKit backing pixels).
+    /// Device pixels of the buffer, already scaled by the platform (`AppKit` backing pixels).
     /// Never convert these through a rounded point extent.
     #[cfg_attr(
         not(test),

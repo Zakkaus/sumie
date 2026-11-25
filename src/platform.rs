@@ -11,6 +11,7 @@ pub(crate) enum CursorIcon {
 }
 
 /// Clipped caret edges in the buffer used for this frame, not a pending configure.
+#[derive(Clone, Copy)]
 pub(crate) struct CaretBounds {
     pub(crate) start: [i32; 2],
     pub(crate) end: [i64; 2],
@@ -31,6 +32,7 @@ pub(crate) trait WindowOps: PaneWatches + crate::frame_window::FrameWindow {
     /// The desktop's double-click interval in milliseconds, if it publishes one.
     fn click_interval() -> Option<u32>;
     fn hostname() -> crate::Result<String>;
+    /// Map caret edges to the coordinates the platform's input method expects.
     fn logical_rect(bounds: CaretBounds) -> Option<LogicalRect>;
     /// Release a frame slot stalled by a hidden or inactive window.
     fn recover_frame_slot(&mut self);
