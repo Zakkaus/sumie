@@ -72,6 +72,13 @@ impl Session {
         result
     }
 
+    #[cfg_attr(
+        target_os = "macos",
+        expect(
+            dead_code,
+            reason = "macOS keeps reaping through the window's exit watches"
+        )
+    )]
     pub(super) fn closing_fds(&self) -> impl Iterator<Item = (u64, BorrowedFd<'_>)> {
         self.closing
             .iter()

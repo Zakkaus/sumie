@@ -1,4 +1,5 @@
-//! Runs the Metal test page and applies watched settings on the window thread.
+//! Runs the terminal driver (`SUMIE_MACOS_DRIVER=terminal`) or, by default, the Metal test
+//! page, which applies watched settings on the window thread.
 
 use std::{
     ops::ControlFlow,
@@ -14,12 +15,15 @@ use sumie_render::{SurfaceError, SurfaceFrame, SurfaceRenderer, instance_descrip
 
 use crate::{Result, capture, frame_window::FrameWindow};
 
+mod driver;
 pub(crate) mod login;
 mod page;
 mod reload;
 #[cfg(feature = "macos-ci")]
 mod runner;
 mod sources;
+mod surface;
+mod window;
 use page::Page;
 pub(crate) use reload::{CHILD_ARG as CONFIG_WATCH_ARG, watch_child as run_config_watch};
 use reload::{Reload, Update};
@@ -42,12 +46,19 @@ impl FrameWindow for Platform {
     }
 }
 
-pub(crate) fn run(options: &capture::Options) -> Result<()> {
+pub(crate) fn run(options: capture::Options) -> Result<()> {
     #[cfg(feature = "macos-ci")]
     if let Some(mode) = runner::Mode::from_env()? {
         return runner::run(mode, options);
     }
+    match std::env::var("SUMIE_MACOS_DRIVER") {
+        Ok(driver) if driver == "terminal" => driver::run(options),
+        Err(std::env::VarError::NotPresent) => smoke(&options),
+        _ => Err("SUMIE_MACOS_DRIVER must be unset or \"terminal\"".into()),
+    }
+}
 
+fn smoke(options: &capture::Options) -> Result<()> {
     // The terminal driver starts panes with this login; the test page only proves it.
     let _login = login::prepare()?;
     let mut state = None;

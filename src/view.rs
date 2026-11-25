@@ -177,6 +177,10 @@ impl View {
         self.presented_images.clear();
     }
 
+    pub(crate) const fn resize_pending(&self) -> bool {
+        self.pending_resize.is_some()
+    }
+
     pub(crate) fn apply_pending_resize(&mut self) -> Result<bool> {
         let Some(WindowSize {
             scale,

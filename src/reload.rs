@@ -1,14 +1,42 @@
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsFd, BorrowedFd};
 use std::{
     fmt, io,
-    os::fd::{AsFd, BorrowedFd},
     time::{Duration, Instant},
 };
 
-use sumie_config::{Config, Error, Watch};
+#[cfg(target_os = "linux")]
+use sumie_config::Watch;
+use sumie_config::{Config, Error};
 
 use crate::Result;
 
+#[cfg(target_os = "macos")]
+pub(crate) mod frame;
+
 const DEBOUNCE: Duration = Duration::from_millis(100);
+
+/// macOS reads the settings once at startup; nothing reports a change yet. Errors mirror
+/// the Linux watch's errno.
+#[cfg(target_os = "macos")]
+struct Watch(std::path::PathBuf);
+
+#[cfg(target_os = "macos")]
+#[expect(clippy::unnecessary_wraps, reason = "the Linux watch can fail")]
+impl Watch {
+    fn new(path: std::path::PathBuf) -> Result<Self, nix::errno::Errno> {
+        Ok(Self(path))
+    }
+
+    fn load(&mut self) -> Result<Result<Config, Error>, nix::errno::Errno> {
+        Ok(sumie_config::load(&self.0))
+    }
+
+    #[expect(clippy::unused_self, reason = "the Linux watch drains its descriptor")]
+    fn changed(&self) -> Result<bool, nix::errno::Errno> {
+        Ok(false)
+    }
+}
 
 pub(crate) struct Reload {
     watch: Option<Watch>,
@@ -34,6 +62,7 @@ impl Reload {
             .map_err(io::Error::from)
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn watch_fd(&self) -> Option<BorrowedFd<'_>> {
         self.watch.as_ref().map(AsFd::as_fd)
     }

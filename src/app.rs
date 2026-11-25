@@ -326,6 +326,7 @@ impl Session {
                 return Ok(final_frame);
             }
             Ok((SurfaceFrame::Suspended, _)) => return Ok(false),
+            Ok((SurfaceFrame::Timeout, _)) if window.hold_after_timeout() => return Ok(false),
             Ok((SurfaceFrame::Timeout | SurfaceFrame::Occluded, _)) => (),
             Err(SurfaceError::Outdated) => gpu.resize(self.view.device),
             Err(error) => return Err(error.into()),

@@ -170,7 +170,7 @@ impl View {
     }
 
     /// Includes the reserved close area, even before the hover frame reveals the button.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn tab_hover_hit(&self, position: Position) -> Option<TabHit> {
         self.tabs
             .presented

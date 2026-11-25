@@ -4,15 +4,15 @@
 //! Converts settings to core options and passes font atlas data to rendering.
 //! Keep business logic in the library crates.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod app;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod capture;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod frame_window;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod gpu;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod input;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -20,27 +20,19 @@ mod linux;
 mod login;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod pane;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod platform;
-// Only the readiness traits build on macOS until the terminal driver does.
-#[cfg(target_os = "macos")]
-#[path = "platform/watches.rs"]
-mod platform;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod reload;
-// macOS watches settings in a child process that sends framed results.
-#[cfg(target_os = "macos")]
-mod reload {
-    pub(crate) mod frame;
-}
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod view;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod grid_tests;
 
+// PTY-driven tests; Darwin PTY behaviour is checked with the login shell.
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
 
@@ -97,11 +89,8 @@ fn run() -> Result<()> {
         };
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     return run_app(args);
-    // TODO(P1): Watch configuration on macOS with kqueue.
-    #[cfg(target_os = "macos")]
-    return macos::run(&capture::Options::parse(args)?);
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     Ok(())
 }
@@ -171,7 +160,7 @@ fn close_link_opener_fds() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_app(args: impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
     use tracing_subscriber::filter::LevelFilter;
 
@@ -185,5 +174,8 @@ fn run_app(args: impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
         .with_max_level(level)
         .init();
 
-    linux::run(capture)
+    #[cfg(target_os = "linux")]
+    return linux::run(capture);
+    #[cfg(target_os = "macos")]
+    return macos::run(capture);
 }

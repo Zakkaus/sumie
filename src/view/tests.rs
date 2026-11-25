@@ -6,11 +6,10 @@ use sumie_core::{CellPosition, CellRange};
 use sumie_render::PixelRect;
 use sumie_vt::{Snapshot, Terminal};
 
-use super::{FontSettings, LinkHighlight, PaneFocus, View};
+use super::{FontSettings, LinkHighlight, PaneFocus, View, surface_logical_rect};
 use crate::{
     input::{self, SearchTarget},
-    linux::LinuxWindow,
-    platform::{Position, WindowOps as _},
+    platform::Position,
 };
 
 fn view() -> View {
@@ -175,7 +174,7 @@ fn scroll_offset_reveals_the_row_below_and_moves_hits_with_the_content() {
             blink: false,
         };
         let rectangle = view
-            .ime_rectangle(Some(cursor), rect, LinuxWindow::logical_rect)
+            .ime_rectangle(Some(cursor), rect, surface_logical_rect)
             .unwrap();
         carets.push(rectangle.y);
     }
@@ -240,11 +239,11 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     ));
     assert!(view.search_hit(pos, left).is_none());
     assert!(
-        view.ime_rectangle(None, left, LinuxWindow::logical_rect)
+        view.ime_rectangle(None, left, surface_logical_rect)
             .is_none()
     );
     let caret = view
-        .ime_rectangle(None, right, LinuxWindow::logical_rect)
+        .ime_rectangle(None, right, surface_logical_rect)
         .unwrap();
     // One inset cell, "Search: ", and one preedit cell. No space for the selected query.
     assert_eq!(

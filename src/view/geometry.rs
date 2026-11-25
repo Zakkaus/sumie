@@ -19,7 +19,7 @@ impl View {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn size(&self) -> Size {
         self.pane_size(self.content_rect())
     }

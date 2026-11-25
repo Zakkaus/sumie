@@ -7,6 +7,10 @@ pub(crate) use sumie_core::{
 
 /// A layout symbol, independent of both physical position and composed input text.
 #[derive(Clone, Copy)]
+#[cfg_attr(
+    target_os = "macos",
+    expect(dead_code, reason = "macOS does not map keys yet")
+)]
 pub(crate) enum LogicalKey {
     Character(char),
     Escape,
@@ -43,14 +47,15 @@ pub(crate) enum Position {
     /// Device pixels of the buffer, already scaled by the platform (`AppKit` backing pixels).
     /// Never convert these through a rounded point extent.
     #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "only the macOS terminal driver reports backing pixels"
-        )
+        all(target_os = "linux", not(test)),
+        expect(dead_code, reason = "only AppKit reports backing pixels")
     )]
     DevicePx(f64, f64),
     /// Surface-local logical coordinates; the compositor stretches the buffer over them.
+    #[cfg_attr(
+        all(target_os = "macos", not(test)),
+        expect(dead_code, reason = "only Wayland reports surface-logical positions")
+    )]
     SurfaceLogical(f64, f64),
 }
 
@@ -73,18 +78,34 @@ pub(crate) enum Event {
         /// Scale in units of 1/120.
         scale: u32,
     },
+    #[cfg_attr(
+        target_os = "macos",
+        expect(dead_code, reason = "only Wayland reports frame feedback")
+    )]
     FrameReady,
     /// A submitted frame reached the screen at `at` on the compositor's clock.
+    #[cfg_attr(
+        target_os = "macos",
+        expect(dead_code, reason = "only Wayland reports frame feedback")
+    )]
     Presented {
         at: std::time::Duration,
         /// Predicted refresh interval; zero if unknown.
         refresh: std::time::Duration,
     },
     CloseRequested,
+    #[cfg_attr(
+        target_os = "macos",
+        expect(dead_code, reason = "macOS has no pasteboard reads yet")
+    )]
     ClipboardText {
         text: String,
         generation: u64,
     },
+    #[cfg_attr(
+        target_os = "macos",
+        expect(dead_code, reason = "macOS does not map keys yet")
+    )]
     Key {
         physical: PhysicalKey,
         logical: LogicalKey,
@@ -92,12 +113,20 @@ pub(crate) enum Event {
         modifiers: Modifiers,
         action: KeyAction,
     },
+    #[cfg_attr(
+        target_os = "macos",
+        expect(dead_code, reason = "macOS does not map keys yet")
+    )]
     ModifiersChanged(Modifiers),
     PointerEntered {
         position: Position,
         modifiers: Modifiers,
     },
     Pointer(PointerEvent),
+    #[cfg_attr(
+        target_os = "macos",
+        expect(dead_code, reason = "macOS has no input methods yet")
+    )]
     ImePreedit {
         text: String,
         generation: u64,

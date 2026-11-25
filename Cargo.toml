@@ -60,29 +60,28 @@ sumie-config = { path = "crates/sumie-config" }
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 png.workspace = true
 pollster.workspace = true
+sumie-core = { path = "crates/sumie-core" }
 sumie-font = { path = "crates/sumie-font" }
 sumie-pty = { path = "crates/sumie-pty" }
 sumie-render = { path = "crates/sumie-render" }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-calloop = "0.14.5"
-nix = { workspace = true, features = ["dir", "process"] }
-sumie-core = { path = "crates/sumie-core" }
 sumie-ui = { path = "crates/sumie-ui" }
 sumie-vt = { path = "crates/sumie-vt" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 unicode-segmentation = "1.13.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+calloop = "0.14.5"
+nix = { workspace = true, features = ["dir", "process"] }
 xkeysym = "0.2.1"
 sumie-wayland.workspace = true
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 rustix.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-nix = { workspace = true, features = ["fs", "user"] }
+nix = { workspace = true, features = ["fs", "hostname", "user"] }
 sumie-macos.workspace = true
-tracing.workspace = true
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

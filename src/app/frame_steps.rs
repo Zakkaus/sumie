@@ -171,7 +171,8 @@ impl App {
             window.frame_slot_available(),
             session.frame_retry,
             Instant::now(),
-        );
+        ) && (!session.view.resize_pending()
+            || window.may_configure(|| gpu.queue_empty()));
         let next = if ready {
             session.apply_geometry(gpu)?;
             if session.frame_retry.is_none() {
@@ -200,8 +201,30 @@ impl App {
             .map_or(Ok(()), |session| session.close_all(watches))
     }
 
+    #[cfg_attr(
+        target_os = "macos",
+        expect(
+            dead_code,
+            reason = "macOS keeps reaping through the window's exit watches"
+        )
+    )]
     pub(crate) fn closing_fds(&self) -> impl Iterator<Item = (u64, BorrowedFd<'_>)> {
         self.session.iter().flat_map(Session::closing_fds)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) const fn gpu(&self) -> &Gpu {
+        &self.gpu
+    }
+
+    /// The focused pane's last snapshot as columns and rows: the grid the view draws.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) fn snapshot_grid(&self) -> Option<[usize; 2]> {
+        let snapshot = self.session.as_ref()?.active().snapshot.as_ref()?;
+        Some([
+            snapshot.rows.first().map_or(0, Vec::len),
+            snapshot.rows.len(),
+        ])
     }
 
     /// Drop the GPU, so the window can drop next, and keep the session to reap children.

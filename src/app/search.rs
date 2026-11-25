@@ -382,7 +382,7 @@ impl PaneState {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use sumie_core::{KeyAction::Press, KeyCode as K};
 

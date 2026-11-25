@@ -12,6 +12,7 @@ use sumie_render::wgpu;
 use super::Smoke;
 use crate::{Result, capture};
 
+mod terminal;
 mod wake;
 
 const LENGTH: Duration = Duration::from_secs(60);
@@ -28,6 +29,8 @@ pub(super) enum Mode {
     Wake(Option<wake::Wake>),
     /// One frame, then pings and window steps while `AppKit` animates.
     Idle,
+    /// The terminal driver, with typed text, counters and one line per present.
+    Terminal,
 }
 
 impl Mode {
@@ -37,15 +40,19 @@ impl Mode {
             Ok(value) if value == "capabilities" => Ok(Some(Self::Capabilities)),
             Ok(value) if value == "wake" => Ok(Some(Self::Wake(None))),
             Ok(value) if value == "idle" => Ok(Some(Self::Idle)),
+            Ok(value) if value == "terminal" => Ok(Some(Self::Terminal)),
             Err(env::VarError::NotPresent) => Ok(None),
             _ => Err("invalid SUMIE_MACOS_CI_RUNNER mode".into()),
         }
     }
 }
 
-pub(super) fn run(mode: Mode, options: &capture::Options) -> Result<()> {
+pub(super) fn run(mode: Mode, options: capture::Options) -> Result<()> {
     if options.frames.is_some() || options.screenshot.is_some() {
         return Err("the runner probe cannot be combined with frame limits or GPU readback".into());
+    }
+    if let Mode::Terminal = mode {
+        return terminal::run(options);
     }
     let mut driver = Driver {
         mode,
@@ -184,7 +191,7 @@ fn repaint(mode: &mut Mode, smoke: &mut Smoke, started: Instant) -> Result<()> {
     }
     let count = smoke.surface.present_count();
     let clear = match mode {
-        Mode::Capabilities | Mode::Wake(_) | Mode::Idle => FIXTURE,
+        Mode::Capabilities | Mode::Wake(_) | Mode::Idle | Mode::Terminal => FIXTURE,
         Mode::Timing(_) if count.is_multiple_of(2) => wgpu::Color::RED,
         Mode::Timing(_) => wgpu::Color::BLUE,
     };

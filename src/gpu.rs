@@ -19,6 +19,9 @@ pub(crate) struct Gpu {
     target: SurfaceRenderer<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// Calls that may configure the surface, and those made while GPU work was pending.
+    #[cfg(target_os = "macos")]
+    pub(crate) configures: (u64, u64),
     _instance: wgpu::Instance,
 }
 
@@ -48,6 +51,8 @@ impl Gpu {
             target,
             device,
             queue,
+            #[cfg(target_os = "macos")]
+            configures: (0, 0),
             _instance: instance,
         })
     }
@@ -97,7 +102,33 @@ impl Gpu {
     }
 
     pub(crate) fn set_transparent(&mut self, transparent: bool) -> bool {
+        #[cfg(target_os = "macos")]
+        self.count_configure();
         self.target.set_transparent(transparent)
+    }
+
+    /// Whether no submission is in flight. Configuring then cannot wait for the GPU.
+    pub(crate) fn queue_empty(&self) -> bool {
+        self.device
+            .poll(wgpu::PollType::Poll)
+            .is_ok_and(|status| status.is_queue_empty())
+    }
+
+    /// Wait up to `limit` for submitted work. Returns whether it finished.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn wait_idle(&self, limit: std::time::Duration) -> bool {
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(limit),
+            })
+            .is_ok()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn count_configure(&mut self) {
+        self.configures.0 += 1;
+        self.configures.1 += u64::from(!self.queue_empty());
     }
 
     pub(crate) const fn present_count(&self) -> u64 {
@@ -117,6 +148,8 @@ impl Gpu {
     }
 
     pub(crate) fn resize(&mut self, device: [u32; 2]) {
+        #[cfg(target_os = "macos")]
+        self.count_configure();
         self.target.resize(device);
     }
 }
