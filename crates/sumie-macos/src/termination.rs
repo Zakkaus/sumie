@@ -142,11 +142,12 @@ impl Termination {
             }
             Some(drain) if quit > drain.quit => {
                 drain.quit = quit;
+                // Before the deadline: a watchdog that sees the new deadline must exit 0.
+                drain.words.system.store(true, Ordering::Release);
                 drain
                     .words
                     .hard_ms
                     .store(millis(SYSTEM_HARD), Ordering::Release);
-                drain.words.system.store(true, Ordering::Release);
                 drain.watchdog.unpark();
                 tracing::info!(hard_ms = millis(SYSTEM_HARD), "draining for a system quit");
             }
@@ -220,6 +221,9 @@ fn watch(words: &Words) {
             Some(left) if !left.is_zero() => thread::park_timeout(left),
             _ => break,
         }
+    }
+    if words.cancelled.load(Ordering::Acquire) {
+        return;
     }
     let stage = words.stage.load(Ordering::Acquire);
     let stage = Stage::ALL
