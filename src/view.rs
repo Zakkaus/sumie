@@ -13,7 +13,9 @@ use sumie_core::{CellRange, FontZoom};
 use sumie_font::{FontError, FontStyle, FontSystem};
 #[cfg(test)]
 use sumie_render::DrawList;
-use sumie_render::{AtlasRect, AtlasUpload, Fill, FrameDraw, PaneDraw, PixelRect, Rgba, wgpu};
+use sumie_render::{
+    AtlasRect, AtlasUpload, Fill, FrameDraw, PaneDraw, PixelRect, Rgba, Scroll, wgpu,
+};
 use sumie_ui::Palette;
 use sumie_vt::{Rgb, Snapshot};
 
@@ -153,6 +155,10 @@ impl View {
         })
     }
 
+    pub(crate) const fn scale(&self) -> u32 {
+        self.scale
+    }
+
     pub(crate) fn request_resize(&mut self, scale: u32, logical: [u32; 2], device: [u32; 2]) {
         self.pending_resize = Some(WindowSize {
             scale,
@@ -290,9 +296,18 @@ impl View {
         if index == self.panes.len() {
             self.panes.push(PanePaint::new(rect));
         }
-        let pane = &self.panes[index];
+        // Moving within a row only changes the offset; the extra row needs a repaint to appear.
+        let extra = focus.scroll != 0 && snapshot.below.is_some();
+        let scroll = Scroll {
+            offset: if extra { focus.scroll } else { 0 },
+            extra_rows: u32::from(extra),
+        };
+        let pane = &mut self.panes[index];
+        let repaint = pane.scroll.extra_rows != scroll.extra_rows;
+        pane.scroll = scroll;
         let focused = focus.active && focus.window_focused;
         if !focus.dirty
+            && !repaint
             && pane.id == Some(focus.id)
             && pane.rect == rect
             && pane.active == focus.active
@@ -399,6 +414,7 @@ impl View {
                 id: 0,
                 dirty: true,
                 viewer: None,
+                scroll: 0,
             },
         );
         self.end_frame();
@@ -435,7 +451,8 @@ impl View {
             let cursor = cursor?;
             [
                 pane.glyphs.offset[0] + (u32::from(cursor.column) * self.cell[0]).cast_signed(),
-                pane.glyphs.offset[1] + (u32::from(cursor.row) * self.cell[1]).cast_signed(),
+                pane.glyphs.offset[1] + (u32::from(cursor.row) * self.cell[1]).cast_signed()
+                    - pane.scroll.offset.cast_signed(),
             ]
         };
         let ends = [

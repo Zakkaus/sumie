@@ -113,6 +113,9 @@ impl App {
                         session.resize_grid()?;
                         gpu.resize(session.view.device);
                     }
+                    if session.frame_retry.is_none() {
+                        session.step_scroll(Instant::now())?;
+                    }
                     let now = session.frame_retry.is_none().then(|| animation.now_ms());
                     session.refresh_visible(now, window)?
                 } else {
@@ -190,6 +193,7 @@ impl App {
                     tab.snapshot_dirty = true;
                 }
             }
+            session.set_smooth_scroll(next.scroll.smooth());
             if changes.selection_colors {
                 session.view.set_selection_colors(&next.colors);
             }
@@ -264,6 +268,11 @@ impl App {
                     session.view.set_background_alpha(alpha);
                     gpu.resize(device);
                     self.session = Some(session);
+                }
+            }
+            Event::Presented { at, refresh } => {
+                if let Some(session) = &mut self.session {
+                    session.clock.presented(at, refresh);
                 }
             }
             event => {

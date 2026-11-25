@@ -15,6 +15,10 @@ pub enum MousePhase {
     Motion,
     /// Signed Wayland value120 units: positive scrolls down.
     Wheel(f64),
+    /// Touchpad finger movement, in the same units as `Wheel`.
+    Touch(f64),
+    /// The finger lifted; the content may slide on.
+    TouchEnd,
     Cancel,
 }
 
@@ -172,7 +176,7 @@ impl MouseState {
             self.reset_clicks();
         }
         match event.phase {
-            MousePhase::Wheel(delta) => {
+            MousePhase::Wheel(delta) | MousePhase::Touch(delta) => {
                 self.last_click = None;
                 if let Some((_, pixel)) = &mut self.link_press {
                     *pixel = None;
@@ -212,7 +216,7 @@ impl MouseState {
             {
                 Dispatch::Motion(self.held[0])
             }
-            MousePhase::Motion => Dispatch::Ignore,
+            MousePhase::Motion | MousePhase::TouchEnd => Dispatch::Ignore,
             MousePhase::Cancel => {
                 let selecting = self.selecting.is_some();
                 self.reset_gestures();

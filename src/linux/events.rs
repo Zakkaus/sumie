@@ -31,10 +31,7 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
         },
         Native::FrameReady => Event::FrameReady,
         Native::CloseRequested => Event::CloseRequested,
-        Native::Presentation(feedback) => {
-            tracing::trace!(?feedback, "presentation feedback");
-            return None;
-        }
+        Native::Presentation(feedback) => presented(feedback)?,
         Native::Key {
             physical,
             keysym,
@@ -89,6 +86,23 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
     Some((event, copy_serial))
 }
 
+fn presented(feedback: sumie_wayland::PresentationFeedback) -> Option<Event> {
+    let sumie_wayland::PresentationFeedback::Presented {
+        timestamp,
+        refresh_ns,
+        flags,
+        ..
+    } = feedback
+    else {
+        return None;
+    };
+    tracing::debug!(?timestamp, refresh_ns, flags, "presented");
+    Some(Event::Presented {
+        at: timestamp,
+        refresh: std::time::Duration::from_nanos(refresh_ns.into()),
+    })
+}
+
 fn modifiers(mods: sumie_wayland::Modifiers) -> Modifiers {
     Modifiers {
         shift: mods.shift,
@@ -136,6 +150,8 @@ fn pointer_phase(phase: PointerPhase, serial: u32) -> (Phase, Option<u32>) {
         PointerPhase::Release(b) => (Phase::Release(button(b)), Some(serial)),
         PointerPhase::Motion => (Phase::Motion, None),
         PointerPhase::Wheel(delta) => (Phase::Wheel(delta), None),
+        PointerPhase::Touch(delta) => (Phase::Touch(delta), None),
+        PointerPhase::TouchEnd => (Phase::TouchEnd, None),
         PointerPhase::Cancel => (Phase::Cancel, None),
     }
 }

@@ -181,7 +181,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("block cursor covers cell glyphs", "test", "crates/sumie-render/src/grid.rs",
           lambda source: replace_once("if block.is_none()\n            && let Some(cursor)",
                                       "if let Some(cursor)")(
-              replace_once("block.cursor.write(&mut write);", "let _ = block;")(source)),
+              replace_once("block.cursor.write(|instance| write(self.place(instance)));",
+                           "let _ = block;")(source)),
           "test grid_tests::grid_on_selected_backend ... FAILED")
     probe("oversized OSC 52 clipboard write", "test", "crates/sumie-vt/src/effects.rs",
           replace_once("if len > OUTPUT_LIMIT - self.clipboard_bytes {",

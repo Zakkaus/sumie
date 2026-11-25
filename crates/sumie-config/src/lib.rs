@@ -31,6 +31,8 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::Value;
 use toml::Spanned;
 
+mod scroll;
+pub use scroll::Scroll;
 mod shell;
 pub use shell::Shell;
 
@@ -60,6 +62,8 @@ pub struct Config {
     pub shell: Shell,
     /// Pane padding and window background settings.
     pub window: Window,
+    /// History scrolling behavior.
+    pub scroll: Scroll,
     /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
     #[serde(deserialize_with = "deserialize_contrast")]
     #[schemars(
@@ -96,6 +100,7 @@ impl Config {
         self.images.overlay(&file.images);
         self.shell.overlay(&file.shell);
         self.window.overlay(&file.window);
+        self.scroll.overlay(&file.scroll);
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
         self.scrollback_limit = file.scrollback_limit.or(self.scrollback_limit);
     }
@@ -518,7 +523,9 @@ pub fn defaults_toml() -> String {
         "scrollback-limit",
         &properties["scrollback-limit"],
     );
-    for table in ["font", "colors", "cursor", "shell", "images", "window"] {
+    for table in [
+        "font", "colors", "cursor", "shell", "images", "window", "scroll",
+    ] {
         use std::fmt::Write as _;
         writeln!(text, "\n[{table}]").expect("writing to a String is infallible");
         if let Some(fields) = properties[table]["properties"].as_object() {

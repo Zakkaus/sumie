@@ -7,6 +7,7 @@ mod lifetime;
 mod links;
 mod pane_input;
 mod pane_layout;
+mod scroll;
 mod search;
 mod tabs;
 mod viewer;
@@ -47,6 +48,8 @@ struct Session {
     pointer: tabs::BarPointer,
     pane_pointer: pane_input::Pointer,
     link_pointer: links::Pointer,
+    clock: scroll::FrameClock,
+    smooth_scroll: bool,
 }
 
 struct PaneTab {
@@ -76,6 +79,7 @@ struct PaneState {
     frame_dirty: bool,
     activity_after: Option<Instant>,
     hover: links::Hover,
+    scroll: scroll::PaneScroll,
 }
 
 impl Session {
@@ -114,6 +118,8 @@ impl Session {
             pointer: tabs::BarPointer::default(),
             pane_pointer: pane_input::Pointer::default(),
             link_pointer: links::Pointer::default(),
+            clock: scroll::FrameClock::new(),
+            smooth_scroll: config.scroll.smooth(),
         })
     }
 
@@ -229,6 +235,7 @@ impl Session {
                 active: id == active.id,
                 window_focused: focused,
                 viewer: pane.viewer.as_ref().map(|viewer| &viewer.placement),
+                scroll: pane.scroll.offset(),
             };
             self.view.build_pane(
                 rect,
@@ -240,6 +247,7 @@ impl Session {
             );
         }
         self.view.end_frame();
+        self.show_scroll();
         self.draw_tab_strip();
         gpu.upload_atlas(&self.view.atlas());
         self.view.atlas_uploaded();
@@ -262,7 +270,8 @@ impl Session {
                 .layout
                 .panes
                 .iter()
-                .any(|&(id, _)| tab.get(id).frame_dirty);
+                .any(|&(id, _)| tab.get(id).frame_dirty)
+            || self.scroll_pending();
         if !dirty
             && self.cursor_hidden == cursor_hidden
             && !self.view.thumbnail_hover_dirty()

@@ -88,6 +88,10 @@ pub enum PointerPhase {
     Cancel,
     /// Signed vertical scroll, down positive, in units of 1/120 of a wheel notch.
     Wheel(f64),
+    /// Finger movement on a touchpad, in the units of `Wheel`.
+    Touch(f64),
+    /// The fingers left the touchpad (`axis_stop`).
+    TouchEnd,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -50,6 +50,8 @@ pub type Rgb = [u8; 3];
 #[derive(Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub rows: Vec<Vec<Cell>>,
+    /// The row below the viewport, shown while a smooth scroll sits between rows; none at the bottom.
+    pub below: Option<Vec<Cell>>,
     /// Drawable placements, excluding images hidden by an opaque cover of the same footprint.
     pub images: std::sync::Arc<Vec<Placement>>,
     pub cursor: Option<Cursor>,
@@ -177,6 +179,7 @@ impl Terminal {
             ))?;
         }
         terminal.configure_graphics()?;
+        terminal.request_row_below()?;
         Ok(terminal)
     }
 
@@ -385,41 +388,16 @@ impl Terminal {
         while unsafe { ffi::ghostty_render_state_row_iterator_next(self.row_iter) } {
             screen.push(self.snapshot_row(cols, &mut colors)?);
         }
+        let below = screen.split_off(usize::from(rows).min(screen.len())).pop();
         Ok(Snapshot {
             rows: screen,
+            below,
             images,
             cursor,
             foreground: colors.foreground,
             background: colors.background,
             ansi_yellow: self.palette_entry(ANSI_YELLOW, colors.palette.as_ref())?,
         })
-    }
-
-    fn colors(&self) -> Result<Colors, Error> {
-        // SAFETY: All three data keys have the RGB output layout.
-        let foreground = unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_FOREGROUND) }?;
-        // SAFETY: The key has the RGB output layout.
-        let background = unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_BACKGROUND) }?;
-        // SAFETY: The key has the RGB output layout, or reports an unset cursor color.
-        let cursor = match unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_CURSOR) } {
-            Err(Error(ffi::NO_VALUE)) => foreground,
-            result => result?,
-        };
-        Ok(Colors {
-            foreground,
-            background,
-            cursor,
-            palette: None,
-        })
-    }
-
-    unsafe fn render_value<T: Default>(&self, data: c_int) -> Result<T, Error> {
-        let mut value = T::default();
-        // SAFETY: The caller pairs the data key with its output layout; the state is live.
-        check(unsafe {
-            ffi::ghostty_render_state_get(self.render, data, from_mut(&mut value).cast())
-        })?;
-        Ok(value)
     }
 
     fn snapshot_row(&mut self, cols: u16, colors: &mut Colors) -> Result<Vec<Cell>, Error> {

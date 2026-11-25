@@ -78,6 +78,17 @@ impl Mouse {
 }
 
 impl LocalPane {
+    /// Whether the wheel scrolls the history rather than the program. Takes the wheel over as
+    /// a scroll gesture, which ends clicks in progress.
+    pub(crate) fn wheel_scrolls_history(&mut self) -> bool {
+        let modes = self.mouse.modes;
+        let history = !(modes.tracking || modes.alternate && modes.alternate_scroll);
+        if history {
+            self.mouse.state.reset_clicks();
+        }
+        history
+    }
+
     pub(crate) fn mouse_tracking(&self) -> bool {
         self.mouse.modes.tracking
     }

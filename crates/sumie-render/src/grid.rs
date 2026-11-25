@@ -104,6 +104,16 @@ impl ChromeLayer<'_> {
     }
 }
 
+/// Smooth-scroll state of one grid, applied while instances are written so a change in
+/// `offset` does not touch the cached cells and glyphs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Scroll {
+    /// Content is drawn this many device pixels above its cell position and clipped to the grid.
+    pub offset: u32,
+    /// Rows of `backgrounds` and glyph cells past `grid_size`, shown only while `offset` is not zero.
+    pub extra_rows: u32,
+}
+
 /// One terminal grid. All positions and sizes are in device pixels except `grid_size`.
 #[derive(Clone, Copy)]
 pub struct DrawList<'a> {
@@ -111,7 +121,8 @@ pub struct DrawList<'a> {
     pub grid_size: [u32; 2],
     pub cell_size: [u32; 2],
     pub origin: [i32; 2],
-    /// One background per cell, in row-major order.
+    pub scroll: Scroll,
+    /// One background per cell, in row-major order, including `scroll.extra_rows`.
     pub backgrounds: &'a [Rgba],
     /// Terminal default color for pane padding and below-background images.
     pub default_background: Rgba,
@@ -209,6 +220,24 @@ impl Instance {
         }
     }
 
+    /// Move up by `offset` and clip to `[top, bottom)`. A fully clipped instance keeps its slot
+    /// as an empty quad.
+    fn scrolled(mut self, offset: u32, [top, bottom]: [i32; 2]) -> Self {
+        let y = self.origin[1] - offset.cast_signed();
+        let end = y.saturating_add(self.size[1].cast_signed());
+        let (first, last) = (y.max(top), end.min(bottom));
+        if first >= last {
+            self.size = [0; 2];
+            return self;
+        }
+        if self.atlas_origin[0] != u32::MAX {
+            self.atlas_origin[1] += (first - y).cast_unsigned();
+        }
+        self.origin[1] = first;
+        self.size[1] = (last - first).cast_unsigned();
+        self
+    }
+
     fn cursor_glyph(glyph: &GlyphQuad, text: Rgba, fill: Rgba) -> Self {
         let mut instance = Self::glyph(glyph, fill);
         // Atlas coordinates never use the high bit; the shader uses it to skip contrast correction.
@@ -267,6 +296,7 @@ impl ChromeLayer<'_> {
 impl DrawList<'_> {
     pub(crate) fn grid_instances(&self) -> u32 {
         let [columns, rows] = self.grid_size;
+        let rows = rows + self.scroll.extra_rows;
         assert_eq!(self.backgrounds.len(), columns as usize * rows as usize);
         u32::try_from(
             self.backgrounds.len()
@@ -278,6 +308,16 @@ impl DrawList<'_> {
 
     pub(crate) fn write_instances(&self, bytes: wgpu::WriteOnly<'_, [u8]>) {
         self.write_grid(instance_writer(bytes));
+    }
+
+    /// Apply the scroll offset to an instance of the grid. Pane fills stay put.
+    fn place(&self, instance: Instance) -> Instance {
+        if self.scroll.offset == 0 {
+            return instance;
+        }
+        let top = self.origin[1];
+        let height = self.grid_size[1] * self.cell_size[1];
+        instance.scrolled(self.scroll.offset, [top, top + height.cast_signed()])
     }
 
     pub(crate) fn image_layers(&self, base: Option<PixelRect>, grid: u32) -> GridLayers {
@@ -325,20 +365,20 @@ impl DrawList<'_> {
         }
         let block = self.block_cursor();
         if let Some(cursor) = self.cursor {
-            cursor.write(&mut write_cursor);
+            cursor.write(|instance| write_cursor(self.place(instance)));
         }
         for glyph in self.glyphs {
             let background = self.glyph_background(glyph);
             if let Some(block) = &block
                 && block.owns(glyph)
             {
-                write_cursor(Instance::cursor_glyph(
+                write_cursor(self.place(Instance::cursor_glyph(
                     glyph,
                     background,
                     block.cursor.color,
-                ));
+                )));
             } else {
-                write(Instance::glyph(glyph, background));
+                write(self.place(Instance::glyph(glyph, background)));
             }
         }
     }
@@ -365,7 +405,7 @@ impl DrawList<'_> {
                     origin: [self.origin[0] + offset[0], self.origin[1] + offset[1]],
                     size: self.cell_size,
                 };
-                write(Instance::solid(rect, color));
+                write(self.place(Instance::solid(rect, color)));
             }
         }
     }
@@ -388,7 +428,7 @@ impl DrawList<'_> {
 
     fn glyph_background(&self, glyph: &GlyphQuad) -> Rgba {
         let [col, row] = glyph.cell;
-        debug_assert!(col < self.grid_size[0] && row < self.grid_size[1]);
+        debug_assert!(col < self.grid_size[0] && row < self.grid_size[1] + self.scroll.extra_rows);
         self.backgrounds[row as usize * self.grid_size[0] as usize + col as usize]
     }
 
@@ -396,26 +436,61 @@ impl DrawList<'_> {
         self.write_backgrounds::<false>(&mut write, false);
         let block = self.block_cursor();
         if let Some(block) = &block {
-            block.cursor.write(&mut write);
+            block.cursor.write(|instance| write(self.place(instance)));
         }
         for glyph in self.glyphs {
             let background = self.glyph_background(glyph);
             if let Some(block) = &block
                 && block.owns(glyph)
             {
-                write(Instance::cursor_glyph(
+                write(self.place(Instance::cursor_glyph(
                     glyph,
                     background,
                     block.cursor.color,
-                ));
+                )));
             } else {
-                write(Instance::glyph(glyph, background));
+                write(self.place(Instance::glyph(glyph, background)));
             }
         }
         if block.is_none()
             && let Some(cursor) = self.cursor
         {
-            cursor.write(write);
+            cursor.write(|instance| write(self.place(instance)));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrolled_instances_move_up_and_clip_to_the_grid() {
+        let instance = |y: i32, solid: bool| Instance {
+            origin: [7, y],
+            size: [4, 10],
+            atlas_origin: if solid { [u32::MAX, 0] } else { [30, 40] },
+            color: [0; 4],
+            background: [0; 4],
+        };
+        // Grid rows span y 20..60; the content moves up by 5.
+        for (y, solid, expected) in [
+            // Inside: only the origin moves.
+            (30, false, ([7, 25], [4, 10], [30, 40])),
+            // Clipped at the top: the atlas starts further down.
+            (22, false, ([7, 20], [4, 7], [30, 43])),
+            (22, true, ([7, 20], [4, 7], [u32::MAX, 0])),
+            // Clipped at the bottom: the atlas start stays.
+            (58, false, ([7, 53], [4, 7], [30, 40])),
+            // Outside: an empty quad.
+            (70, false, ([7, 70], [0, 0], [30, 40])),
+        ] {
+            let moved = instance(y, solid).scrolled(5, [20, 60]);
+            assert_eq!(
+                (moved.origin, moved.size, moved.atlas_origin),
+                expected,
+                "{y}"
+            );
         }
     }
 }

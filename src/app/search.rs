@@ -300,6 +300,7 @@ impl PaneState {
     pub(super) fn search_action(&mut self, action: SearchAction, view: &mut View) -> Result<()> {
         match &action {
             SearchAction::Open => {
+                self.scroll.reset();
                 view.preedit.clear();
                 view.search_bar = Some(String::new());
             }
@@ -326,6 +327,7 @@ impl PaneState {
             .expect("search bar is open")
             .select(&mut self.pane.terminal)?
         {
+            self.scroll.reset();
             self.snapshot_dirty = true;
             self.clear_selection();
         }

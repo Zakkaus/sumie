@@ -1,5 +1,5 @@
 use std::ffi::c_int;
-use std::ptr::from_ref;
+use std::ptr::{from_mut, from_ref};
 
 use crate::{Error, Rgb, Terminal, check, ffi};
 
@@ -23,6 +23,33 @@ pub struct Cursor {
 }
 
 impl Terminal {
+    pub(crate) fn colors(&self) -> Result<crate::Colors, Error> {
+        // SAFETY: All three data keys have the RGB output layout.
+        let foreground = unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_FOREGROUND) }?;
+        // SAFETY: The key has the RGB output layout.
+        let background = unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_BACKGROUND) }?;
+        // SAFETY: The key has the RGB output layout, or reports an unset cursor color.
+        let cursor = match unsafe { self.render_value(ffi::RENDER_STATE_DATA_COLOR_CURSOR) } {
+            Err(Error(ffi::NO_VALUE)) => foreground,
+            result => result?,
+        };
+        Ok(crate::Colors {
+            foreground,
+            background,
+            cursor,
+            palette: None,
+        })
+    }
+
+    pub(crate) unsafe fn render_value<T: Default>(&self, data: c_int) -> Result<T, Error> {
+        let mut value = T::default();
+        // SAFETY: The caller pairs the data key with its output layout; the state is live.
+        check(unsafe {
+            ffi::ghostty_render_state_get(self.render, data, from_mut(&mut value).cast())
+        })?;
+        Ok(value)
+    }
+
     /// Update the defaults without replacing an explicit DECSCUSR style.
     ///
     /// # Errors

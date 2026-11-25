@@ -218,6 +218,38 @@ impl Terminal {
         Ok(scrollbar.offset == scrollbar.total - scrollbar.len)
     }
 
+    /// Capture one row below the viewport in each snapshot. The row above is never drawn: the
+    /// sub-row offset only moves content up.
+    pub(crate) fn request_row_below(&mut self) -> Result<(), Error> {
+        /// `GhosttyRenderStateOverscan`.
+        #[repr(C)]
+        struct Overscan {
+            above: u16,
+            below: u16,
+        }
+
+        // SAFETY: The render state is live and the option reads this struct during the call.
+        check(unsafe {
+            ffi::ghostty_render_state_set(
+                self.render,
+                ffi::RENDER_STATE_OPT_OVERSCAN,
+                from_ref(&Overscan { above: 0, below: 1 }).cast(),
+            )
+        })
+    }
+
+    /// Rows of history above the viewport and rows below it, where the second is zero at the bottom.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the scrollbar.
+    pub fn scroll_extent(&self) -> Result<(u64, u64), Error> {
+        let scrollbar = self.scrollbar()?;
+        Ok((
+            scrollbar.offset,
+            scrollbar.total - scrollbar.len - scrollbar.offset,
+        ))
+    }
+
     /// Return the first visible row in the active screen's scrollback coordinates.
     ///
     /// # Errors

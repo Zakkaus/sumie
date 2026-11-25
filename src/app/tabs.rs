@@ -144,6 +144,7 @@ impl PaneHost {
             frame_dirty: true,
             activity_after: None,
             hover: super::links::Hover::default(),
+            scroll: super::scroll::PaneScroll::default(),
         })
     }
 }
@@ -169,6 +170,7 @@ impl PaneState {
         }
         self.cell = view.cell;
         self.viewport_px = px;
+        self.scroll.reset();
         self.clear_selection();
         self.pane.command(PaneCommand::Resize {
             cols: size.cols,
@@ -229,6 +231,7 @@ impl PaneState {
             let (dirty, eof) = self.pane.drain_output()?;
             self.snapshot_dirty |= dirty;
             if dirty {
+                self.follow_output()?;
                 activity = batch.changed(&mut self.pane.terminal)?;
                 window.reset_blink(self.id);
             }

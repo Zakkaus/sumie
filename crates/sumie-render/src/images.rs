@@ -112,6 +112,11 @@ impl Images {
                         i64::from(p.cell[i]) * i64::from(list.cell_size[i])
                             + i64::from(list.origin[i])
                             + i64::from(p.offset[i])
+                            - if i == 1 {
+                                i64::from(list.scroll.offset)
+                            } else {
+                                0
+                            }
                     });
                     let mut draw = Draw::new(index, p, origin, p.size, clip, ndc, dimension_limit)?;
                     if let Some(style) = pane.thumbnails.filter(|_| p.thumbnail) {

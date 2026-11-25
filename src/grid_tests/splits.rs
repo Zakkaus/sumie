@@ -4,7 +4,7 @@ use sumie_core::{
 };
 use sumie_render::{
     AtlasUpload, ChromeLayer, DrawList, Fill, FrameDraw, GlyphQuad, ImageViewer, OffscreenTarget,
-    PaneDraw, PixelRect, Renderer, Rgba, backends, wgpu,
+    PaneDraw, PixelRect, Renderer, Rgba, Scroll, backends, wgpu,
 };
 
 use super::{FULL, HEIGHT, TestImages, WIDTH, assert_pixel, gpu_device, readback, upload_atlas};
@@ -319,6 +319,7 @@ fn grid<'a>(
         grid_size: [1, 1],
         cell_size,
         origin,
+        scroll: Scroll::default(),
         backgrounds,
         default_background,
         default_backgrounds: &[],

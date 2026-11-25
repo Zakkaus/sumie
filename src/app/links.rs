@@ -48,7 +48,7 @@ impl Pointer {
                 self.modifiers = pointer.modifiers;
                 match pointer.phase {
                     PointerPhase::Motion => self.link_enabled = true,
-                    PointerPhase::Wheel(_) => self.clear_link(),
+                    PointerPhase::Wheel(_) | PointerPhase::Touch(_) => self.clear_link(),
                     _ => (),
                 }
             }
@@ -216,7 +216,8 @@ impl Session {
                     *id == pane.id && pane.viewer.is_none() && !(active && pane.search.is_some())
                 })
                 .and_then(|(_, position)| {
-                    self.view.link_cell(position, pane.rect, banner && active)
+                    self.view
+                        .link_cell(position, pane.rect, banner && active, pane.scroll.shown())
                 });
             if hit.is_none() || !pane.snapshot_dirty {
                 pane.probe_link(hit, &self.host)?;

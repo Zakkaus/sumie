@@ -3,7 +3,10 @@ use std::{env, process::Command};
 use smithay_client_toolkit::{
     reexports::client::{
         Connection, QueueHandle,
-        protocol::{wl_pointer::WlPointer, wl_seat::WlSeat},
+        protocol::{
+            wl_pointer::{AxisSource, WlPointer},
+            wl_seat::WlSeat,
+        },
     },
     seat::pointer::{
         AxisScroll, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, CursorIcon, PointerEvent, PointerEventKind,
@@ -73,7 +76,7 @@ impl Pointer {
         &mut self,
         event: &PointerEvent,
         modifiers: Modifiers,
-        wheel: &mut Option<f64>,
+        wheel: &mut Option<(f64, bool)>,
     ) -> Option<Event> {
         let (phase, serial) = match event.kind {
             PointerEventKind::Enter { .. } => {
@@ -95,7 +98,10 @@ impl Pointer {
                 (PointerPhase::Release(pointer_button(button)?), serial)
             }
             PointerEventKind::Axis { ref vertical, .. } if has_vertical_delta(vertical) => {
-                (PointerPhase::Wheel(wheel.take()?), 0)
+                match wheel.take()? {
+                    (delta, true) => (PointerPhase::Touch(delta), 0),
+                    (delta, false) => (PointerPhase::Wheel(delta), 0),
+                }
             }
             PointerEventKind::Axis { .. } => return None,
         };
@@ -131,14 +137,21 @@ fn has_vertical_delta(axis: &AxisScroll) -> bool {
     axis.value120 != 0 || axis.discrete != 0 || axis.absolute != 0.0
 }
 
-fn wheel_delta<'a>(events: impl Iterator<Item = &'a PointerEvent>) -> Option<f64> {
+/// The frame's vertical scroll and whether a touchpad (finger or continuous source) made it.
+fn wheel_delta<'a>(events: impl Iterator<Item = &'a PointerEvent>) -> Option<(f64, bool)> {
     // SCTK only merges adjacent axis events. The discrete and absolute forms
     // can be separated by another event in the same frame.
     let mut value120 = None;
     let mut discrete = None;
     let mut absolute = 0.0;
+    let mut touch = false;
     for event in events {
-        if let PointerEventKind::Axis { ref vertical, .. } = event.kind {
+        if let PointerEventKind::Axis {
+            ref vertical,
+            source,
+            ..
+        } = event.kind
+        {
             if vertical.value120 != 0 {
                 *value120.get_or_insert(0.0) += f64::from(vertical.value120);
             }
@@ -146,12 +159,13 @@ fn wheel_delta<'a>(events: impl Iterator<Item = &'a PointerEvent>) -> Option<f64
                 *discrete.get_or_insert(0.0) += f64::from(vertical.discrete);
             }
             absolute += vertical.absolute;
+            touch |= matches!(source, Some(AxisSource::Finger | AxisSource::Continuous));
         }
     }
     let delta = value120
         .or_else(|| discrete.map(|steps| steps * VALUE120_PER_NOTCH))
         .unwrap_or(absolute * (VALUE120_PER_NOTCH / LOGICAL_UNITS_PER_NOTCH));
-    (delta != 0.0).then_some(delta)
+    (delta != 0.0).then_some((delta, touch))
 }
 
 impl State {
@@ -211,6 +225,9 @@ impl PointerHandler for State {
         };
         let events = events.iter().filter(|event| &event.surface == surface);
         let mut wheel = wheel_delta(events.clone());
+        let stopped = events.clone().any(
+            |event| matches!(&event.kind, PointerEventKind::Axis { vertical, .. } if vertical.stop),
+        );
         for event in events {
             if let PointerEventKind::Press { serial, .. } | PointerEventKind::Release { serial, .. } =
                 event.kind
@@ -224,6 +241,14 @@ impl PointerHandler for State {
                 pointer.set_icon(connection, CursorIcon::Default);
             }
             self.events.extend(event);
+        }
+        if stopped && let Some(position) = pointer.position {
+            self.events.push_back(Event::Pointer {
+                phase: PointerPhase::TouchEnd,
+                position,
+                serial: 0,
+                modifiers,
+            });
         }
     }
 }

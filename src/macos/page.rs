@@ -1,7 +1,7 @@
 use sumie_config::{Config, CursorStyle, Font};
 use sumie_font::{FontOptions, FontSystem, Hinting};
 use sumie_render::{
-    AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, PixelRect, Rgba,
+    AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, PixelRect, Rgba, Scroll,
     SurfaceRenderer, wgpu,
 };
 
@@ -177,6 +177,7 @@ impl Page {
             chrome: None,
             cell_size: self.cell,
             origin: self.cell.map(u32::cast_signed),
+            scroll: Scroll::default(),
             backgrounds: &self.backgrounds,
             images: &[],
             image_source: None,

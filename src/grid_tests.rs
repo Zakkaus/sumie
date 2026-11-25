@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use sumie_render::{
     AtlasRect, AtlasUpload, Cursor, CursorShape, DrawList, GlyphQuad, OffscreenTarget, PixelRect,
-    Renderer, Rgba, backends, instance_descriptor, wgpu,
+    Renderer, Rgba, Scroll, backends, instance_descriptor, wgpu,
 };
 
 #[cfg(target_os = "linux")]
@@ -262,6 +262,7 @@ fn assert_image_sampling(
         &DrawList {
             grid_size: [2, 1],
             origin: [2, 1],
+            scroll: Scroll::default(),
             cell_size: CELL,
             backgrounds: &[[0; 4]; 2],
             default_background: [0; 4],
@@ -346,6 +347,10 @@ const GRID: DrawList<'static> = DrawList {
     grid_size: [4, 2],
     chrome: None,
     origin: [2, 1],
+    scroll: Scroll {
+        offset: 0,
+        extra_rows: 0,
+    },
     cell_size: CELL,
     images: &[],
     image_source: None,
@@ -442,6 +447,7 @@ fn assert_cursor_shapes(
                 chrome: None,
                 cell_size: SIZE,
                 origin: [2, 1],
+                scroll: Scroll::default(),
                 images: &[],
                 image_source: None,
                 image_exclusions: [None; 2],

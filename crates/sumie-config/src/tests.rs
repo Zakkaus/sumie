@@ -132,7 +132,12 @@ fn assert_background(config: &Config) {
     );
 }
 
+fn assert_scroll(config: &Config) {
+    assert!(config.scroll.smooth());
+}
+
 fn assert_defaults(config: Config) {
+    assert_scroll(&config);
     assert_eq!(config.minimum_contrast().to_bits(), 1.1_f32.to_bits());
     assert_eq!(config.window.padding(), [8, 6]);
     assert_eq!(

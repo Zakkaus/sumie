@@ -29,6 +29,22 @@ fn snapshot_updates_ansi_yellow_without_changing_screen_contents() {
 }
 
 #[test]
+fn snapshot_carries_the_row_below_a_scrolled_viewport() {
+    let mut terminal = Terminal::new(4, 2).unwrap();
+    terminal.write(b"a\r\nb\r\nc\r\nd");
+    let text = |cells: &[super::Cell]| cells.iter().map(|c| c.text.as_str()).collect::<String>();
+    // At the bottom nothing lies below the viewport.
+    assert!(terminal.render_snapshot().unwrap().below.is_none());
+    for (delta, below, extent) in [(-1, "d", (1, 1)), (-1, "c", (0, 2))] {
+        terminal.scroll_rows(delta).unwrap();
+        let snapshot = terminal.render_snapshot().unwrap();
+        assert_eq!(text(snapshot.below.as_ref().unwrap()).trim(), below);
+        assert_eq!(snapshot.rows.len(), 2);
+        assert_eq!(terminal.scroll_extent().unwrap(), extent);
+    }
+}
+
+#[test]
 fn paste_filters_controls_in_both_modes() {
     let mut terminal = Terminal::new(5, 2).unwrap();
     for (mode, input, expected) in [

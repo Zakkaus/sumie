@@ -57,6 +57,12 @@ pub(crate) enum Event {
         scale: u32,
     },
     FrameReady,
+    /// A submitted frame reached the screen at `at` on the compositor's clock.
+    Presented {
+        at: std::time::Duration,
+        /// Predicted refresh interval; zero if unknown.
+        refresh: std::time::Duration,
+    },
     CloseRequested,
     ClipboardText {
         text: String,

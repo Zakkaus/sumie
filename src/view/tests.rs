@@ -75,6 +75,7 @@ fn focus(id: u64, active: bool) -> PaneFocus<'static> {
         dirty: true,
         window_focused: true,
         viewer: None,
+        scroll: 0,
     }
 }
 
@@ -128,6 +129,65 @@ fn background_opacity_respects_vt_colors_and_opaque_overlays() {
         );
         assert_eq!(draw.cursor.unwrap().color[3], 255);
     }
+}
+
+#[test]
+fn scroll_offset_reveals_the_row_below_and_moves_hits_with_the_content() {
+    let mut view = view();
+    let rect = view.content_rect();
+    let size = view.pane_size(rect);
+    let mut vt = Terminal::new(size.cols, size.rows).unwrap();
+    vt.write("line\r\n".repeat(usize::from(size.rows) * 2).as_bytes());
+    vt.scroll_rows(-3).unwrap();
+    let snapshot = vt.render_snapshot().unwrap();
+    let grid = view.pane_grid(rect);
+    let [columns, rows] = [u32::from(size.cols), u32::from(size.rows)];
+    let cell = view.cell;
+    let scale = f64::from(view.scale);
+    let logical = |px: u32| f64::from(px) * 120.0 / scale;
+    let mut carets = Vec::new();
+    for (offset, extra, backgrounds) in [(0, 0, rows), (7, 1, rows + 1)] {
+        view.begin_frame([], snapshot.background);
+        let focus = PaneFocus {
+            scroll: offset,
+            ..focus(0, true)
+        };
+        view.build_pane(rect, &snapshot, None, LinkHighlight::default(), None, focus);
+        view.end_frame();
+        let draw = view.draw_list(false);
+        assert_eq!(
+            (draw.scroll.offset, draw.scroll.extra_rows),
+            (offset, extra)
+        );
+        assert_eq!(draw.backgrounds.len(), (columns * backgrounds) as usize);
+        // The caret rectangle follows the content up.
+        let cursor = sumie_vt::Cursor {
+            column: 0,
+            row: 2,
+            visible: true,
+            color: [0; 3],
+            style: sumie_vt::CursorStyle::Block,
+            blink: false,
+        };
+        let rectangle = view
+            .ime_rectangle(Some(cursor), rect, LinuxWindow::logical_rect)
+            .unwrap();
+        carets.push(rectangle.y);
+    }
+    // Logical rectangles round outward, so allow one pixel.
+    assert!((f64::from(carets[0] - carets[1]) - logical(7)).abs() <= 1.5);
+    // With the content 7 px up, a point near the bottom of the first row is in the second.
+    let near_first_row_end = (logical(grid.x + 1), logical(grid.y + cell[1] - 2));
+    let row_of = |scroll| {
+        view.link_cell(near_first_row_end, rect, false, scroll)
+            .unwrap()
+            .row
+    };
+    assert_eq!((row_of(0), row_of(7)), (0, 1));
+    // The strip of the partly shown row below the grid has no cells to link.
+    let strip = (logical(grid.x + 1), logical(grid.y + rows * cell[1] - 2));
+    assert!(view.link_cell(strip, rect, false, 7).is_none());
+    assert_eq!(view.pointer_position(strip, rect, 7).0.row, size.rows - 1);
 }
 
 #[test]
@@ -188,13 +248,13 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
 
     let [x, y] = right_draw.origin;
     let first_cell = logical(x + 1, y + 1);
-    let (hit, pixel, over_grid) = view.pointer_position(first_cell, right);
+    let (hit, pixel, over_grid) = view.pointer_position(first_cell, right, 0);
     assert_eq!([hit.column, hit.row], [0, 0]);
     assert!(pixel.into_iter().all(|value| (0.99..1.01).contains(&value)));
     assert!(over_grid);
-    assert_eq!(view.link_cell(first_cell, right, false), Some(hit));
+    assert_eq!(view.link_cell(first_cell, right, false, 0), Some(hit));
     assert!(
-        view.link_cell(logical(x - 1, y + 1), right, false)
+        view.link_cell(logical(x - 1, y + 1), right, false, 0)
             .is_none()
     );
 }
@@ -218,7 +278,7 @@ fn padding_breaks_click_counts_but_clamps_an_active_selection() {
         input::mouse_event(
             phase,
             Modifiers::default(),
-            view.pointer_position((logical(x), logical(grid.y + 1)), rect),
+            view.pointer_position((logical(x), logical(grid.y + 1)), rect, 0),
         )
     };
     let inside = grid.x + 1;

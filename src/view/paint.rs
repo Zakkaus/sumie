@@ -6,7 +6,7 @@ use sumie_core::CellRange;
 use sumie_core::graphics::Placement;
 use sumie_core::splits::Rect;
 use sumie_font::{FontStyle, FontSystem};
-use sumie_render::{Cursor, CursorShape, DrawList, PixelRect, Rgba};
+use sumie_render::{Cursor, CursorShape, DrawList, PixelRect, Rgba, Scroll};
 use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 
 use super::attributes::{Decorations, Ink, LinkHighlight};
@@ -20,6 +20,8 @@ pub(crate) struct PaneFocus<'a> {
     pub(crate) id: u64,
     pub(crate) dirty: bool,
     pub(crate) viewer: Option<&'a Placement>,
+    /// Device pixels the content is scrolled up from its row boundary.
+    pub(crate) scroll: u32,
 }
 
 pub(super) struct PanePaint {
@@ -35,6 +37,7 @@ pub(super) struct PanePaint {
     pub(super) viewer: Option<ViewerPaint>,
     pub(super) image_exclusions: [Option<PixelRect>; 2],
     pub(super) glyphs: Glyphs,
+    pub(super) scroll: Scroll,
     pub(super) cursor: Option<Cursor>,
     pub(super) search_box: Option<SearchBox>,
 }
@@ -54,6 +57,7 @@ impl PanePaint {
             viewer: None,
             image_exclusions: [None; 2],
             glyphs: Glyphs::default(),
+            scroll: Scroll::default(),
             cursor: None,
             search_box: None,
         }
@@ -64,6 +68,7 @@ impl PanePaint {
             grid_size: self.grid,
             cell_size,
             origin: self.glyphs.offset,
+            scroll: self.scroll,
             backgrounds: &self.backgrounds,
             images: self.images.as_ref().map_or(&[], |images| images.as_slice()),
             image_source: None,
@@ -157,7 +162,13 @@ impl PanePainter<'_> {
     ) {
         let mut decorations = Decorations::default();
         let rows = (0..).zip(snapshot.rows.iter().take(self.pane.grid[1] as usize));
-        for (row, cells) in rows.skip(first_row) {
+        // The row below the viewport is only painted while a scroll offset reveals it.
+        let below = snapshot
+            .below
+            .as_ref()
+            .filter(|_| self.pane.scroll.extra_rows != 0)
+            .map(|cells| (self.pane.grid[1], cells));
+        for (row, cells) in rows.skip(first_row).chain(below) {
             let selected = selection.and_then(|range| range.columns(row));
             let columns = overlay
                 .filter(|&(y, _, _)| y == row)

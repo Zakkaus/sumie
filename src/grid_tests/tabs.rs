@@ -105,7 +105,7 @@ fn assert_grid_origin(view: &View, snapshot: &sumie_vt::Snapshot, top: u32) {
     use crate::{linux::LinuxWindow, platform::WindowOps as _};
     let logical_top = f64::from(top) / 1.25;
     assert!(
-        view.pointer_position((0.0, logical_top), view.content_rect())
+        view.pointer_position((0.0, logical_top), view.content_rect(), 0)
             .1[1]
             .abs()
             < f32::EPSILON

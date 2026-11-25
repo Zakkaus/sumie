@@ -258,6 +258,7 @@ pub const CELL_WIDE_WIDE: c_int = 1;
 pub const CELL_WIDE_SPACER_TAIL: c_int = 2;
 pub const CELL_WIDE_SPACER_HEAD: c_int = 3;
 pub const ROW_DATA_HYPERLINK: c_int = 5;
+pub const RENDER_STATE_OPT_OVERSCAN: c_int = 2;
 pub const RENDER_STATE_DATA_COLS: c_int = 1;
 pub const RENDER_STATE_DATA_ROWS: c_int = 2;
 pub const RENDER_STATE_DATA_ROW_ITERATOR: c_int = 4;
@@ -382,6 +383,11 @@ unsafe extern "C" {
     pub fn ghostty_render_state_new(allocator: *const Allocator, state: *mut RenderState) -> c_int;
     pub fn ghostty_render_state_free(state: RenderState);
     pub fn ghostty_render_state_update(state: RenderState, terminal: Terminal) -> c_int;
+    pub fn ghostty_render_state_set(
+        state: RenderState,
+        option: c_int,
+        value: *const c_void,
+    ) -> c_int;
     pub fn ghostty_render_state_get(state: RenderState, data: c_int, out: *mut c_void) -> c_int;
     pub fn ghostty_render_state_row_iterator_new(
         allocator: *const Allocator,

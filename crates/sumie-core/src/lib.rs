@@ -16,6 +16,7 @@ pub mod graphics;
 mod keys;
 mod link;
 pub mod mouse;
+pub mod scroll;
 mod selection;
 pub mod splits;
 mod tabs;

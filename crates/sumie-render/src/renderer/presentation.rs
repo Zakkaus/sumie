@@ -137,7 +137,7 @@ mod tests {
 
     use super::super::OFFSCREEN_FORMAT;
     use crate::images::Images;
-    use crate::{DrawList, Fill, FrameDraw, PaneDraw, PixelRect, Renderer, Rgba};
+    use crate::{DrawList, Fill, FrameDraw, PaneDraw, PixelRect, Renderer, Rgba, Scroll};
 
     #[test]
     fn translucent_default_background_and_opaque_explicit_background() {
@@ -160,6 +160,7 @@ mod tests {
                 grid_size: [2, 1],
                 cell_size: [1, 1],
                 origin: [0, 0],
+                scroll: Scroll::default(),
                 backgrounds: &[DEFAULT, EXPLICIT],
                 default_background: DEFAULT,
                 default_backgrounds: &[],
@@ -258,6 +259,7 @@ mod tests {
             grid_size: [4, 1],
             cell_size: [1, 1],
             origin: [0, 0],
+            scroll: Scroll::default(),
             backgrounds: &[[0, 0, 0, 255]; 4],
             default_background: [0, 0, 0, 255],
             default_backgrounds: &[],

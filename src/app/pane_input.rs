@@ -103,7 +103,7 @@ impl Pointer {
                     .filter(|target| pane_hit(target) || button == Button::Left)
             }
             Phase::Motion => self.motion(|| hit().filter(pane_hit)),
-            Phase::Wheel(_) => hit().filter(pane_hit),
+            Phase::Wheel(_) | Phase::Touch(_) | Phase::TouchEnd => hit().filter(pane_hit),
             Phase::Release(button) => self.release(button),
             Phase::Cancel => self.cancel().or_else(|| hit().filter(pane_hit)),
         }
@@ -258,6 +258,13 @@ impl Session {
                     }
                     return Ok(());
                 }
+                // The search bar and the config banner sit over the grid; they would slide with it.
+                if self.smooth_scroll && !searching && !(banner && focused) {
+                    let now = self.clock.elapsed();
+                    if pane.smooth_wheel(event.phase, self.view.scale(), now) {
+                        return Ok(());
+                    }
+                }
                 let effect = pointer_effect(
                     pane,
                     &self.view,
@@ -321,9 +328,10 @@ fn pointer_effect(
     let mut mouse = input::mouse_event(
         event.phase,
         event.modifiers,
-        view.pointer_position(position, rect),
+        view.pointer_position(position, rect, pane.scroll.shown()),
     );
-    let hit = || view.link_cell(position, rect, banner);
+    let scroll = pane.scroll.shown();
+    let hit = || view.link_cell(position, rect, banner, scroll);
     let uri = pane.prepare_pointer_link(&mut mouse, hit, host)?;
     let hit = || view.search_hit(position, rect);
     match routing.pointer(&mut pane.pane, searching, mouse, hit)? {
@@ -359,6 +367,7 @@ fn apply_pane_effect(
         }
         Effect::Copy => pane.copy_selection(window)?,
         Effect::ViewportChanged => {
+            pane.scroll.reset();
             link_pointer.clear_link();
             pane.frame_dirty |= searching || pane.selection.range().is_some();
             pane.clear_selection();

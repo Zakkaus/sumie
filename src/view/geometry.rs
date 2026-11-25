@@ -51,10 +51,13 @@ impl View {
         }
     }
 
+    /// `scroll` is the offset of the frame the pointer sees: content under the pointer is
+    /// that many pixels further down the grid.
     pub(crate) fn pointer_position(
         &self,
         position: (f64, f64),
         rect: Rect,
+        scroll: u32,
     ) -> (CellPosition, [f32; 2], bool) {
         let rect = self.pane_grid(rect);
         let relative = self.pane_pixel(position, rect);
@@ -69,7 +72,8 @@ impl View {
             }
         });
         let over_grid = contains_grid_pixel(relative, rect, grid, self.cell);
-        (self.pointer_cell(relative, grid), pixel, over_grid)
+        let content = [relative[0], relative[1] + f64::from(scroll)];
+        (self.pointer_cell(content, grid), pixel, over_grid)
     }
 
     fn pane_pixel(&self, position: (f64, f64), rect: Rect) -> [f64; 2] {
@@ -96,6 +100,7 @@ impl View {
         position: (f64, f64),
         rect: Rect,
         banner: bool,
+        scroll: u32,
     ) -> Option<CellPosition> {
         let rect = self.pane_grid(rect);
         let pixel = self.pane_pixel(position, rect);
@@ -103,7 +108,12 @@ impl View {
         if !contains_grid_pixel(pixel, rect, grid, self.cell) || self.over_tab_bar(position) {
             return None;
         }
-        let hit = self.pointer_cell(pixel, grid);
+        let content = [pixel[0], pixel[1] + f64::from(scroll)];
+        // The partly shown row below the viewport has no cells to link.
+        if content[1] >= f64::from(grid[1] * self.cell[1]) {
+            return None;
+        }
+        let hit = self.pointer_cell(content, grid);
         (!banner || hit.row != 0).then_some(hit)
     }
 }
