@@ -1,6 +1,7 @@
 from contextlib import ExitStack
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -122,11 +123,15 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     ):
         probe(name, "structure", path, edit, marker, new=new)
     probe("git patch pinned to a branch", "structure", "Cargo.toml",
-          replace_once("[patch.crates-io]\n", '[patch.crates-io]\nwinit = { git = "https://github.com/Zakkaus/winit", branch = "sumie/0.30.13" }\n'),
+          lambda manifest: re.sub(r'(?m)^(winit = \{ git = "[^"]+", )rev = "[0-9a-f]{40}" \}$',
+                                  r'\1branch = "sumie/0.30.13" }', manifest),
           "patch: [patch.crates-io] winit: pin a full rev, not a branch or tag")
-    probe("debug print in a vendored patch", "structure", "third_party/0001-probe.patch",
+    quit_patch = "third_party/winit/0001-quit.patch"
+    # `append` adds a blank line, then the hunk; its added line is the fifth.
+    added = len((ROOT / quit_patch).read_text(encoding="utf-8").splitlines()) + 6
+    probe("debug print in the winit fork patch", "structure", quit_patch,
           append('--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n fn probe() {}\n+eprintln!("probe");\n'),
-          "patch: third_party/0001-probe.patch:6: debug print in an added line", new=True)
+          f"patch: {quit_patch}:{added}: debug print in an added line")
     probe("file length", "structure", CORE, append("// Deliberate line-limit probe.\n" * 601),
           "lines exceeds 600")
     probe("forbidden module", "structure", CORE, append("mod /* nested /* comment */ */ r#helper {}\n"),
@@ -341,7 +346,7 @@ def main():
         if not evidence:
             sys.exit("macos-quit: set SUMIE_SPIKE_EVIDENCE to an evidence directory")
         return int(any(subprocess.call(["bash", ROOT / "scripts/macos-spike/quit.sh", evidence, case])
-                          for case in ("synchronous", "nested-queued")))
+                          for case in ("synchronous", "nested-queued", "system-cancel")))
     # Restoring a probed file can keep its old mtime, so Cargo would reuse the probe's
     # artifacts in the next normal run. Probes build in their own target directory.
     target = os.environ.get("CARGO_TARGET_DIR") or str(ROOT / "target")

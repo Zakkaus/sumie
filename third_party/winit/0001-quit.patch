@@ -1,0 +1,478 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 71f7c581..e9131594 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -86,7 +86,7 @@ cfg_aliases = "0.2.1"
+ [dependencies]
+ bitflags = "2"
+ cursor-icon = "1.1.0"
+-dpi = { version = "0.1.1", path = "dpi" }
++dpi = "0.1.1"
+ rwh_04 = { package = "raw-window-handle", version = "0.4", optional = true }
+ rwh_05 = { package = "raw-window-handle", version = "0.5.2", features = [
+     "std",
+@@ -129,6 +129,8 @@ version = "0.2.2"
+ features = [
+     "block2",
+     "dispatch",
++    "NSAppleEventDescriptor",
++    "NSAppleEventManager",
+     "NSArray",
+     "NSAttributedString",
+     "NSData",
+diff --git a/src/platform/macos.rs b/src/platform/macos.rs
+index 30623b01..c18adaa5 100644
+--- a/src/platform/macos.rs
++++ b/src/platform/macos.rs
+@@ -87,7 +87,7 @@ use std::os::raw::c_void;
+ #[cfg(feature = "serde")]
+ use serde::{Deserialize, Serialize};
+ 
+-use crate::event_loop::{ActiveEventLoop, EventLoopBuilder};
++use crate::event_loop::{ActiveEventLoop, EventLoopBuilder, EventLoopProxy};
+ use crate::monitor::MonitorHandle;
+ use crate::window::{Window, WindowAttributes};
+ 
+@@ -490,6 +490,44 @@ pub trait ActiveEventLoopExtMacOS {
+     fn set_allows_automatic_window_tabbing(&self, enabled: bool);
+     /// Returns whether the system can automatically organize windows into tabs.
+     fn allows_automatic_window_tabbing(&self) -> bool;
++    /// Run `closure` on the main thread after the outermost event handler returns.
++    ///
++    /// Use this for AppKit calls that run a nested run loop or re-enter winit, such as
++    /// `-[NSApplication terminate:]`: inside an event handler they hit winit's re-entrancy check.
++    /// The closure also runs while AppKit tracks a menu or a live resize and while it waits for
++    /// `-[NSApplication replyToApplicationShouldTerminate:]`. Closures run in the order queued.
++    ///
++    /// A panic in `closure` aborts the process, because it would unwind out of a
++    /// `CFRunLoopPerformBlock` block: `run_app` neither delivers `LoopExiting` nor returns.
++    fn run_after_handler<F: FnOnce() + 'static>(&self, closure: F);
++    /// Intercept native Quit (`-[NSApplication terminate:]`) so that the application can clean
++    /// up before it exits.
++    ///
++    /// The first Quit request sends `map(reason)` through `proxy`. An ordinary request is
++    /// cancelled, as are the requests that arrive before [`finish_quit`](Self::finish_quit). A
++    /// [`QuitReason::System`] request is answered `NSTerminateLater` instead, so log out, restart
++    /// and shut down are never refused; AppKit then runs its modal-panel run loop until
++    /// `finish_quit`. A system request while an ordinary one drains sends `map` again with
++    /// [`QuitReason::System`]. Without this hook, AppKit exits as soon as Quit is chosen.
++    ///
++    /// # Panics
++    ///
++    /// Panics if Quit is already intercepted.
++    fn intercept_quit<T: 'static, F: Fn(QuitReason) -> T + 'static>(
++        &self,
++        proxy: EventLoopProxy<T>,
++        map: F,
++    );
++    /// Let the intercepted Quit proceed once cleanup is done.
++    ///
++    /// After the outermost event handler returns, winit re-issues an ordinary `terminate:` and
++    /// grants it, or calls `replyToApplicationShouldTerminate:` for a system request. The
++    /// application exits through `applicationWillTerminate:`, so `run_app` does not return.
++    ///
++    /// # Panics
++    ///
++    /// Panics if no intercepted Quit request is pending.
++    fn finish_quit(&self);
+ }
+ 
+ impl ActiveEventLoopExtMacOS for ActiveEventLoop {
+@@ -508,6 +546,33 @@ impl ActiveEventLoopExtMacOS for ActiveEventLoop {
+     fn allows_automatic_window_tabbing(&self) -> bool {
+         self.p.allows_automatic_window_tabbing()
+     }
++
++    fn run_after_handler<F: FnOnce() + 'static>(&self, closure: F) {
++        self.p.run_after_handler(closure)
++    }
++
++    fn intercept_quit<T: 'static, F: Fn(QuitReason) -> T + 'static>(
++        &self,
++        proxy: EventLoopProxy<T>,
++        map: F,
++    ) {
++        self.p.intercept_quit(move |reason| {
++            let _ = proxy.send_event(map(reason));
++        })
++    }
++
++    fn finish_quit(&self) {
++        self.p.finish_quit()
++    }
++}
++
++/// Why AppKit asked the application to quit; see [`ActiveEventLoopExtMacOS::intercept_quit`].
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
++pub enum QuitReason {
++    /// The Quit menu item, Cmd+Q, the Dock, or a quit Apple event without a reason.
++    Ordinary,
++    /// A quit Apple event with any `keyAEQuitReason`, such as log out, restart or shut down.
++    System,
+ }
+ 
+ /// Option as alt behavior.
+diff --git a/src/platform_impl/macos/app_state.rs b/src/platform_impl/macos/app_state.rs
+index dd2ccd11..a83c3d12 100644
+--- a/src/platform_impl/macos/app_state.rs
++++ b/src/platform_impl/macos/app_state.rs
+@@ -1,14 +1,19 @@
+ use std::cell::{Cell, RefCell};
+-use std::mem;
++use std::collections::VecDeque;
+ use std::rc::Weak;
+ use std::time::Instant;
++use std::{fmt, mem};
+ 
+ use objc2::rc::Retained;
+-use objc2::{declare_class, msg_send_id, mutability, ClassType, DeclaredClass};
++use objc2::{declare_class, msg_send, msg_send_id, mutability, ClassType, DeclaredClass};
+ use objc2_app_kit::{
+-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSRunningApplication,
++    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
++    NSApplicationTerminateReply, NSRunningApplication,
++};
++use objc2_foundation::{
++    MainThreadMarker, NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSObject,
++    NSObjectProtocol,
+ };
+-use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol};
+ 
+ use super::event_handler::EventHandler;
+ use super::event_loop::{notify_windows_of_exit, stop_app_immediately, ActiveEventLoop, PanicInfo};
+@@ -16,6 +21,7 @@ use super::observer::{EventLoopWaker, RunLoop};
+ use super::{menu, WindowId, DEVICE_ID};
+ use crate::event::{DeviceEvent, Event, StartCause, WindowEvent};
+ use crate::event_loop::{ActiveEventLoop as RootActiveEventLoop, ControlFlow};
++use crate::platform::macos::QuitReason;
+ use crate::window::WindowId as RootWindowId;
+ 
+ #[derive(Debug)]
+@@ -40,6 +46,8 @@ pub(super) struct AppState {
+     start_time: Cell<Option<Instant>>,
+     wait_timeout: Cell<Option<Instant>>,
+     pending_redraw: RefCell<Vec<WindowId>>,
++    after_handler: AfterHandler,
++    quit: QuitHook,
+     // NOTE: This is strongly referenced by our `NSWindowDelegate` and our `NSView` subclass, and
+     // as such should be careful to not add fields that, in turn, strongly reference those.
+ }
+@@ -66,6 +74,11 @@ declare_class!(
+             self.did_finish_launching(notification)
+         }
+ 
++        #[method(applicationShouldTerminate:)]
++        fn app_should_terminate(&self, _sender: &NSApplication) -> NSApplicationTerminateReply {
++            self.should_terminate()
++        }
++
+         #[method(applicationWillTerminate:)]
+         fn app_will_terminate(&self, notification: &NSNotification) {
+             self.will_terminate(notification)
+@@ -98,6 +111,8 @@ impl ApplicationDelegate {
+             start_time: Cell::new(None),
+             wait_timeout: Cell::new(None),
+             pending_redraw: RefCell::new(vec![]),
++            after_handler: AfterHandler::default(),
++            quit: QuitHook::default(),
+         });
+         unsafe { msg_send_id![super(this), init] }
+     }
+@@ -163,6 +178,77 @@ impl ApplicationDelegate {
+         }
+     }
+ 
++    pub fn intercept_quit(&self, request: impl Fn(QuitReason) + 'static) {
++        let quit = &self.ivars().quit;
++        assert_eq!(quit.state.get(), QuitState::Disabled, "Quit is already intercepted");
++        *quit.request.borrow_mut() = Some(Box::new(request));
++        quit.state.set(QuitState::Armed);
++    }
++
++    pub fn finish_quit(&self) {
++        let quit = &self.ivars().quit;
++        let QuitState::Draining(reason) = quit.state.get() else {
++            panic!("finish_quit without a pending Quit request");
++        };
++        quit.state.set(QuitState::Finishing(reason));
++        let this = self.retain();
++        self.run_after_handler(move || this.complete_quit());
++    }
++
++    fn complete_quit(&self) {
++        let app = NSApplication::sharedApplication(MainThreadMarker::from(self));
++        let quit = &self.ivars().quit;
++        match quit.state.get() {
++            QuitState::Finishing(QuitReason::Ordinary) => {
++                quit.state.set(QuitState::Authorized);
++                // SAFETY: On the main thread and outside any event handler, so the granted
++                // request's `applicationWillTerminate:` can run winit's handler.
++                unsafe { app.terminate(None) };
++            },
++            QuitState::Finishing(QuitReason::System) => {
++                quit.state.set(QuitState::Authorized);
++                tracing::debug!(target: "winit::quit", "reply");
++                // SAFETY: On the main thread and outside any event handler, so the
++                // `applicationWillTerminate:` that may follow can run winit's handler.
++                unsafe { app.replyToApplicationShouldTerminate(true) };
++            },
++            state => unreachable!("Quit completed in state {state:?}"),
++        }
++    }
++
++    /// Forward the first request to the application. An ordinary request is cancelled, and
++    /// `complete_quit` re-issues it; a system request is never refused: AppKit waits for
++    /// `complete_quit`'s reply instead. Repeats are cancelled while the application drains,
++    /// except that a system request upgrades a pending ordinary one.
++    fn should_terminate(&self) -> NSApplicationTerminateReply {
++        use NSApplicationTerminateReply as Reply;
++
++        let quit = &self.ivars().quit;
++        let reason = quit_reason();
++        let request = || (quit.request.borrow().as_ref().expect("armed Quit hook"))(reason);
++        let (state, phase, reply) = match (quit.state.get(), reason) {
++            (QuitState::Disabled, _) => return Reply::NSTerminateNow,
++            (QuitState::Armed, QuitReason::Ordinary) => {
++                request();
++                (QuitState::Draining(reason), "intercept", Reply::NSTerminateCancel)
++            },
++            (QuitState::Armed | QuitState::Draining(QuitReason::Ordinary), QuitReason::System) => {
++                request();
++                (QuitState::Draining(reason), "later", Reply::NSTerminateLater)
++            },
++            (QuitState::Finishing(QuitReason::Ordinary), QuitReason::System) => {
++                (QuitState::Finishing(reason), "later", Reply::NSTerminateLater)
++            },
++            (state @ (QuitState::Draining(_) | QuitState::Finishing(_)), _) => {
++                (state, "veto", Reply::NSTerminateCancel)
++            },
++            (QuitState::Authorized, _) => (QuitState::Authorized, "grant", Reply::NSTerminateNow),
++        };
++        tracing::debug!(target: "winit::quit", "{phase}");
++        quit.state.set(state);
++        reply
++    }
++
+     fn will_terminate(&self, _notification: &NSNotification) {
+         trace_scope!("applicationWillTerminate:");
+         let mtm = MainThreadMarker::from(self);
+@@ -321,7 +407,42 @@ impl ApplicationDelegate {
+ 
+     #[track_caller]
+     fn handle_event(&self, event: Event<HandlePendingUserEvents>) {
+-        self.ivars().event_handler.handle_event(event, &ActiveEventLoop::new_root(self.retain()))
++        self.ivars().event_handler.handle_event(event, &ActiveEventLoop::new_root(self.retain()));
++        self.queue_after_handler();
++    }
++
++    /// Run `closure` on the main thread once no event handler is running.
++    ///
++    /// The closure also runs inside AppKit's event-tracking and modal-panel run loops. If a nested
++    /// run loop inside an event handler reaches it first, it waits until that handler returns.
++    pub fn run_after_handler(&self, closure: impl FnOnce() + 'static) {
++        self.ivars().after_handler.closures.borrow_mut().push_back(Box::new(closure));
++        self.queue_after_handler();
++    }
++
++    fn queue_after_handler(&self) {
++        let after_handler = &self.ivars().after_handler;
++        if after_handler.queued.get() || after_handler.closures.borrow().is_empty() {
++            return;
++        }
++        after_handler.queued.set(true);
++        let this = self.retain();
++        self.ivars().run_loop.queue_closure_in_common_modes(move || this.drain_after_handler());
++    }
++
++    fn drain_after_handler(&self) {
++        self.ivars().after_handler.queued.set(false);
++        if self.ivars().event_handler.in_use() {
++            // `handle_event` queues the closures again when the handler returns.
++            tracing::debug!(target: "winit::run_after_handler", "handler busy");
++            return;
++        }
++        loop {
++            let Some(closure) = self.ivars().after_handler.closures.borrow_mut().pop_front() else {
++                return;
++            };
++            closure();
++        }
+     }
+ 
+     /// dispatch `NewEvents(Init)` + `Resumed`
+@@ -415,6 +536,86 @@ impl ApplicationDelegate {
+ #[derive(Debug)]
+ pub(crate) struct HandlePendingUserEvents;
+ 
++/// Closures waiting for the outermost event handler to return.
++#[derive(Default)]
++struct AfterHandler {
++    closures: RefCell<VecDeque<Box<dyn FnOnce()>>>,
++    queued: Cell<bool>,
++}
++
++impl fmt::Debug for AfterHandler {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("AfterHandler")
++            .field("closures", &self.closures.borrow().len())
++            .field("queued", &self.queued)
++            .finish()
++    }
++}
++
++/// Classify the quit Apple event being handled, if any, by whether it carries a
++/// `keyAEQuitReason` (`'why?'`). loginwindow sets one for log out, restart and shut down; the
++/// Dock, AppleScript and the Quit menu item send none. Any reason, known or not, is
++/// [`QuitReason::System`], so a request from the system is never refused.
++fn quit_reason() -> QuitReason {
++    const fn code(bytes: &[u8; 4]) -> u32 {
++        u32::from_be_bytes(*bytes)
++    }
++
++    // SAFETY: Called on the main thread; the selectors exist on `NSAppleEventManager` and
++    // `NSAppleEventDescriptor` with these argument and return types.
++    unsafe {
++        let Some(event) = NSAppleEventManager::sharedAppleEventManager().currentAppleEvent() else {
++            return QuitReason::Ordinary;
++        };
++        let class: u32 = msg_send![&event, eventClass];
++        let id: u32 = msg_send![&event, eventID];
++        if class != code(b"aevt") || id != code(b"quit") {
++            return QuitReason::Ordinary;
++        }
++        // loginwindow sends the reason as an attribute; accept a parameter too.
++        let why: Option<Retained<NSAppleEventDescriptor>> =
++            msg_send_id![&event, attributeDescriptorForKeyword: code(b"why?")];
++        let why = why.or_else(|| msg_send_id![&event, paramDescriptorForKeyword: code(b"why?")]);
++        if why.is_some() {
++            QuitReason::System
++        } else {
++            QuitReason::Ordinary
++        }
++    }
++}
++
++/// How the application delegate answers `applicationShouldTerminate:`.
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++enum QuitState {
++    /// No Quit hook: terminate at once, as upstream winit does.
++    #[default]
++    Disabled,
++    /// The next request is sent to the application.
++    Armed,
++    /// The application drains after a request for this reason.
++    Draining(QuitReason),
++    /// `finish_quit` queued the completion for this reason.
++    Finishing(QuitReason),
++    /// The request re-issued by `complete_quit` is granted.
++    Authorized,
++}
++
++/// Sends a Quit request to the application.
++type QuitRequest = Box<dyn Fn(QuitReason)>;
++
++/// The Quit hook installed by `intercept_quit`.
++#[derive(Default)]
++struct QuitHook {
++    state: Cell<QuitState>,
++    request: RefCell<Option<QuitRequest>>,
++}
++
++impl fmt::Debug for QuitHook {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("QuitHook").field("state", &self.state).finish_non_exhaustive()
++    }
++}
++
+ /// Returns the minimum `Option<Instant>`, taking into account that `None`
+ /// equates to an infinite timeout, not a zero timeout (so can't just use
+ /// `Option::min`)
+diff --git a/src/platform_impl/macos/event_loop.rs b/src/platform_impl/macos/event_loop.rs
+index 5c093d5a..af6543a6 100644
+--- a/src/platform_impl/macos/event_loop.rs
++++ b/src/platform_impl/macos/event_loop.rs
+@@ -30,7 +30,7 @@ use crate::event::Event;
+ use crate::event_loop::{
+     ActiveEventLoop as RootWindowTarget, ControlFlow, DeviceEvents, EventLoopClosed,
+ };
+-use crate::platform::macos::ActivationPolicy;
++use crate::platform::macos::{ActivationPolicy, QuitReason};
+ use crate::platform::pump_events::PumpStatus;
+ use crate::platform_impl::platform::cursor::CustomCursor;
+ use crate::window::{CustomCursor as RootCustomCursor, CustomCursorSource, Theme};
+@@ -149,6 +149,18 @@ impl ActiveEventLoop {
+         OwnedDisplayHandle
+     }
+ 
++    pub(crate) fn run_after_handler(&self, closure: impl FnOnce() + 'static) {
++        self.delegate.run_after_handler(closure)
++    }
++
++    pub(crate) fn intercept_quit(&self, request: impl Fn(QuitReason) + 'static) {
++        self.delegate.intercept_quit(request)
++    }
++
++    pub(crate) fn finish_quit(&self) {
++        self.delegate.finish_quit()
++    }
++
+     pub(crate) fn hide_application(&self) {
+         NSApplication::sharedApplication(self.mtm).hide(None)
+     }
+diff --git a/src/platform_impl/macos/observer.rs b/src/platform_impl/macos/observer.rs
+index 83398030..38b8b9d0 100644
+--- a/src/platform_impl/macos/observer.rs
++++ b/src/platform_impl/macos/observer.rs
+@@ -166,20 +166,6 @@ impl RunLoop {
+     /// put the event at the very front of the queue, to be handled as soon as possible after
+     /// handling whatever event it's currently handling.
+     pub fn queue_closure(&self, closure: impl FnOnce() + 'static) {
+-        extern "C" {
+-            fn CFRunLoopPerformBlock(rl: CFRunLoopRef, mode: CFTypeRef, block: &Block<dyn Fn()>);
+-        }
+-
+-        // Convert `FnOnce()` to `Block<dyn Fn()>`.
+-        let closure = Cell::new(Some(closure));
+-        let block = block2::RcBlock::new(move || {
+-            if let Some(closure) = closure.take() {
+-                closure()
+-            } else {
+-                error!("tried to execute queued closure on main thread twice");
+-            }
+-        });
+-
+         // There are a few common modes (`kCFRunLoopCommonModes`) defined by Cocoa:
+         // - `NSDefaultRunLoopMode`, alias of `kCFRunLoopDefaultMode`.
+         // - `NSEventTrackingRunLoopMode`, used when mouse-dragging and live-resizing a window.
+@@ -196,6 +182,31 @@ impl RunLoop {
+         //
+         // [#1779]: https://github.com/rust-windowing/winit/issues/1779
+         let mode = unsafe { kCFRunLoopDefaultMode as CFTypeRef };
++        self.perform_block(mode, closure)
++    }
++
++    /// Queue a closure that also runs inside the event-tracking and modal-panel run loops, and
++    /// wake the run loop so that a closure queued right before it sleeps runs without delay.
++    pub fn queue_closure_in_common_modes(&self, closure: impl FnOnce() + 'static) {
++        let mode = unsafe { kCFRunLoopCommonModes as CFTypeRef };
++        self.perform_block(mode, closure);
++        self.wakeup();
++    }
++
++    fn perform_block(&self, mode: CFTypeRef, closure: impl FnOnce() + 'static) {
++        extern "C" {
++            fn CFRunLoopPerformBlock(rl: CFRunLoopRef, mode: CFTypeRef, block: &Block<dyn Fn()>);
++        }
++
++        // Convert `FnOnce()` to `Block<dyn Fn()>`.
++        let closure = Cell::new(Some(closure));
++        let block = block2::RcBlock::new(move || {
++            if let Some(closure) = closure.take() {
++                closure()
++            } else {
++                error!("tried to execute queued closure on main thread twice");
++            }
++        });
+ 
+         // SAFETY: The runloop is valid, the mode is a `CFStringRef`, and the block is `'static`.
+         unsafe { CFRunLoopPerformBlock(self.0, mode, &block) }

@@ -409,7 +409,9 @@ def main():
             if not evidence:
                 sys.exit("macos-quit: set SUMIE_SPIKE_EVIDENCE to an evidence directory")
             return int(any(subprocess.call(["bash", ROOT / "scripts/macos-spike/quit.sh", evidence, case])
-                              for case in ("menu", "key", "nested")))
+                              for case in ("menu", "key", "nested", "logout", "shutdown",
+                                           "menu-during-later", "quit-all", "unknown-reason",
+                                           "upgrade")))
         if gate == "clippy-macos-ci" and sys.platform != "darwin":
             raise CannotCheck("the macos-ci feature builds only on macOS")
         if gate == "structure":

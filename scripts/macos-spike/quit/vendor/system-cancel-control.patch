@@ -1,0 +1,11 @@
+--- a/src/platform_impl/macos/app_state.rs
++++ b/src/platform_impl/macos/app_state.rs
+@@ -234,7 +234,7 @@
+             },
+             (QuitState::Armed | QuitState::Draining(QuitReason::Ordinary), QuitReason::System) => {
+                 request();
+-                (QuitState::Draining(reason), "later", Reply::NSTerminateLater)
++                (QuitState::Draining(reason), "later", Reply::NSTerminateCancel)
+             },
+             (QuitState::Finishing(QuitReason::Ordinary), QuitReason::System) => {
+                 (QuitState::Finishing(reason), "later", Reply::NSTerminateLater)

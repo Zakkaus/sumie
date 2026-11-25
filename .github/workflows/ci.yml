@@ -101,7 +101,7 @@ jobs:
           path: smoke.png
           if-no-files-found: error
 
-  # Native Quit through winit's own delegate: three cases, then the two panicking controls.
+  # Native Quit through the pinned winit fork: nine cases, then the three controls.
   macos-quit:
     runs-on: macos-15
     timeout-minutes: 25

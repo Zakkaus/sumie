@@ -1,10 +1,12 @@
 --- a/src/platform_impl/macos/app_state.rs
 +++ b/src/platform_impl/macos/app_state.rs
-@@ -121,6 +121,5 @@
-     pub(super) fn finish_quit(&self) {
-         assert!(matches!(*self.ivars().quit.borrow(), Quit::Draining));
--        self.ivars().quit.replace(Quit::AfterHandler);
--        self.schedule_quit();
-+        self.reissue_quit();
+@@ -191,8 +191,7 @@
+             panic!("finish_quit without a pending Quit request");
+         };
+         quit.state.set(QuitState::Finishing(reason));
+-        let this = self.retain();
+-        self.run_after_handler(move || this.complete_quit());
++        self.complete_quit();
      }
  
+     fn complete_quit(&self) {
