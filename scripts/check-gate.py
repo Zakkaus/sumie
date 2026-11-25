@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,9 @@ FRAME_GATES = {"macos-resize": "resize", "macos-idle": "idle", "macos-flood": "f
                "macos-timeout": "timeout", "macos-throughput": "throughput",
                "macos-loading": "loading"}
 FRAME_TIMEOUT = 300
+# The test gate builds first, so this bounds only the test binaries: a hung test fails the
+# gate in minutes instead of running until the CI job limit.
+TEST_TIMEOUT = 600
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -330,11 +334,24 @@ def cargo_record(line):
     return None
 
 
-def check_cargo(gate, args):
-    result = run("cargo", *args)
-    violation = False
+def run_cargo(args, timeout):
+    """Runs cargo in its own process group, so a timeout also stops the test binaries."""
+    with subprocess.Popen(["cargo", *args], cwd=ROOT, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, start_new_session=True) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+            return stdout, stderr + f"cargo {args[0]} did not finish within {timeout} s\n".encode(), None
+    return stdout, stderr, process.returncode
+
+
+def check_cargo(gate, args, timeout=None):
+    stdout, stderr, returncode = run_cargo(args, timeout)
+    violation = returncode is None
     passed = 0
-    for line in result.stdout.decode(errors="replace").splitlines():
+    for line in stdout.decode(errors="replace").splitlines():
         message = cargo_record(line) if gate != "fmt" else None
         if message is not None:
             if message["reason"] == "compiler-message" and isinstance(message.get("message"), dict):
@@ -349,8 +366,8 @@ def check_cargo(gate, args):
                 passed += int(summary[2])
             elif gate == "fmt":
                 violation |= line.startswith("Diff in ")
-    print(result.stderr.decode(errors="replace"), end="", file=sys.stderr)
-    if result.returncode == 0:
+    print(stderr.decode(errors="replace"), end="", file=sys.stderr)
+    if returncode == 0:
         if gate == "test" and passed == 0:
             print("test: no passing workspace tests", file=sys.stderr)
             return 1
@@ -359,7 +376,7 @@ def check_cargo(gate, args):
         return 0
     if violation:
         return 1
-    raise CannotCheck(f"cargo {args[0]} exited {result.returncode} without a check diagnostic")
+    raise CannotCheck(f"cargo {args[0]} exited {returncode} without a check diagnostic")
 
 
 def check_terminfo():
@@ -507,6 +524,9 @@ def main():
             return check_terminfo()
         if gate == "shell":
             return check_shell()
+        if gate == "test":
+            return check_cargo("test-build", (*commands[gate], "--no-run")) or check_cargo(
+                gate, commands[gate], TEST_TIMEOUT)
         return check_cargo(gate, commands[gate])
     except (CannotCheck, OSError, KeyError, ValueError, subprocess.SubprocessError) as error:
         print(f"{gate}: could not run: {error}", file=sys.stderr)

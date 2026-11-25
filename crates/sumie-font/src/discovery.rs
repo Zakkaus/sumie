@@ -8,7 +8,7 @@ use skrifa::{Font, FontRef, Tag};
 
 use crate::{FontError, FontStyle};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Request {
     style: FontStyle,
     weight: Option<u16>,
@@ -291,7 +291,6 @@ fn fontconfig_weight(weight: u16) -> i32 {
     lo_fc + ((weight - lo) * (hi_fc - lo_fc) + (hi - lo) / 2) / (hi - lo)
 }
 
-#[cfg(target_os = "linux")]
 const fn is_private_use(ch: char) -> bool {
     matches!(ch, '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{10fffd}')
 }

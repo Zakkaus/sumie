@@ -49,7 +49,7 @@ pub struct FontOptions {
 }
 
 /// Face style requested for a shaping run.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FontStyle {
     pub bold: bool,
     pub italic: bool,
@@ -126,11 +126,17 @@ pub enum FontError {
     InvalidFont(PathBuf),
     #[error("primary font has no usable zero advance or horizontal line metrics")]
     MissingMetrics,
-    #[error("no usable glyph for U+{codepoint:04X}{}", Rejections(.rejected))]
+    #[error(
+        "no usable glyph for U+{codepoint:04X}{}{}",
+        if *.pending { " yet; the system-wide font lookup is still running" } else { "" },
+        Rejections(.rejected)
+    )]
     MissingGlyph {
         codepoint: u32,
         /// Fonts that fallback tried for this character, in order.
         rejected: Vec<Rejection>,
+        /// Fallback has not finished, so a later lookup may find a font.
+        pending: bool,
     },
     #[error("expected one width in 0..=2 per Unicode scalar, with a nonzero first width")]
     InvalidWidths,
@@ -186,6 +192,7 @@ pub struct FontSystem {
     primary: [Option<FaceId>; 4],
     fallback: [HashMap<char, FaceId>; 4],
     /// Characters whose fallback lookup failed. Only the first error lists the rejected fonts.
+    /// A pending lookup is not recorded, so the next use of the character asks again.
     missing: [HashSet<char>; 4],
     /// Fallback discovery calls, counted for cache tests.
     #[cfg(test)]
@@ -286,6 +293,7 @@ impl FontSystem {
                 .ok_or_else(|| FontError::MissingGlyph {
                     codepoint: u32::from(digit),
                     rejected: Vec::new(),
+                    pending: false,
                 })?;
             *key = GlyphKey::new(id, glyph, ppem);
         }
@@ -340,6 +348,7 @@ impl FontSystem {
             return Err(FontError::MissingGlyph {
                 codepoint: u32::from(ch),
                 rejected: Vec::new(),
+                pending: false,
             });
         }
         let face = self.load_fallback(ch, style);
@@ -347,6 +356,7 @@ impl FontSystem {
             Ok(face) => {
                 self.fallback[style.index()].insert(ch, *face);
             }
+            Err(FontError::MissingGlyph { pending: true, .. }) => {}
             Err(_) => {
                 self.missing[style.index()].insert(ch);
             }
@@ -364,6 +374,7 @@ impl FontSystem {
         let missing = FontError::MissingGlyph {
             codepoint: u32::from(ch),
             rejected: Vec::new(),
+            pending: false,
         };
         if let Some(index) = self
             .faces

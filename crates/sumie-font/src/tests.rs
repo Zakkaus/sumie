@@ -555,7 +555,7 @@ fn core_text_system_wide_fallback_covers_cjk() {
         },
     ] {
         let matched = discovery
-            .find_system_wide('水', style)
+            .resolve_system_wide('水', style)
             .unwrap_or_else(|error| panic!("{style:?}: {error}"));
         // Candidates rank by the default cascade, which follows the user's languages: a
         // Chinese or Japanese family from that list wins over AppleGothic, which sorts first

@@ -415,6 +415,14 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("location: u32::from(ch).try_into().ok()?,", "location: 0x378,"),
               "test tests::core_text_system_wide_fallback_covers_cjk ... FAILED")
+        probe("Core Text system-wide fallback runs for undrawable characters", "test",
+              "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("        if !drawable(ch) {\n", "        if !drawable(ch) && false {\n"),
+              "test discovery::core_text::tests::undrawable_misses_skip_the_system_wide_step ... FAILED")
+        probe("Core Text system-wide fallback waits for the worker without a bound", "test",
+              "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("self.answers.recv_timeout(SYSTEM_WIDE_WAIT)", "self.answers.recv()"),
+              "test discovery::core_text::tests::a_slow_system_wide_lookup_is_pending_after_the_wait ... FAILED")
         login = "test macos::login::tests::"
         lsof = login + "a_login_shell_inherits_no_parent_descriptor ... "
         probe("bridge duplicate inherited across exec", "test", "crates/sumie-macos/src/readiness.rs",

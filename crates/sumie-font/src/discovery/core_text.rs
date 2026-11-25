@@ -1,10 +1,19 @@
 #![allow(unsafe_code)]
 
-use std::{cell::OnceCell, collections::HashMap, ffi::c_void, path::PathBuf, ptr};
+use std::{
+    cell::OnceCell,
+    collections::{HashMap, HashSet},
+    ffi::c_void,
+    path::PathBuf,
+    ptr,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 
 use objc2_core_foundation::{
-    CFArray, CFCharacterSet, CFDictionary, CFRange, CFRetained, CFSet, CFString, CFURL,
-    CFURLPathStyle, Type, kCFTypeSetCallBacks,
+    CFArray, CFCharacterSet, CFCharacterSetPredefinedSet, CFDictionary, CFRange, CFRetained, CFSet,
+    CFString, CFURL, CFURLPathStyle, Type, kCFTypeSetCallBacks,
 };
 use objc2_core_text::{
     CTFont, CTFontDescriptor, CTFontSymbolicTraits, kCTFontCharacterSetAttribute,
@@ -17,10 +26,31 @@ use skrifa::{
     string::StringId,
 };
 
-use super::{Font, FontError, FontStyle, Match, Request, Style};
+use super::{Font, FontError, FontStyle, Match, Request, Style, is_private_use};
 use crate::Rejection;
 
+#[cfg(test)]
+mod tests;
+
+/// Longest a lookup waits for the system-wide step. Core Text's query has no time limit (on a
+/// hosted macOS runner, one missing glyph kept a test busy for minutes), and the caller may be
+/// the main thread, so the step runs on a worker thread.
+const SYSTEM_WIDE_WAIT: Duration = Duration::from_millis(50);
+
 pub(crate) struct Discovery {
+    family: String,
+    matcher: Matcher,
+    system_wide: Option<SystemWide>,
+    /// System-wide lookups, counted for tests of the undrawable-character guard.
+    #[cfg(test)]
+    pub system_wide_lookups: usize,
+    /// Extra time the worker takes per lookup, for tests of the wait bound.
+    #[cfg(test)]
+    pub system_wide_delay: Duration,
+}
+
+/// Core Text state for one primary font: its cascade and the file and family caches.
+struct Matcher {
     primary: CFRetained<CTFont>,
     weight: Option<u16>,
     files: HashMap<PathBuf, FontFile>,
@@ -66,41 +96,192 @@ impl Discovery {
         if family.contains('\0') {
             return Err(FontError::InvalidFamily);
         }
-        // SAFETY: the name outlives the call; null selects the identity transform.
-        let primary = unsafe { CTFont::with_name(&CFString::from_str(family), 0.0, ptr::null()) };
         Ok(Self {
-            primary,
-            weight,
-            files: HashMap::new(),
-            families: HashMap::new(),
-            cascade: OnceCell::new(),
+            family: family.to_owned(),
+            matcher: Matcher::new(family, weight),
+            system_wide: None,
+            #[cfg(test)]
+            system_wide_lookups: 0,
+            #[cfg(test)]
+            system_wide_delay: Duration::ZERO,
         })
     }
 
     pub fn find(&mut self, ch: Option<char>, style: FontStyle) -> Result<Match, FontError> {
-        let request = Request::new(self.weight, style);
+        let request = Request::new(self.matcher.weight, style);
         let Some(ch) = ch else {
-            return matching_face(
-                &self.primary,
-                request,
-                None,
-                &mut self.files,
-                &mut self.families,
-            );
+            return self.matcher.primary(request);
         };
         let mut rejected = Vec::new();
-        self.preferred(ch, request, &mut rejected)
-            .or_else(|| self.cascade(ch, request, &mut rejected))
-            .or_else(|| self.system_wide(ch, request, &mut rejected))
-            .ok_or_else(|| missing_glyph(ch, rejected))
+        if let Some(matched) = self
+            .matcher
+            .preferred(ch, request, &mut rejected)
+            .or_else(|| self.matcher.cascade(ch, request, &mut rejected))
+        {
+            return Ok(matched);
+        }
+        if !drawable(ch) {
+            return Err(missing_glyph(ch, rejected, false));
+        }
+        self.system_wide(ch, request, rejected)
     }
 
     /// Starts fallback at the system-wide step, skipping Core Text's preferred font and cascade.
     #[cfg(test)]
     pub fn find_system_wide(&mut self, ch: char, style: FontStyle) -> Result<Match, FontError> {
-        let mut rejected = Vec::new();
-        self.system_wide(ch, Request::new(self.weight, style), &mut rejected)
-            .ok_or_else(|| missing_glyph(ch, rejected))
+        let request = Request::new(self.matcher.weight, style);
+        self.system_wide(ch, request, Vec::new())
+    }
+
+    /// Asks the worker for every installed face that claims the character. A character it has
+    /// not answered within [`SYSTEM_WIDE_WAIT`] is reported as pending, and a later lookup
+    /// takes the answer.
+    fn system_wide(
+        &mut self,
+        ch: char,
+        request: Request,
+        mut rejected: Vec<Rejection>,
+    ) -> Result<Match, FontError> {
+        #[cfg(test)]
+        {
+            self.system_wide_lookups += 1;
+        }
+        if self.system_wide.is_none() {
+            self.system_wide = self.spawn_system_wide();
+        }
+        let answer = match &mut self.system_wide {
+            Some(worker) => worker.answer((ch, request)),
+            None => Some(Err(Vec::new())),
+        };
+        match answer {
+            Some(Ok(matched)) => Ok(matched),
+            Some(Err(more)) => {
+                // The worker does not know which faces the earlier steps rejected.
+                let more: Vec<_> = more
+                    .into_iter()
+                    .filter(|new| rejected.iter().all(|tried| tried.font != new.font))
+                    .collect();
+                rejected.extend(more);
+                Err(missing_glyph(ch, rejected, false))
+            }
+            None => Err(missing_glyph(ch, rejected, true)),
+        }
+    }
+
+    fn spawn_system_wide(&self) -> Option<SystemWide> {
+        let (requests, queue) = mpsc::channel::<Key>();
+        let (replies, answers) = mpsc::channel();
+        let family = self.family.clone();
+        let weight = self.matcher.weight;
+        #[cfg(test)]
+        let delay = self.system_wide_delay;
+        thread::Builder::new()
+            .name("sumie-font-fallback".to_owned())
+            .spawn(move || {
+                let mut matcher = Matcher::new(&family, weight);
+                for (ch, request) in queue {
+                    #[cfg(test)]
+                    thread::sleep(delay);
+                    let mut rejected = Vec::new();
+                    let answer = matcher.system_wide(ch, request, &mut rejected);
+                    if replies
+                        .send(((ch, request), answer.ok_or(rejected)))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .ok()?;
+        Some(SystemWide {
+            requests,
+            answers,
+            sent: HashSet::new(),
+            answered: HashMap::new(),
+        })
+    }
+}
+
+type Key = (char, Request);
+type Answer = Result<Match, Vec<Rejection>>;
+
+/// The system-wide step's worker thread, which ends when this handle is dropped and its
+/// current query returns. Each character and request is sent once.
+struct SystemWide {
+    requests: mpsc::Sender<Key>,
+    answers: mpsc::Receiver<(Key, Answer)>,
+    sent: HashSet<Key>,
+    answered: HashMap<Key, Answer>,
+}
+
+impl SystemWide {
+    /// Returns the worker's answer, or `None` while it is pending. A new request waits up to
+    /// [`SYSTEM_WIDE_WAIT`], unless an earlier one is still running: that query has already
+    /// overrun its wait, and this one queues behind it.
+    fn answer(&mut self, key: Key) -> Option<Answer> {
+        if self.sent.insert(key) {
+            if self.requests.send(key).is_err() {
+                return Some(Err(Vec::new()));
+            }
+            if self.sent.len() == 1
+                && let Ok(reply) = self.answers.recv_timeout(SYSTEM_WIDE_WAIT)
+            {
+                self.receive(reply);
+            }
+        }
+        loop {
+            match self.answers.try_recv() {
+                Ok(reply) => self.receive(reply),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Some(self.answered.remove(&key).unwrap_or(Err(Vec::new())));
+                }
+            }
+        }
+        self.answered.remove(&key)
+    }
+
+    fn receive(&mut self, (key, answer): (Key, Answer)) {
+        self.sent.remove(&key);
+        self.answered.insert(key, answer);
+    }
+}
+
+/// Whether any installed font could draw `ch`. The system-wide step skips noncharacters and
+/// code points that Core Foundation knows to be unassigned, which no font covers, and private
+/// use, whose glyphs come only from the configured font or the cascade. A `char` is never a
+/// surrogate. Core Foundation has no data for planes 4 through 13, so a miss there still runs
+/// the step, and waits at most [`SYSTEM_WIDE_WAIT`].
+fn drawable(ch: char) -> bool {
+    let code = u32::from(ch);
+    let noncharacter = (0xfdd0..=0xfdef).contains(&code) || code & 0xfffe == 0xfffe;
+    !noncharacter
+        && !is_private_use(ch)
+        && !CFCharacterSet::predefined(CFCharacterSetPredefinedSet::Illegal)
+            .is_some_and(|unassigned| unassigned.is_long_character_member(code))
+}
+
+impl Matcher {
+    fn new(family: &str, weight: Option<u16>) -> Self {
+        // SAFETY: the name outlives the call; null selects the identity transform.
+        let primary = unsafe { CTFont::with_name(&CFString::from_str(family), 0.0, ptr::null()) };
+        Self {
+            primary,
+            weight,
+            files: HashMap::new(),
+            families: HashMap::new(),
+            cascade: OnceCell::new(),
+        }
+    }
+
+    fn primary(&mut self, request: Request) -> Result<Match, FontError> {
+        matching_face(
+            &self.primary,
+            request,
+            None,
+            &mut self.files,
+            &mut self.families,
+        )
     }
 
     fn preferred(
@@ -252,10 +433,11 @@ impl Discovery {
     }
 }
 
-fn missing_glyph(ch: char, rejected: Vec<Rejection>) -> FontError {
+fn missing_glyph(ch: char, rejected: Vec<Rejection>, pending: bool) -> FontError {
     FontError::MissingGlyph {
         codepoint: u32::from(ch),
         rejected,
+        pending,
     }
 }
 
@@ -351,7 +533,7 @@ fn require_coverage(matched: Match, ch: Option<char>) -> Result<Match, FontError
     if let Some(ch) = ch
         && !covers(&matched, ch)
     {
-        return Err(missing_glyph(ch, Vec::new()));
+        return Err(missing_glyph(ch, Vec::new(), false));
     }
     Ok(matched)
 }
