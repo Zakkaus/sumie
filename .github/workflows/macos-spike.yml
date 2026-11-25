@@ -15,7 +15,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {scenario: quit, sample: 1}
           - {scenario: metal, sample: 1}
           - {scenario: runner, sample: 1}
           - {scenario: runner, sample: 2}
@@ -43,12 +42,7 @@ jobs:
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - if: matrix.scenario == 'runner'
         run: cargo build --release --locked --features macos-ci --bin sumie
-      - if: matrix.scenario == 'quit'
-        run: python3 scripts/check-gate.py macos-quit
-      - if: ${{ !cancelled() && matrix.scenario == 'quit' }}
-        run: python3 scripts/negative-controls.py macos-quit
       - name: Exercise native scenario
-        if: matrix.scenario != 'quit'
         env:
           SCENARIO: ${{ matrix.scenario }}
         run: bash "scripts/macos-spike/$SCENARIO.sh" "$RUNNER_TEMP/evidence"

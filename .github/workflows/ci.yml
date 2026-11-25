@@ -98,3 +98,36 @@ jobs:
           name: macos-metal-smoke
           path: smoke.png
           if-no-files-found: error
+
+  # Native Quit through winit's own delegate: three cases, then the two panicking controls.
+  macos-quit:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Record VM identity
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          {
+            uname -m
+            sw_vers
+            printf 'ImageOS=%s\nImageVersion=%s\ncommit=%s\n' "$ImageOS" "$ImageVersion" "$GITHUB_SHA"
+            uptime
+          } | tee "$RUNNER_TEMP/evidence/host.txt"
+          test "$(uname -m)" = arm64
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/target" >> "$GITHUB_ENV"
+          echo "SUMIE_SPIKE_EVIDENCE=$RUNNER_TEMP/evidence" >> "$GITHUB_ENV"
+      - run: rustup toolchain install stable --profile minimal
+      - run: python3 scripts/check-gate.py macos-quit
+      - if: ${{ !cancelled() }}
+        run: python3 scripts/negative-controls.py macos-quit
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: macos-quit
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: error
