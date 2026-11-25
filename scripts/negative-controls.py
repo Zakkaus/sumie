@@ -122,7 +122,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     ):
         probe(name, "structure", path, edit, marker, new=new)
     probe("git patch pinned to a branch", "structure", "Cargo.toml",
-          append('[patch.crates-io]\nwinit = { git = "https://github.com/Zakkaus/winit", branch = "sumie/0.30.13" }\n'),
+          replace_once("[patch.crates-io]\n", '[patch.crates-io]\nwinit = { git = "https://github.com/Zakkaus/winit", branch = "sumie/0.30.13" }\n'),
           "patch: [patch.crates-io] winit: pin a full rev, not a branch or tag")
     probe("debug print in a vendored patch", "structure", "third_party/0001-probe.patch",
           append('--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n fn probe() {}\n+eprintln!("probe");\n'),
