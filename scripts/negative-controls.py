@@ -14,6 +14,43 @@ WAYLAND = "crates/sumie-wayland/src/lib.rs"
 CORE_MANIFEST = "crates/sumie-core/Cargo.toml"
 RENDER_MANIFEST = "crates/sumie-render/Cargo.toml"
 UI_MANIFEST = "crates/sumie-ui/Cargo.toml"
+# A default-mode-only performSelector wake. objc2 marks performSelector unsafe, so the
+# probe also lifts sumie-macos's unsafe forbid; only this temporary build sees either.
+DEFAULT_MODE_WAKE = """    let send = move || {
+        let _ = proxy.send_event(event.clone());
+    };
+    let _ = DEFAULT_MODE_WAKE.set(std::sync::Mutex::new(Box::new(send)));
+    || {
+        let target: objc2::rc::Retained<DefaultModeWake> =
+            unsafe { objc2::msg_send![<DefaultModeWake as objc2::ClassType>::class(), new] };
+        let modes = objc2_foundation::NSArray::from_slice(&[objc2_foundation::ns_string!(
+            "kCFRunLoopDefaultMode"
+        )]);
+        let () = unsafe {
+            objc2::msg_send![&*target, performSelectorOnMainThread: objc2::sel!(wake),
+                withObject: None::<&objc2::runtime::AnyObject>, waitUntilDone: false,
+                modes: &*modes]
+        };
+    }
+}
+
+static DEFAULT_MODE_WAKE: std::sync::OnceLock<std::sync::Mutex<Box<dyn Fn() + Send>>> =
+    std::sync::OnceLock::new();
+
+objc2::define_class!(
+    #[unsafe(super(objc2::runtime::NSObject))]
+    #[thread_kind = objc2::AnyThread]
+    #[name = "SumieDefaultModeWake"]
+    struct DefaultModeWake;
+
+    impl DefaultModeWake {
+        #[unsafe(method(wake))]
+        fn wake(&self) {
+            (DEFAULT_MODE_WAKE.get().unwrap().lock().unwrap())();
+        }
+    }
+);
+"""
 UNSAFE_READ = ("#[must_use]\npub fn read_probe() -> u8 {\n"
                "    let bytes = [0_u8; 1];\n"
                "    unsafe { std::ptr::read(bytes.as_ptr()) }\n}\n")
@@ -330,6 +367,23 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("pedantic lint in macos-ci code", "clippy-macos-ci", "crates/sumie-macos/src/runner.rs",
               append("#[must_use]\npub fn narrow_probe(value: u16) -> u8 {\n    value as u8\n}\n"),
               "clippy::cast_possible_truncation")
+        probe("default-mode-only performSelector wake", "macos-wake", "crates/sumie-macos/src/lib.rs",
+              lambda source: replace_once("#![forbid(unsafe_code)]\n", "")(
+                  replace_once("    move || {\n        let _ = proxy.send_event(event.clone());\n    }\n}\n",
+                               DEFAULT_MODE_WAKE)(source)),
+              "macos-wake: event-tracking: no wake inside the 300 ms interval")
+        probe("exit watch removed on the first NOTE_EXIT", "test", "src/macos/sources.rs",
+              replace_once("        self.take_ready(id).exit\n",
+                           "        let exit = self.take_ready(id).exit;\n"
+                           "        if exit {\n"
+                           "            self.readiness.remove(Key::new(id, Interest::Exit));\n"
+                           "        }\n"
+                           "        exit\n"),
+              "test macos::sources::tests::an_unreaped_exit_keeps_reporting_until_unregistered ... FAILED")
+        probe("no re-watch after an early NOTE_EXIT", "test", "crates/sumie-pty/src/child/macos.rs",
+              replace_once("            self.rewatch()?;\n        }\n        Ok(status",
+                           "        }\n        Ok(status"),
+              "test child::platform::tests::early_note_exit_is_watched_until_reaped ... FAILED")
         probe("Core Text bypasses every fallback step", "test", "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),
               "test tests::core_text_loads_the_named_collection_face_and_cjk_fallback ... FAILED")

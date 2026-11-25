@@ -11,6 +11,10 @@ pub(crate) struct Ready {
 }
 
 /// A one-shot deadline wakes dispatch; only a frame slot permits drawing.
+#[cfg_attr(
+    all(target_os = "macos", not(test)),
+    expect(dead_code, reason = "the macOS terminal driver is not wired yet")
+)]
 pub(crate) trait TimerSource {
     type Token: Copy;
 
@@ -19,6 +23,10 @@ pub(crate) trait TimerSource {
 }
 
 /// Exit-only operations remain available after the window has been dropped.
+#[cfg_attr(
+    all(target_os = "macos", not(test)),
+    expect(dead_code, reason = "the macOS terminal driver is not wired yet")
+)]
 pub(crate) trait ExitWatches {
     fn take_exit_ready(&mut self, id: u64) -> bool;
     fn unregister(&mut self, id: u64);
@@ -28,6 +36,10 @@ pub(crate) trait ExitWatches {
 /// A failed registration leaves no watches for that ID.
 /// Register before servicing a pane, sync input interest after dispatch, and keep
 /// the exit watch through retirement until the child is reaped.
+#[cfg_attr(
+    all(target_os = "macos", not(test)),
+    expect(dead_code, reason = "the macOS terminal driver is not wired yet")
+)]
 pub(crate) trait PaneWatches: ExitWatches {
     fn register_pane(
         &mut self,

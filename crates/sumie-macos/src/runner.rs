@@ -1,6 +1,9 @@
 //! Native operations for the opt-in runner probe. No permission requests or general pasteboard access.
 
-use std::{io, ops::ControlFlow, process, thread};
+use std::{
+    io, process, thread,
+    time::{Duration, Instant},
+};
 
 use objc2::{MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
@@ -10,16 +13,17 @@ use objc2_core_graphics::{
     CGEvent, CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
     CGWindowListCopyWindowInfo, CGWindowListOption,
 };
-use objc2_foundation::{NSPoint, ns_string};
+use objc2_foundation::{NSDate, NSPoint, NSRunLoop, NSString, ns_string};
 use winit::{
     application::ApplicationHandler,
     event::{KeyEvent, WindowEvent},
     event_loop::{EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
-    window::WindowId,
+    platform::macos::ActiveEventLoopExtMacOS as _,
+    window::{Fullscreen, WindowId},
 };
 
-use super::{Event, Handler, Platform, Result, WindowContext};
+use super::{Bridge, Callback, Event, Handler, Platform, Result, WindowContext, waker};
 
 const TITLE: &str = "sumie / CI runner probe";
 const F13: u16 = 0x69;
@@ -33,7 +37,20 @@ pub enum Command {
     AppKitKeys,
     CgKeys,
     Close,
+    /// Measurement steps for the timing mode; see `scripts/macos-spike/animations.py`.
+    Step(Step),
     Invalid,
+    /// Not a controller command: the readiness bridge's wake.
+    Wake,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    MinimizeAfterHandler,
+    MinimizeInHandler,
+    Restore,
+    Fullscreen,
+    Windowed,
 }
 
 impl Command {
@@ -44,6 +61,11 @@ impl Command {
             "appkit" => Self::AppKitKeys,
             "cg" => Self::CgKeys,
             "close" => Self::Close,
+            "minimize-after" => Self::Step(Step::MinimizeAfterHandler),
+            "minimize-in" => Self::Step(Step::MinimizeInHandler),
+            "restore" => Self::Step(Step::Restore),
+            "fullscreen" => Self::Step(Step::Fullscreen),
+            "windowed" => Self::Step(Step::Windowed),
             line => line
                 .strip_prefix("ping ")
                 .and_then(|number| number.parse().ok())
@@ -96,14 +118,16 @@ impl Key {
 ///
 /// # Errors
 /// Propagates event loop, thread creation, and callback errors.
-pub fn run(callback: impl FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>) -> Result<()> {
+pub fn run(callback: impl Callback) -> Result<()> {
     let event_loop = EventLoop::<Command>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
+    let bridge = Bridge::spawn(waker(proxy.clone(), Command::Wake))?;
     thread::Builder::new()
         .name("sumie-runner-control".into())
-        .spawn(move || bridge(&proxy))?;
+        .spawn(move || control(&proxy))?;
     let mut handler = RunnerHandler(Handler {
         callback,
+        bridge,
         result: Ok(()),
         forward_runner_keys: true,
     });
@@ -111,7 +135,7 @@ pub fn run(callback: impl FnMut(&WindowContext, Event) -> Result<ControlFlow<()>
     handler.0.result
 }
 
-fn bridge(proxy: &EventLoopProxy<Command>) {
+fn control(proxy: &EventLoopProxy<Command>) {
     for line in io::stdin().lines() {
         let command = line.map_or(Command::Invalid, |line| Command::parse(&line));
         if proxy.send_event(command).is_err() || command == Command::Invalid {
@@ -122,15 +146,17 @@ fn bridge(proxy: &EventLoopProxy<Command>) {
 
 struct RunnerHandler<F>(Handler<F>);
 
-impl<F: FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>> ApplicationHandler<Command>
-    for RunnerHandler<F>
-{
+impl<F: Callback> ApplicationHandler<Command> for RunnerHandler<F> {
     fn resumed(&mut self, context: &WindowContext) {
         self.0.resumed(context);
     }
 
     fn user_event(&mut self, context: &WindowContext, event: Command) {
-        self.0.emit(context, Event::RunnerCommand(event));
+        let event = match event {
+            Command::Wake => Event::Ready,
+            command => Event::RunnerCommand(command),
+        };
+        self.0.emit(context, event);
     }
 
     fn window_event(&mut self, context: &WindowContext, id: WindowId, event: WindowEvent) {
@@ -140,6 +166,78 @@ impl<F: FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>> ApplicationHand
 
 pub fn name_window(window: &Platform) {
     window.0.set_title(TITLE);
+}
+
+/// Apply a measurement step to the window, either now or once no winit handler runs.
+pub fn step(context: &WindowContext, window: &Platform, step: Step) {
+    let window = window.window_owner();
+    let apply = move || match step {
+        Step::MinimizeAfterHandler | Step::MinimizeInHandler => window.set_minimized(true),
+        Step::Restore => {
+            window.set_minimized(false);
+            window.focus_window();
+        }
+        Step::Fullscreen => window.set_fullscreen(Some(Fullscreen::Borderless(None))),
+        Step::Windowed => window.set_fullscreen(None),
+    };
+    if step == Step::MinimizeInHandler {
+        apply();
+    } else {
+        context.run_after_handler(apply);
+    }
+}
+
+/// The `AppKit` run-loop modes that the wake scenario enters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunLoopMode {
+    Default,
+    EventTracking,
+    ModalPanel,
+}
+
+impl RunLoopMode {
+    fn name(self) -> &'static NSString {
+        // The values of `NSDefaultRunLoopMode`, `NSEventTrackingRunLoopMode` and
+        // `NSModalPanelRunLoopMode`; run loops compare modes by name.
+        match self {
+            Self::Default => ns_string!("kCFRunLoopDefaultMode"),
+            Self::EventTracking => ns_string!("NSEventTrackingRunLoopMode"),
+            Self::ModalPanel => ns_string!("NSModalPanelRunLoopMode"),
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::EventTracking => "event-tracking",
+            Self::ModalPanel => "modal-panel",
+        }
+    }
+
+    /// The mode the main run loop is running in, if it is one of these.
+    #[must_use]
+    pub fn current() -> Option<Self> {
+        let mode = NSRunLoop::currentRunLoop().currentMode()?;
+        [Self::Default, Self::EventTracking, Self::ModalPanel]
+            .into_iter()
+            .find(|candidate| mode.isEqualToString(candidate.name()))
+    }
+
+    /// Run the current run loop in this mode for `length`, as `AppKit`'s own loops do.
+    pub fn run_for(self, length: Duration) {
+        let end = Instant::now() + length;
+        let run_loop = NSRunLoop::currentRunLoop();
+        while let Some(left) = end.checked_duration_since(Instant::now()) {
+            let limit = NSDate::dateWithTimeIntervalSinceNow(left.as_secs_f64());
+            run_loop.runMode_beforeDate(self.name(), &limit);
+        }
+    }
+}
+
+/// Run `closure` once no winit handler is running, through the fork's common-modes queue.
+pub fn after_handler(context: &WindowContext, closure: impl FnOnce() + 'static) {
+    context.run_after_handler(closure);
 }
 
 fn app() -> Option<Retained<NSApplication>> {

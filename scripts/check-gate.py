@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,9 @@ TEST_SUMMARY = re.compile(r"^test result: (ok|FAILED)\. ([0-9]+) passed;")
 CARGO_RECORDS = ("compiler-artifact", "compiler-message", "build-script-executed", "build-finished")
 FULL_REV = re.compile(r"[0-9a-f]{40}")
 DEBUG_PRINT = re.compile(r"\b(?:e?print(?:ln)?|dbg)!")
+WAKE_MODES = ("default", "event-tracking", "modal-panel")
+WAKE_LIMIT_NS = 100_000_000
+WAKE_TIMEOUT = 120
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -387,6 +391,60 @@ def check_shell():
     return 0
 
 
+def wake_binary():
+    result = run("cargo", "build", "--locked", "--features", "macos-ci", "--message-format=json")
+    if result.returncode:
+        print(result.stderr.decode(errors="replace"), end="", file=sys.stderr)
+        raise CannotCheck(f"cargo build exited {result.returncode}")
+    for line in result.stdout.decode(errors="replace").splitlines():
+        record = cargo_record(line)
+        if (record and record["reason"] == "compiler-artifact" and record.get("executable")
+                and record["target"]["name"] == "sumie"):
+            return record["executable"]
+    raise CannotCheck("cargo build did not report the sumie executable")
+
+
+def check_macos_wake():
+    """A pipe write during each AppKit run-loop mode reaches the handler within 100 ms."""
+    if sys.platform != "darwin":
+        raise CannotCheck("the wake scenario needs the macOS window server")
+    binary = wake_binary()
+    with tempfile.TemporaryDirectory(prefix="sumie-wake.") as home:
+        env = {**os.environ, "SUMIE_MACOS_CI_RUNNER": "wake", "HOME": home,
+               "XDG_CONFIG_HOME": str(Path(home) / "config")}
+        try:
+            result = subprocess.run([binary], env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                                    text=True, timeout=WAKE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            print("macos-wake: the scenario timed out", file=sys.stderr)
+            return 1
+    print(result.stderr, end="", file=sys.stderr)
+    legs = {}
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if fields[:2] == ["runner", "wake"] and len(fields) == 6:
+            legs[fields[2]] = fields[3:]
+    errors = []
+    if result.returncode or "runner wake done" not in result.stdout:
+        errors.append(f"macos-wake: the scenario exited {result.returncode} without finishing")
+    for mode in WAKE_MODES:
+        if mode not in legs:
+            errors.append(f"macos-wake: {mode}: no report")
+            continue
+        latency, arrived, inside = legs[mode]
+        if latency == "none" or inside != "true":
+            errors.append(f"macos-wake: {mode}: no wake inside the 300 ms interval")
+        elif arrived != mode:
+            errors.append(f"macos-wake: {mode}: the wake ran in the {arrived} mode")
+        elif int(latency) > WAKE_LIMIT_NS:
+            errors.append(f"macos-wake: {mode}: {int(latency) / 1e6:.1f} ms exceeds 100 ms")
+        else:
+            print(f"macos-wake: {mode}: write to handler {int(latency) / 1e6:.3f} ms")
+    for error in errors:
+        print(error, file=sys.stderr)
+    return int(bool(errors))
+
+
 def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
@@ -396,7 +454,8 @@ def main():
         "test": ("test", "--locked", "--workspace", "--message-format=json"),
     }
     parser = argparse.ArgumentParser()
-    parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", *commands))
+    parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
+                                         *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -414,6 +473,8 @@ def main():
                                            "upgrade")))
         if gate == "clippy-macos-ci" and sys.platform != "darwin":
             raise CannotCheck("the macos-ci feature builds only on macOS")
+        if gate == "macos-wake":
+            return check_macos_wake()
         if gate == "structure":
             return check_structure()
         if gate == "terminfo":
@@ -421,7 +482,7 @@ def main():
         if gate == "shell":
             return check_shell()
         return check_cargo(gate, commands[gate])
-    except (CannotCheck, OSError, KeyError, ValueError) as error:
+    except (CannotCheck, OSError, KeyError, ValueError, subprocess.SubprocessError) as error:
         print(f"{gate}: could not run: {error}", file=sys.stderr)
         return 2
 

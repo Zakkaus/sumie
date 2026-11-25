@@ -22,6 +22,10 @@ mod macos;
 mod pane;
 #[cfg(target_os = "linux")]
 mod platform;
+// Only the readiness traits build on macOS until the terminal driver does.
+#[cfg(all(target_os = "macos", any(test, feature = "macos-ci")))]
+#[path = "platform/watches.rs"]
+mod platform;
 #[cfg(target_os = "linux")]
 mod reload;
 #[cfg(target_os = "linux")]

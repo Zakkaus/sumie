@@ -12,6 +12,8 @@ mod page;
 mod reload;
 #[cfg(feature = "macos-ci")]
 mod runner;
+#[cfg(any(test, feature = "macos-ci"))]
+mod sources;
 use page::Page;
 use reload::{Reload, Update};
 
@@ -38,7 +40,7 @@ pub(crate) fn run(options: &capture::Options) -> Result<()> {
     }
 
     let mut state = None;
-    sumie_macos::run(|context, event| {
+    sumie_macos::run(|context, _, event| {
         match (&mut state, event) {
             (None, Event::Resumed) => {
                 let window = Platform::open(context)?;

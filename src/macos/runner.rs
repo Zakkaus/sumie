@@ -6,11 +6,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use sumie_macos::{Event, Platform, WindowContext, runner as native};
+use sumie_macos::{Event, Platform, WindowContext, readiness::Readiness, runner as native};
 use sumie_render::wgpu;
 
 use super::Smoke;
 use crate::{Result, capture, frame_window::FrameWindow};
+
+mod wake;
 
 const LENGTH: Duration = Duration::from_secs(60);
 const FIXTURE: wgpu::Color = wgpu::Color {
@@ -23,6 +25,7 @@ const FIXTURE: wgpu::Color = wgpu::Color {
 pub(super) enum Mode {
     Timing(Option<Sample>),
     Capabilities,
+    Wake(Option<wake::Wake>),
 }
 
 impl Mode {
@@ -30,6 +33,7 @@ impl Mode {
         match env::var("SUMIE_MACOS_CI_RUNNER") {
             Ok(value) if value == "timing" => Ok(Some(Self::Timing(None))),
             Ok(value) if value == "capabilities" => Ok(Some(Self::Capabilities)),
+            Ok(value) if value == "wake" => Ok(Some(Self::Wake(None))),
             Err(env::VarError::NotPresent) => Ok(None),
             _ => Err("invalid SUMIE_MACOS_CI_RUNNER mode".into()),
         }
@@ -47,7 +51,8 @@ pub(super) fn run(mode: Mode, options: &capture::Options) -> Result<()> {
         close_requested: false,
         closed: false,
     };
-    let result = native::run(|context, event| driver.dispatch(context, event));
+    let result =
+        native::run(|context, readiness, event| driver.dispatch(context, readiness, event));
     drop(driver.state.take());
     result?;
     if !driver.closed {
@@ -66,14 +71,32 @@ struct Driver {
 }
 
 impl Driver {
-    fn dispatch(&mut self, context: &WindowContext, event: Event) -> Result<ControlFlow<()>> {
+    fn dispatch(
+        &mut self,
+        context: &WindowContext,
+        readiness: &Readiness,
+        event: Event,
+    ) -> Result<ControlFlow<()>> {
         match event {
-            Event::Resumed if self.state.is_none() => {
+            Event::Resumed if matches!(self.mode, Mode::Wake(None)) => {
+                let window = Platform::open(context)?;
+                native::name_window(&window);
+                self.mode = Mode::Wake(Some(wake::Wake::start(context, readiness, window)?));
+            }
+            Event::Resumed if self.state.is_none() && !matches!(self.mode, Mode::Wake(_)) => {
                 let window = Platform::open(context)?;
                 native::name_window(&window);
                 println!("runner window {}", self.started.elapsed().as_nanos());
                 window.request_redraw();
                 self.state = Some(Smoke::new(window, false)?);
+            }
+            Event::Ready => {
+                if let Mode::Wake(Some(wake)) = &mut self.mode
+                    && wake.ready()?.is_break()
+                {
+                    self.closed = true;
+                    return Ok(ControlFlow::Break(()));
+                }
             }
             Event::NeedsRedraw => {
                 if let Some(smoke) = &self.state {
@@ -85,7 +108,7 @@ impl Driver {
                     repaint(&mut self.mode, smoke, self.started)?;
                 }
             }
-            Event::RunnerCommand(command) => self.command(command)?,
+            Event::RunnerCommand(command) => self.command(context, command)?,
             Event::RunnerKey(key) if matches!(self.mode, Mode::Capabilities) => {
                 let direction = if key.pressed { "down" } else { "up" };
                 println!("runner key {} {direction}", key.route.label());
@@ -101,7 +124,7 @@ impl Driver {
         Ok(ControlFlow::Continue(()))
     }
 
-    fn command(&mut self, command: native::Command) -> Result<()> {
+    fn command(&mut self, context: &WindowContext, command: native::Command) -> Result<()> {
         use native::Command;
         match (&self.mode, command) {
             (_, Command::Close) if !self.close_requested => {
@@ -112,6 +135,11 @@ impl Driver {
             }
             (Mode::Timing(_), Command::Ping(sequence)) => println!("runner ack {sequence}"),
             (Mode::Timing(Some(sample)), Command::Finish) => sample.report()?,
+            (Mode::Timing(_), Command::Step(step)) => {
+                let window = &self.state.as_ref().ok_or("no window for the step")?.window;
+                println!("runner step {step:?} {}", self.started.elapsed().as_nanos());
+                native::step(context, window, step);
+            }
             (Mode::Capabilities, Command::Inspect) => report_capabilities(),
             (Mode::Capabilities, Command::AppKitKeys) => {
                 println!("runner posted appkit {}", native::post_appkit_keys());
@@ -147,7 +175,7 @@ fn repaint(mode: &mut Mode, smoke: &mut Smoke, started: Instant) -> Result<()> {
     }
     let count = smoke.surface.present_count();
     let clear = match mode {
-        Mode::Capabilities => FIXTURE,
+        Mode::Capabilities | Mode::Wake(_) => FIXTURE,
         Mode::Timing(_) if count.is_multiple_of(2) => wgpu::Color::RED,
         Mode::Timing(_) => wgpu::Color::BLUE,
     };

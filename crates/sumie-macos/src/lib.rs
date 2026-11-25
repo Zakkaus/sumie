@@ -11,12 +11,15 @@ use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::WindowEvent,
-    event_loop::EventLoop,
+    event_loop::{EventLoop, EventLoopProxy},
     window::{Window, WindowId},
 };
 
 pub use winit::event_loop::ActiveEventLoop as WindowContext;
 
+use readiness::{Bridge, Readiness};
+
+pub mod readiness;
 #[cfg(feature = "macos-ci")]
 pub mod runner;
 
@@ -26,6 +29,8 @@ pub enum Event {
     NeedsRedraw,
     RedrawRequested,
     CloseRequested,
+    /// The readiness bridge has reports; take them with [`Readiness::take`].
+    Ready,
     #[cfg(feature = "macos-ci")]
     RunnerCommand(runner::Command),
     #[cfg(feature = "macos-ci")]
@@ -76,31 +81,47 @@ type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 /// Dispatch on the main thread. Return `Break` from the callback to exit.
 ///
 /// # Errors
-/// Propagates window creation, event loop and application errors.
-pub fn run(callback: impl FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>) -> Result<()> {
+/// Propagates window creation, event loop, bridge and application errors.
+pub fn run(callback: impl Callback) -> Result<()> {
+    let event_loop = EventLoop::new()?;
+    let bridge = Bridge::spawn(waker(event_loop.create_proxy(), ()))?;
     let mut handler = Handler {
         callback,
+        bridge,
         result: Ok(()),
         #[cfg(feature = "macos-ci")]
         forward_runner_keys: false,
     };
-    EventLoop::new()?.run_app(&mut handler)?;
+    event_loop.run_app(&mut handler)?;
     handler.result
+}
+
+/// The application callback: registrations go through the [`Readiness`] handle.
+pub trait Callback: FnMut(&WindowContext, &Readiness, Event) -> Result<ControlFlow<()>> {}
+
+impl<F: FnMut(&WindowContext, &Readiness, Event) -> Result<ControlFlow<()>>> Callback for F {}
+
+/// The bridge's wake: one proxy event, whose run-loop source winit adds in common modes.
+fn waker<T: Clone + Send + 'static>(proxy: EventLoopProxy<T>, event: T) -> impl Fn() + Send {
+    move || {
+        let _ = proxy.send_event(event.clone());
+    }
 }
 
 struct Handler<F> {
     callback: F,
+    bridge: Bridge,
     result: Result<()>,
     #[cfg(feature = "macos-ci")]
     forward_runner_keys: bool,
 }
 
-impl<F: FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>> Handler<F> {
+impl<F: Callback> Handler<F> {
     fn emit(&mut self, context: &WindowContext, event: Event) {
         if context.exiting() {
             return;
         }
-        match (self.callback)(context, event) {
+        match (self.callback)(context, self.bridge.readiness(), event) {
             Ok(ControlFlow::Continue(())) => (),
             Ok(ControlFlow::Break(())) => context.exit(),
             Err(error) => {
@@ -111,9 +132,13 @@ impl<F: FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>> Handler<F> {
     }
 }
 
-impl<F: FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>> ApplicationHandler for Handler<F> {
+impl<F: Callback> ApplicationHandler for Handler<F> {
     fn resumed(&mut self, context: &WindowContext) {
         self.emit(context, Event::Resumed);
+    }
+
+    fn user_event(&mut self, context: &WindowContext, (): ()) {
+        self.emit(context, Event::Ready);
     }
 
     fn window_event(&mut self, context: &WindowContext, _: WindowId, event: WindowEvent) {
