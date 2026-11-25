@@ -1,6 +1,6 @@
 //! Typed settings problems. Their English text is the source the translations follow.
 
-use std::{fmt, io, path::PathBuf};
+use std::{fmt, path::PathBuf};
 
 use serde::de::DeserializeOwned;
 use toml::{
@@ -37,7 +37,6 @@ pub enum Problem {
     /// An include could not be read.
     Read {
         path: PathBuf,
-        kind: io::ErrorKind,
         detail: String,
     },
     /// A TOML syntax error or a value of the wrong type, in the parser's English.

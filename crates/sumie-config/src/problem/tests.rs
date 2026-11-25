@@ -1,4 +1,4 @@
-use std::{fs, io, path::Path};
+use std::{fs, path::Path};
 
 use crate::{Config, Error, Problem, check, load, tests::Scratch};
 
@@ -78,7 +78,6 @@ fn include_problems_are_typed_and_located() {
             (1, "'absent.toml'"),
             Problem::Read {
                 path: scratch.0.join("absent.toml"),
-                kind: io::ErrorKind::NotFound,
                 detail: "No such file or directory (os error 2)".into(),
             },
             format!(

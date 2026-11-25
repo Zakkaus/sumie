@@ -129,7 +129,6 @@ fn load_document(
         let unreadable = |error: io::Error| {
             at_entry(Problem::Read {
                 path: included.clone(),
-                kind: error.kind(),
                 detail: error.to_string(),
             })
         };
