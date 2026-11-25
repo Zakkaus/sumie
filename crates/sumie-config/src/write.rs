@@ -177,16 +177,24 @@ pub(crate) fn replace(current: &Snapshot, text: &[u8]) -> Result<Replaced, Write
         return Ok(Replaced::Changed);
     }
     fs::rename(&staged, path).map_err(|error| discard(failed(error)))?;
-    File::open(dir)
-        .and_then(|dir| dir.sync_all())
-        .map_err(failed)?;
-    let written = Snapshot::read(&current.path).map_err(failed)?;
-    if written.bytes != text {
-        return Err(WriteError::Verify {
+    confirm(current, dir, text)
+        .map(Replaced::Done)
+        .map_err(|source| WriteError::Unconfirmed {
             path: current.path.clone(),
-        });
+            source,
+        })
+}
+
+/// Make the rename durable and read the file back.
+fn confirm(current: &Snapshot, dir: &Path, text: &[u8]) -> io::Result<Snapshot> {
+    File::open(dir)?.sync_all()?;
+    let written = Snapshot::read(&current.path)?;
+    if written.bytes != text {
+        return Err(io::Error::other(
+            "it reads back differently from what was written",
+        ));
     }
-    Ok(Replaced::Done(written))
+    Ok(written)
 }
 
 fn create(staged: &Path) -> io::Result<File> {

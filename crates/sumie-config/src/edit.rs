@@ -17,7 +17,8 @@ use crate::{
 /// Attempts after the first when the file changes between staging and the rename.
 const RESTARTS: usize = 3;
 
-/// Why a settings edit was not saved. The file is unchanged in every case.
+/// Why a settings edit did not complete. Only [`WriteError::Unconfirmed`] follows a rename;
+/// in every other case the file is unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
     /// Another program changed `key` after the snapshot was read.
@@ -33,8 +34,10 @@ pub enum WriteError {
     Busy { path: PathBuf },
     #[error("{path}: {source}")]
     Io { path: PathBuf, source: io::Error },
-    #[error("{path} reads back differently from what was written")]
-    Verify { path: PathBuf },
+    /// The file was replaced, but syncing its directory or reading it back failed or read
+    /// other bytes, so the edit may not be on disk. Re-read the file before trusting it.
+    #[error("{path} was replaced but could not be confirmed: {source}")]
+    Unconfirmed { path: PathBuf, source: io::Error },
 }
 
 /// The file whose value of `key` the loader uses: `main` if it sets the key, otherwise the last
