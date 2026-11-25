@@ -29,13 +29,10 @@ use crate::platform::TimerSource as _;
 
 const BLINK: Duration = Duration::from_millis(600);
 
+/// The test page's window size in points.
+const SMOKE_SIZE: [u32; 2] = [480, 180];
+
 impl FrameWindow for Platform {
-    type Context = sumie_macos::WindowContext;
-
-    fn open(context: &Self::Context) -> Result<Self> {
-        Platform::create(context)
-    }
-
     fn frame_slot_available(&self) -> bool {
         !self.device_size().contains(&0)
     }
@@ -57,11 +54,11 @@ pub(crate) fn run(options: &capture::Options) -> Result<()> {
     sumie_macos::run(|context, readiness, event| {
         match (&mut state, event) {
             (None, Event::Resumed) => {
-                let window = Platform::open(context)?;
+                let window = Platform::create(context, "sumie", SMOKE_SIZE)?;
                 state = Some(Smoke::new(window, readiness, options.screenshot.is_some())?);
             }
             (Some(app), Event::Ready) => return app.ready(),
-            (Some(app), Event::NeedsRedraw) => app.window.request_redraw(),
+            (Some(app), Event::Resized | Event::Occluded(false)) => app.window.request_redraw(),
             (Some(app), Event::RedrawRequested) => {
                 return app.draw(options);
             }

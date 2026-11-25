@@ -10,7 +10,7 @@ use sumie_macos::{Event, Platform, WindowContext, readiness::Readiness, runner a
 use sumie_render::wgpu;
 
 use super::Smoke;
-use crate::{Result, capture, frame_window::FrameWindow};
+use crate::{Result, capture};
 
 mod wake;
 
@@ -82,12 +82,12 @@ impl Driver {
     ) -> Result<ControlFlow<()>> {
         match event {
             Event::Resumed if matches!(self.mode, Mode::Wake(None)) => {
-                let window = Platform::open(context)?;
+                let window = Platform::create(context, "sumie", super::SMOKE_SIZE)?;
                 native::name_window(&window);
                 self.mode = Mode::Wake(Some(wake::Wake::start(context, readiness, window)?));
             }
             Event::Resumed if self.state.is_none() && !matches!(self.mode, Mode::Wake(_)) => {
-                let window = Platform::open(context)?;
+                let window = Platform::create(context, "sumie", super::SMOKE_SIZE)?;
                 native::name_window(&window);
                 println!("runner window {}", self.started.elapsed().as_nanos());
                 window.request_redraw();
@@ -105,7 +105,7 @@ impl Driver {
                     let _ = smoke.ready()?;
                 }
             }
-            Event::NeedsRedraw => {
+            Event::Resized | Event::Occluded(false) => {
                 if let Some(smoke) = &self.state {
                     smoke.window.request_redraw();
                 }
@@ -126,7 +126,7 @@ impl Driver {
                 return Ok(ControlFlow::Break(()));
             }
             Event::CloseRequested => return Err("unexpected native close".into()),
-            Event::Resumed | Event::RunnerKey(_) => (),
+            _ => (),
         }
         Ok(ControlFlow::Continue(()))
     }

@@ -29,6 +29,17 @@ pub(crate) struct LinuxWindow {
 }
 
 impl LinuxWindow {
+    pub(crate) fn open(title: &str) -> Result<Self> {
+        let platform = Platform::connect(title)?;
+        Ok(Self {
+            watches: Watches::new(platform.loop_handle()),
+            platform,
+            batch: VecDeque::new(),
+            copy_serial: None,
+            notifier: notify::Notifier::new(),
+        })
+    }
+
     pub(crate) fn create_gpu(&self, capture: bool, minimum_contrast: f32) -> Result<Gpu> {
         let instance = wgpu::Instance::new(instance_descriptor(
             wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
@@ -66,19 +77,6 @@ impl LinuxWindow {
 }
 
 impl FrameWindow for LinuxWindow {
-    type Context = str;
-
-    fn open(title: &str) -> Result<Self> {
-        let platform = Platform::connect(title)?;
-        Ok(Self {
-            watches: Watches::new(platform.loop_handle()),
-            platform,
-            batch: VecDeque::new(),
-            copy_serial: None,
-            notifier: notify::Notifier::new(),
-        })
-    }
-
     fn frame_slot_available(&self) -> bool {
         self.platform.can_present()
     }

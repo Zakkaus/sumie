@@ -6,16 +6,29 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-macos-ci = ["dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-graphics", "dep:objc2-foundation"]
+macos-ci = [
+    "dep:objc2-core-graphics",
+    "objc2-app-kit/NSApplication",
+    "objc2-app-kit/NSGraphicsContext",
+    "objc2-app-kit/NSPasteboard",
+    "objc2-app-kit/NSResponder",
+    "objc2-app-kit/NSView",
+    "objc2-app-kit/NSWindow",
+    "objc2-foundation/NSArray",
+    "objc2-foundation/NSDate",
+    "objc2-foundation/NSObjCRuntime",
+    "objc2-foundation/NSRunLoop",
+]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { workspace = true, features = ["fs"] }
+objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSEvent", "NSGraphics", "NSScreen"] }
+objc2-core-graphics = { version = "0.3.2", optional = true, default-features = false, features = ["std", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation", "CGWindow", "libc"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDictionary", "NSString", "NSValue"] }
+sumie-core = { path = "../sumie-core" }
 tracing.workspace = true
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
-objc2 = { version = "0.6.5", optional = true, default-features = false, features = ["std"] }
-objc2-app-kit = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSEvent", "NSGraphicsContext", "NSPasteboard", "NSResponder", "NSView", "NSWindow"] }
-objc2-core-graphics = { version = "0.3.2", optional = true, default-features = false, features = ["std", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation", "CGWindow", "libc"] }
-objc2-foundation = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSArray", "NSDate", "NSObjCRuntime", "NSRunLoop", "NSString"] }
 
 [lints]
 workspace = true

@@ -29,9 +29,13 @@ const TITLE: &str = "sumie / CI runner probe";
 const F13: u16 = 0x69;
 const F14: u16 = 0x6b;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Ping(u64),
+    /// Text for the focused pane, as if typed: the rest of the line plus a carriage return.
+    Type(String),
+    /// Print the terminal driver's counters.
+    Report,
     Finish,
     Inspect,
     AppKitKeys,
@@ -66,10 +70,15 @@ impl Command {
             "restore" => Self::Step(Step::Restore),
             "fullscreen" => Self::Step(Step::Fullscreen),
             "windowed" => Self::Step(Step::Windowed),
-            line => line
-                .strip_prefix("ping ")
-                .and_then(|number| number.parse().ok())
-                .map_or(Self::Invalid, Self::Ping),
+            "report" => Self::Report,
+            line => {
+                if let Some(text) = line.strip_prefix("type ") {
+                    return Self::Type(format!("{text}\r"));
+                }
+                line.strip_prefix("ping ")
+                    .and_then(|number| number.parse().ok())
+                    .map_or(Self::Invalid, Self::Ping)
+            }
         }
     }
 }
@@ -126,10 +135,8 @@ pub fn run(callback: impl Callback) -> Result<()> {
         .name("sumie-runner-control".into())
         .spawn(move || control(&proxy))?;
     let mut handler = RunnerHandler(Handler {
-        callback,
-        bridge,
-        result: Ok(()),
         forward_runner_keys: true,
+        ..Handler::new(callback, bridge)
     });
     event_loop.run_app(&mut handler)?;
     handler.0.result
@@ -138,7 +145,8 @@ pub fn run(callback: impl Callback) -> Result<()> {
 fn control(proxy: &EventLoopProxy<Command>) {
     for line in io::stdin().lines() {
         let command = line.map_or(Command::Invalid, |line| Command::parse(&line));
-        if proxy.send_event(command).is_err() || command == Command::Invalid {
+        let last = command == Command::Invalid;
+        if proxy.send_event(command).is_err() || last {
             return;
         }
     }
@@ -162,6 +170,10 @@ impl<F: Callback> ApplicationHandler<Command> for RunnerHandler<F> {
 
     fn window_event(&mut self, context: &WindowContext, id: WindowId, event: WindowEvent) {
         self.0.window_event(context, id, event);
+    }
+
+    fn about_to_wait(&mut self, context: &WindowContext) {
+        self.0.about_to_wait(context);
     }
 }
 
