@@ -455,6 +455,11 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "                open.window.watches.dispatch()?;\n"
                            "                crate::platform::WindowOps::recover_frame_slot(&mut open.window);\n"),
               "flood: more than one present per refresh")
+        # Its marker is a rate, which hosted runners only record.
+        if os.environ.get("SUMIE_TIMING") != "record":
+            probe("an 8-byte PTY read buffer", "macos-throughput", "crates/sumie-pty/src/reader.rs",
+                  replace_once("const CHUNK_SIZE: usize = 8192;", "const CHUNK_SIZE: usize = 8;"),
+                  "(below 20 MB/s)")
 
 
 def interrupted(_signum, _frame):

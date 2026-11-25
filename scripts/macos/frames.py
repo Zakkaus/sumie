@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """U8 frame-slot checks on the terminal driver, run by check-gate.py.
 
-usage: frames.py {resize,idle,flood,timeout} BINARY [EVIDENCE_DIR]
+usage: frames.py {resize,idle,flood,timeout,throughput} BINARY [EVIDENCE_DIR]
 
 Each case starts `SUMIE_MACOS_CI_RUNNER=terminal` with frame-hook.dylib injected, a throwaway
 HOME, cursor blink off and /bin/sh as the login shell, and pings the main thread every 10 ms
 through the runner's proxy wake. Exit 0 on a pass, 1 on a violation, 2 if it cannot check.
-With SUMIE_TIMING=record (hosted runners), ping and acquire-time limits are reported, not enforced.
+With SUMIE_TIMING=record (hosted runners), ping, acquire-time and throughput limits are reported, not
+enforced.
   resize   A wgpu submission is held on an MTLSharedEvent while the window is dragged: no
            configure runs on a non-empty queue, a configure waits for it, pings stay <= 100 ms.
   idle     60 s with nothing changing: no present.
   flood    `seq` output, continuous and then in short bursts from idle: at most one present
            per refresh, median acquire <= 2 ms.
   timeout  Two nil drawables: no acquire for 1 s, then 2 s; pings stay <= 100 ms.
+  throughput  `head -c 64M /dev/zero | base64` through the pane reaches 20 MB/s.
 """
 import json
 import os
 from pathlib import Path
+import shlex
 import statistics
 import subprocess
 import sys
@@ -28,6 +31,9 @@ SCRIPTS = Path(__file__).resolve().parent
 PING_PERIOD = 0.010
 PING_LIMIT_MS = 100.0
 IDLE_SECONDS = 60.0
+THROUGHPUT_INPUT = 64 * 1024 * 1024
+THROUGHPUT_FLOOR_MB = 20.0
+THROUGHPUT_RECORD_SECONDS = 120.0
 CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n'
 RECORD_TIMING = os.environ.get("SUMIE_TIMING") == "record"
 
@@ -51,6 +57,7 @@ def build_tools(scratch, cg):
 
 class Runner:
     def __init__(self, binary, hook, home):
+        self.home = Path(home)
         config = Path(home) / "config"
         (config / "sumie").mkdir(parents=True)
         (config / "sumie/sumie.toml").write_text(CONFIG)
@@ -109,6 +116,14 @@ class Runner:
     def matching(self, *prefix, since=0.0):
         with self.lock:
             return [(at, fields) for at, fields in self.lines if at >= since and fields[:len(prefix)] == list(prefix)]
+
+    def wait_for_file(self, path, timeout=10.0):
+        end = time.monotonic() + timeout
+        while not path.exists():
+            if time.monotonic() > end:
+                raise CannotCheck(f"the shell did not create {path.name} within {timeout} s")
+            time.sleep(0.01)
+        return time.monotonic()
 
     def wait_for(self, *prefix, since=0.0, timeout=5.0):
         end = time.monotonic() + timeout
@@ -299,7 +314,35 @@ def case_timeout(runner, _cg, result):
     return errors
 
 
-CASES = {"resize": case_resize, "idle": case_idle, "flood": case_flood, "timeout": case_timeout}
+def case_throughput(runner, _cg, result):
+    # base64 writes whole blocks, so each read returns the PTY's 1 KiB maximum and the rate is
+    # sumie's: reader, readiness bridge and VT. A writer that makes one write per line (BSD
+    # `head` on a tty) is bound by its own write rate in any reader; see docs/research/m1b1.md.
+    start, done = runner.home / "throughput.start", runner.home / "throughput.done"
+    output = (THROUGHPUT_INPUT + 2) // 3 * 4
+    runner.send(f"type cd {shlex.quote(str(runner.home))}; : >{start.name}; "
+                f"head -c {THROUGHPUT_INPUT} /dev/zero | base64; : >{done.name}")
+    began = runner.wait_for_file(start)
+    limit = THROUGHPUT_RECORD_SECONDS if RECORD_TIMING else output / (THROUGHPUT_FLOOR_MB * 1e6)
+    while not done.exists() and time.monotonic() < began + limit + 0.5:
+        time.sleep(0.01)
+    if not done.exists():
+        runner.send("type \x03")
+        if RECORD_TIMING:
+            raise CannotCheck(f"base64 did not finish within {limit:.0f} s")
+        return [f"throughput: {output} bytes of base64 took over {limit:.1f} s "
+                f"(below {THROUGHPUT_FLOOR_MB:.0f} MB/s)"]
+    seconds = (done.stat().st_mtime_ns - start.stat().st_mtime_ns) / 1e9
+    rate = output / seconds / 1e6
+    result.update(bytes=output, seconds=seconds, mb_per_s=rate)
+    print(f"throughput: {output} bytes of base64 in {seconds:.2f} s ({rate:.1f} MB/s)")
+    if rate < THROUGHPUT_FLOOR_MB:
+        return timing([f"throughput: {rate:.1f} MB/s is below {THROUGHPUT_FLOOR_MB:.0f} MB/s"])
+    return []
+
+
+CASES = {"resize": case_resize, "idle": case_idle, "flood": case_flood, "timeout": case_timeout,
+         "throughput": case_throughput}
 
 
 def main():
