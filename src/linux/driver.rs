@@ -31,7 +31,7 @@ pub(crate) fn run(capture: capture::Options) -> Result<()> {
     drop(window);
     let reap = reaper.and_then(|reaper| {
         if let Some((mut session, mut reaper)) = session.zip(reaper) {
-            while session.has_closing() {
+            while session.closing_count() != 0 {
                 reaper.dispatch(session.closing_deadline())?;
                 session.service_closing(Instant::now(), &mut reaper)?;
             }

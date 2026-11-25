@@ -133,6 +133,7 @@ impl Driver {
                 return Ok(ControlFlow::Break(()));
             }
             Event::CloseRequested => return Err("unexpected native close".into()),
+            Event::Quit(_) => return Err("unexpected native Quit".into()),
             _ => (),
         }
         Ok(ControlFlow::Continue(()))

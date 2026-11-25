@@ -16,7 +16,10 @@ use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventType, CGPreflightPostEventAccess,
     CGPreflightScreenCaptureAccess, CGWindowListCopyWindowInfo, CGWindowListOption,
 };
-use objc2_foundation::{NSDate, NSPoint, NSRunLoop, NSString, ns_string};
+use objc2_foundation::{
+    NSAppleEventDescriptor, NSAppleEventSendOptions, NSDate, NSPoint, NSRunLoop, NSString,
+    ns_string,
+};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize},
@@ -27,7 +30,10 @@ use winit::{
     window::{Fullscreen, Window, WindowId},
 };
 
-use super::{Bridge, Callback, Event, Handler, Platform, Result, WindowContext, waker};
+use super::{
+    Bridge, Callback, Event, Handler, Platform, Result, WindowContext, intercept,
+    termination::Quit, waker,
+};
 
 const TITLE: &str = "sumie / CI runner probe";
 const F13: u16 = 0x69;
@@ -58,9 +64,20 @@ pub enum Command {
     Close,
     /// Window steps for the idle mode; see `scripts/macos-spike/animations.py`.
     Step(Step),
+    /// Ask `AppKit` to quit: `terminate:` as the Quit menu item does, or a quit Apple event
+    /// with a log-out reason, as loginwindow sends.
+    RequestQuit(Quit),
+    /// Fail the terminal driver with an injected error.
+    Fail,
+    /// Block the main thread for a minute: a stuck stage for the watchdog.
+    Stall,
+    /// Close the terminal window, then open a new one in the same process.
+    Cycle,
     Invalid,
     /// Not a controller command: the readiness bridge's wake.
     Wake,
+    /// Not a controller command: `AppKit` asked to quit.
+    Quit(Quit),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +153,11 @@ impl Command {
             "blur" => Self::Step(Step::Blur),
             "focus" => Self::Step(Step::Focus),
             "report" => Self::Report,
+            "quit" => Self::RequestQuit(Quit::Ordinary),
+            "system-quit" => Self::RequestQuit(Quit::System),
+            "fail" => Self::Fail,
+            "stall" => Self::Stall,
+            "cycle" => Self::Cycle,
             line => {
                 if let Some(text) = line.strip_prefix("type ") {
                     return Self::Type(format!("{text}\r"));
@@ -199,12 +221,13 @@ pub fn run(callback: impl Callback) -> Result<()> {
     let event_loop = EventLoop::<Command>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
     let bridge = Bridge::spawn(waker(proxy.clone(), Command::Wake))?;
+    let commands = proxy.clone();
     thread::Builder::new()
         .name("sumie-runner-control".into())
-        .spawn(move || control(&proxy))?;
+        .spawn(move || control(&commands))?;
     let mut handler = RunnerHandler(Handler {
         forward_runner_keys: true,
-        ..Handler::new(callback, bridge)
+        ..Handler::new(callback, bridge, intercept(proxy, Command::Quit))
     });
     event_loop.run_app(&mut handler)?;
     handler.0.result
@@ -224,16 +247,18 @@ struct RunnerHandler<F>(Handler<F>);
 
 impl<F: Callback> ApplicationHandler<Command> for RunnerHandler<F> {
     fn resumed(&mut self, context: &WindowContext) {
-        self.0.resumed(context);
+        self.0.resume(context);
     }
 
     fn user_event(&mut self, context: &WindowContext, event: Command) {
-        let event = match event {
-            Command::Wake if !self.0.bridge.readiness().accept_wake() => return,
-            Command::Wake => Event::Ready,
-            command => Event::RunnerCommand(command),
-        };
-        self.0.emit(context, event);
+        match event {
+            Command::Wake if self.0.bridge.readiness().accept_wake() => {
+                self.0.emit(context, Event::Ready);
+            }
+            Command::Wake => (),
+            Command::Quit(quit) => self.0.quit(context, quit),
+            command => self.0.emit(context, Event::RunnerCommand(command)),
+        }
     }
 
     fn window_event(&mut self, context: &WindowContext, id: WindowId, event: WindowEvent) {
@@ -353,6 +378,49 @@ impl RunLoopMode {
             run_loop.runMode_beforeDate(self.name(), &limit);
         }
     }
+}
+
+/// Ask `AppKit` to quit once no winit handler is running. A system quit sends this process the
+/// quit Apple event with `keyAEQuitReason` = `kAEReallyLogOut`, as loginwindow does; `AppKit`'s
+/// wait for the reply then runs inside this closure.
+pub fn request_quit(context: &WindowContext, quit: Quit) {
+    context.run_after_handler(move || match quit {
+        Quit::Ordinary => {
+            if let Some(app) = app() {
+                app.terminate(None);
+            }
+        }
+        Quit::System => {
+            if let Err(error) = send_system_quit() {
+                tracing::error!(%error, "could not send the quit Apple event");
+            }
+        }
+    });
+}
+
+fn send_system_quit() -> Result<()> {
+    const fn code(bytes: [u8; 4]) -> u32 {
+        u32::from_be_bytes(bytes)
+    }
+    let pid = i32::try_from(process::id())?;
+    let target = NSAppleEventDescriptor::descriptorWithProcessIdentifier(pid);
+    let event =
+        NSAppleEventDescriptor::appleEventWithEventClass_eventID_targetDescriptor_returnID_transactionID(
+            code(*b"aevt"),
+            code(*b"quit"),
+            Some(&target),
+            -1, // kAutoGenerateReturnID
+            0,  // kAnyTransactionID
+        );
+    event.setAttributeDescriptor_forKeyword(
+        &NSAppleEventDescriptor::descriptorWithTypeCode(code(*b"rlgo")),
+        code(*b"why?"),
+    );
+    let options = NSAppleEventSendOptions::NoReply | NSAppleEventSendOptions::NeverInteract;
+    event
+        .sendEventWithOptions_timeout_error(options, 10.0)
+        .map_err(|error| error.localizedDescription().to_string())?;
+    Ok(())
 }
 
 /// Run `closure` once no winit handler is running, through the fork's common-modes queue.

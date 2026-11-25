@@ -71,8 +71,8 @@ fn smoke(options: &capture::Options) -> Result<()> {
             (Some(app), Event::RedrawRequested) => {
                 return app.draw(options);
             }
-            (Some(app), Event::CloseRequested) => return app.close(),
-            (None, Event::CloseRequested) => return Ok(ControlFlow::Break(())),
+            (Some(app), Event::CloseRequested | Event::Quit(_)) => return app.close(),
+            (None, Event::CloseRequested | Event::Quit(_)) => return Ok(ControlFlow::Break(())),
             _ => (),
         }
         Ok(ControlFlow::Continue(()))

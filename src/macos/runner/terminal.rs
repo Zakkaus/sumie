@@ -1,13 +1,17 @@
 //! The terminal driver under the runner's controller: pings, typed text, window steps and
-//! counters, and one line per present for the frame-slot checks.
+//! counters, and one line per present for the frame-slot checks. For the close and Quit
+//! checks it also requests Quit, injects a fatal error or a stalled main thread, and closes
+//! and reopens its window in one process.
 
 use std::{
     ops::ControlFlow,
+    thread,
     time::{Duration, Instant},
 };
 
 use sumie_macos::{
     Event, Platform, WindowContext,
+    readiness::Readiness,
     runner::{self as native, Command},
 };
 
@@ -19,62 +23,102 @@ const SIZE: [u32; 2] = [640, 400];
 /// How long a report waits for the session; the driver starts it by its first-result
 /// deadline, so only a stuck start runs out.
 const REPORT_WAIT: Duration = Duration::from_secs(5);
+/// How long `stall` blocks the main thread: well past every drain deadline.
+const STALL: Duration = Duration::from_secs(60);
+
+/// What the controller asked for besides the driver's own state.
+#[derive(Default)]
+struct Control {
+    /// Set while a report waits for the session.
+    report: Option<Instant>,
+    /// The closing window reopens once drained.
+    cycle: bool,
+    cycles: u64,
+    presented: u64,
+}
 
 pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
     let mut driver = Driver::new(capture)?;
     let started = Instant::now();
-    let mut presented = 0;
-    let mut report = None;
-    let result = native::run(|context, readiness, event| match event {
-        Event::Resumed if matches!(driver.state, State::Starting) => {
-            let platform = Platform::create(context, "sumie", SIZE)?;
-            native::name_window(&platform);
-            driver.open(readiness, platform)?;
-            if let State::Open(open) = &mut driver.state {
-                open.window.fixed_title = true;
-                println!(
-                    "runner window {} {}",
-                    started.elapsed().as_nanos(),
-                    open.window.refresh().as_nanos()
-                );
+    let mut control = Control::default();
+    let result = native::run(|context, readiness, event| {
+        let flow = match event {
+            Event::Resumed if matches!(driver.state, State::Starting) => {
+                open(&mut driver, context, readiness, started)?;
+                return Ok(ControlFlow::Continue(()));
             }
-            Ok(ControlFlow::Continue(()))
-        }
-        Event::RunnerCommand(command) => {
-            self::command(&mut driver, context, command, &mut report)?;
-            Ok(ControlFlow::Continue(()))
-        }
-        event => {
-            match &event {
-                Event::Focused(focused) => println!("runner focused {focused}"),
-                Event::Occluded(occluded) => println!("runner occluded {occluded}"),
-                Event::Resized => println!("runner resized"),
-                _ => (),
+            Event::RunnerCommand(command) => {
+                let result = self::command(&mut driver, context, command, &mut control);
+                driver.settle(context, readiness, result.map(ControlFlow::Continue))?
             }
-            let flow = driver.handle(context, readiness, event)?;
-            report_presents(&driver, started, &mut presented);
-            pending_report(&driver, &mut report)?;
-            Ok(flow)
+            event => {
+                match &event {
+                    Event::Focused(focused) => println!("runner focused {focused}"),
+                    Event::Occluded(occluded) => println!("runner occluded {occluded}"),
+                    Event::Resized => println!("runner resized"),
+                    _ => (),
+                }
+                let flow = driver.handle(context, readiness, event)?;
+                report_presents(&driver, started, &mut control.presented);
+                let pending = pending_report(&driver, &mut control.report);
+                driver.settle(context, readiness, pending.map(|()| flow))?
+            }
+        };
+        if flow.is_break() && std::mem::take(&mut control.cycle) {
+            driver.termination.cancel();
+            driver = Driver::new(capture::Options::default())?;
+            control.presented = 0;
+            control.cycles += 1;
+            println!("runner cycled {}", control.cycles);
+            open(&mut driver, context, readiness, started)?;
+            return Ok(ControlFlow::Continue(()));
         }
+        Ok(flow)
     });
     result?;
     println!("runner dropped");
     Ok(())
 }
 
-/// `report` is set while a report waits for the session.
+fn open(
+    driver: &mut Driver,
+    context: &WindowContext,
+    readiness: &Readiness,
+    started: Instant,
+) -> Result<()> {
+    let platform = Platform::create(context, "sumie", SIZE)?;
+    native::name_window(&platform);
+    driver.open(readiness, platform)?;
+    if let State::Open(open) = &mut driver.state {
+        open.window.fixed_title = true;
+        println!(
+            "runner window {} {}",
+            started.elapsed().as_nanos(),
+            open.window.refresh().as_nanos()
+        );
+    }
+    Ok(())
+}
+
 fn command(
     driver: &mut Driver,
     context: &WindowContext,
     command: Command,
-    report: &mut Option<Instant>,
+    control: &mut Control,
 ) -> Result<()> {
     match command {
         Command::Ping(sequence) => println!("runner ack {sequence}"),
-        Command::Close => {
+        Command::Close | Command::Cycle => {
+            control.cycle = command == Command::Cycle;
             if !native::perform_close() {
                 return Err("the terminal window is missing at close".into());
             }
+        }
+        Command::RequestQuit(quit) => native::request_quit(context, quit),
+        Command::Fail => return Err("injected fault".into()),
+        Command::Stall => {
+            println!("runner stalling");
+            thread::sleep(STALL);
         }
         command => {
             let State::Open(open) = &mut driver.state else {
@@ -84,7 +128,9 @@ fn command(
                 Command::Type(text) => open.window.commit_text(text),
                 Command::Report => {
                     if !print_report(open)? {
-                        report.get_or_insert_with(|| Instant::now() + REPORT_WAIT);
+                        control
+                            .report
+                            .get_or_insert_with(|| Instant::now() + REPORT_WAIT);
                     }
                 }
                 Command::Step(step) => native::step(context, open.window.platform(), step)?,

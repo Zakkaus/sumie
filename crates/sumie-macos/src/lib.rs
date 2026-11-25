@@ -11,6 +11,7 @@ use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
     event_loop::{EventLoop, EventLoopProxy},
+    platform::macos::{ActiveEventLoopExtMacOS as _, QuitReason},
     window::WindowId,
 };
 
@@ -18,6 +19,7 @@ pub use winit::event_loop::ActiveEventLoop as WindowContext;
 
 pub use keyboard::{Key, Symbol};
 use readiness::{Bridge, Readiness};
+use termination::Quit;
 pub use window::{Platform, Pointer, double_click_interval};
 
 pub mod exit;
@@ -25,6 +27,7 @@ mod keyboard;
 pub mod readiness;
 #[cfg(feature = "macos-ci")]
 pub mod runner;
+pub mod termination;
 mod window;
 
 pub enum Event {
@@ -41,6 +44,9 @@ pub enum Event {
     AboutToWait,
     /// The readiness bridge has reports; take them with [`Readiness::take`].
     Ready,
+    /// `AppKit` asked to quit: drain, then return `Break`. A repeat arrives only to upgrade an
+    /// ordinary Quit to a system one.
+    Quit(Quit),
     Key(Key),
     /// The keyboard modifiers changed; winit reports empty modifiers when the window loses
     /// focus with any held.
@@ -55,16 +61,28 @@ pub enum Event {
 
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 
-/// Dispatch on the main thread. Return `Break` from the callback to exit.
+/// Dispatch on the main thread. Return `Break` from the callback to exit: through `AppKit` once
+/// an [`Event::Quit`] arrived, so the intercepted Quit proceeds, else by ending the loop.
+///
+/// An error ends the loop without `terminate:`, and `run` returns it, unless a system quit
+/// waits for its reply: then the error is logged and the reply lets the process exit, since
+/// log out, restart and shut down are never refused.
 ///
 /// # Errors
 /// Propagates window creation, event loop, bridge and application errors.
 pub fn run(callback: impl Callback) -> Result<()> {
-    let event_loop = EventLoop::new()?;
-    let bridge = Bridge::spawn(waker(event_loop.create_proxy(), ()))?;
-    let mut handler = Handler::new(callback, bridge);
+    let event_loop = EventLoop::<Wake>::with_user_event().build()?;
+    let proxy = event_loop.create_proxy();
+    let bridge = Bridge::spawn(waker(proxy.clone(), Wake::Ready))?;
+    let mut handler = Handler::new(callback, bridge, intercept(proxy, Wake::Quit));
     event_loop.run_app(&mut handler)?;
     handler.result
+}
+
+#[derive(Clone)]
+enum Wake {
+    Ready,
+    Quit(Quit),
 }
 
 /// The application callback: registrations go through the [`Readiness`] handle.
@@ -79,50 +97,99 @@ fn waker<T: Clone + Send + 'static>(proxy: EventLoopProxy<T>, event: T) -> impl 
     }
 }
 
+/// Installs the Quit hook once the loop runs; requests arrive as the loop's own user event.
+type Intercept = Box<dyn FnOnce(&WindowContext)>;
+
+fn intercept<T: 'static>(proxy: EventLoopProxy<T>, event: fn(Quit) -> T) -> Intercept {
+    Box::new(move |context| {
+        context.intercept_quit(proxy, move |reason: QuitReason| event(reason.into()));
+    })
+}
+
 struct Handler<F> {
     callback: F,
     bridge: Bridge,
     result: Result<()>,
     input: window::Input,
+    intercept: Option<Intercept>,
+    /// The strongest Quit winit holds until `finish_quit`.
+    quit: Option<Quit>,
+    /// The callback ended the loop; later events are not delivered.
+    done: bool,
     #[cfg(feature = "macos-ci")]
     forward_runner_keys: bool,
 }
 
 impl<F: Callback> Handler<F> {
-    fn new(callback: F, bridge: Bridge) -> Self {
+    fn new(callback: F, bridge: Bridge, intercept: Intercept) -> Self {
         Self {
             callback,
             bridge,
             result: Ok(()),
             input: window::Input::default(),
+            intercept: Some(intercept),
+            quit: None,
+            done: false,
             #[cfg(feature = "macos-ci")]
             forward_runner_keys: false,
         }
     }
 
     fn emit(&mut self, context: &WindowContext, event: Event) {
-        if context.exiting() {
+        if context.exiting() || self.done {
             return;
         }
         match (self.callback)(context, self.bridge.readiness(), event) {
             Ok(ControlFlow::Continue(())) => (),
-            Ok(ControlFlow::Break(())) => context.exit(),
+            Ok(ControlFlow::Break(())) => self.finish(context),
+            Err(error) if self.quit == Some(Quit::System) => {
+                tracing::error!(%error, "replying to the system quit after a fatal error");
+                self.finish(context);
+            }
             Err(error) => {
                 self.result = Err(error);
+                self.done = true;
                 context.exit();
             }
         }
     }
-}
 
-impl<F: Callback> ApplicationHandler for Handler<F> {
-    fn resumed(&mut self, context: &WindowContext) {
+    fn finish(&mut self, context: &WindowContext) {
+        self.done = true;
+        match self.quit {
+            Some(quit) => {
+                tracing::info!(reason = ?quit, "drained; letting AppKit quit");
+                context.finish_quit();
+            }
+            None => context.exit(),
+        }
+    }
+
+    fn resume(&mut self, context: &WindowContext) {
+        if let Some(intercept) = self.intercept.take() {
+            intercept(context);
+        }
         self.emit(context, Event::Resumed);
     }
 
-    fn user_event(&mut self, context: &WindowContext, (): ()) {
-        if self.bridge.readiness().accept_wake() {
-            self.emit(context, Event::Ready);
+    fn quit(&mut self, context: &WindowContext, quit: Quit) {
+        self.quit = self.quit.max(Some(quit));
+        self.emit(context, Event::Quit(quit));
+    }
+}
+
+impl<F: Callback> ApplicationHandler<Wake> for Handler<F> {
+    fn resumed(&mut self, context: &WindowContext) {
+        self.resume(context);
+    }
+
+    fn user_event(&mut self, context: &WindowContext, wake: Wake) {
+        match wake {
+            Wake::Ready if self.bridge.readiness().accept_wake() => {
+                self.emit(context, Event::Ready);
+            }
+            Wake::Ready => (),
+            Wake::Quit(quit) => self.quit(context, quit),
         }
     }
 

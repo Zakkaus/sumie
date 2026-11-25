@@ -56,6 +56,10 @@ impl Session {
         self.routing.forget_pane(id);
         let close = pane.pane.pty.close();
         if pane.pane.pty.exit_fd().is_some() {
+            tracing::debug!(
+                pane = id,
+                "sent SIGHUP; watching the child until it is reaped"
+            );
             watches.retire_pane(id);
             self.closing.push((id, pane.pane.pty));
         } else {
@@ -85,8 +89,8 @@ impl Session {
             .filter_map(|(id, pty)| pty.exit_fd().map(|fd| (*id, fd)))
     }
 
-    pub(crate) fn has_closing(&self) -> bool {
-        !self.closing.is_empty()
+    pub(crate) fn closing_count(&self) -> usize {
+        self.closing.len()
     }
 
     pub(crate) fn closing_deadline(&self) -> Option<Instant> {
@@ -108,6 +112,10 @@ impl Session {
             }
             if pty.exit_fd().is_none() {
                 watches.unregister(*id);
+                tracing::debug!(
+                    pane = *id,
+                    "reaped a closing child and removed its exit watch"
+                );
                 self.closing.swap_remove(index);
             } else {
                 index += 1;

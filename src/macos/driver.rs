@@ -11,6 +11,12 @@
 //! loading banner if none arrived by [`FIRST_RESULT`]; later results apply through
 //! `App::apply_config`. Closing stops the child, and the driver exits once it and every
 //! closing pane child are reaped.
+//!
+//! Close, Quit and a fatal error all drain the same way: retire every pane (SIGHUP), stop the
+//! configuration child, take the window off screen, release the GPU, then reap; the stages go
+//! to `sumie_macos::termination`, whose clock starts at the first of them. A system quit ends
+//! the reaping at its reply deadline, and a fatal error ends the loop with that error once
+//! drained.
 
 use std::{
     cell::Cell,
@@ -23,6 +29,7 @@ use sumie_config::{Config, user_config_path};
 use sumie_macos::{
     Event, Platform, WindowContext,
     readiness::{Interest, Key, Readiness},
+    termination::{Quit, Stage, Termination},
 };
 
 use super::{
@@ -33,7 +40,7 @@ use super::{
     window::MacWindow,
 };
 use crate::{
-    Result,
+    Error, Result,
     app::{App, Session, Wake},
     capture,
     frame_window::FrameWindow as _,
@@ -85,6 +92,10 @@ pub(super) struct Driver {
     /// Taken when the session starts.
     start: Option<Start>,
     pub(super) state: State,
+    /// Entered at the first Close, Quit or fatal error.
+    pub(super) termination: Termination,
+    /// The fatal error the loop ends with once draining is done.
+    failure: Option<Error>,
 }
 
 /// What the session starts with besides its first settings.
@@ -115,6 +126,8 @@ impl Driver {
                 environment,
             }),
             state: State::Starting,
+            termination: Termination::default(),
+            failure: None,
         })
     }
 
@@ -144,7 +157,72 @@ impl Driver {
         readiness: &Readiness,
         event: Event,
     ) -> Result<ControlFlow<()>> {
+        let result = self.step(context, readiness, event);
+        self.settle(context, readiness, result)
+    }
+
+    /// A fatal error drains like Close; the loop then ends with that error. An error while
+    /// draining after one ends the loop at once, with the first.
+    pub(super) fn settle(
+        &mut self,
+        context: &WindowContext,
+        readiness: &Readiness,
+        result: Result<ControlFlow<()>>,
+    ) -> Result<ControlFlow<()>> {
+        let flow = match result {
+            Ok(flow) => flow,
+            Err(error) => self.fail(context, readiness, error)?,
+        };
+        match (flow, self.failure.take()) {
+            (ControlFlow::Break(()), Some(error)) => Err(error),
+            (flow, failure) => {
+                self.failure = failure;
+                Ok(flow)
+            }
+        }
+    }
+
+    fn fail(
+        &mut self,
+        context: &WindowContext,
+        readiness: &Readiness,
+        error: Error,
+    ) -> Result<ControlFlow<()>> {
+        if let Some(first) = self.failure.take() {
+            tracing::error!(%error, "a second error ended draining");
+            return Err(first);
+        }
+        tracing::error!(%error, "draining after a fatal error");
+        self.failure = Some(error);
+        self.drain(context, readiness, Quit::Ordinary)
+            .or_else(|error| self.fail(context, readiness, error))
+    }
+
+    /// Enter draining, or upgrade it to a system quit, from whatever stage the window is in.
+    fn drain(
+        &mut self,
+        context: &WindowContext,
+        readiness: &Readiness,
+        quit: Quit,
+    ) -> Result<ControlFlow<()>> {
+        self.termination.begin(quit)?;
+        match &self.state {
+            State::Starting => return Ok(ControlFlow::Break(())),
+            State::Open(_) => self.hide(context)?,
+            State::Hiding(..) => (),
+            State::Reaping(_) => return self.reap(readiness),
+        }
+        Ok(ControlFlow::Continue(()))
+    }
+
+    fn step(
+        &mut self,
+        context: &WindowContext,
+        readiness: &Readiness,
+        event: Event,
+    ) -> Result<ControlFlow<()>> {
         match (&mut self.state, event) {
+            (_, Event::Quit(quit)) => return self.drain(context, readiness, quit),
             (State::Open(open), Event::AboutToWait) => {
                 if open.turn(readiness, &mut self.start)? {
                     self.hide(context)?;
@@ -170,6 +248,7 @@ impl Driver {
     /// Retire every pane and stop the configuration child, then take the window off screen
     /// outside the handler.
     fn hide(&mut self, context: &WindowContext) -> Result<()> {
+        self.termination.begin(Quit::Ordinary)?;
         let State::Open(mut open) = std::mem::replace(&mut self.state, State::Starting) else {
             unreachable!("only an open window hides");
         };
@@ -184,6 +263,7 @@ impl Driver {
             .platform()
             .order_out(context, move || done.set(true));
         self.state = State::Hiding(open, hidden);
+        self.termination.stage(Stage::Hiding, 1);
         close.and(stop)
     }
 
@@ -199,6 +279,7 @@ impl Driver {
             reload,
             ..
         } = *open;
+        self.termination.stage(Stage::Releasing, 1);
         if let Some(app) = &app
             && !app.gpu().wait_idle(DRAIN)
         {
@@ -224,20 +305,30 @@ impl Driver {
         watches.dispatch()?;
         // Results that arrive after the close no longer apply.
         reload.service(watches)?;
+        let now = Instant::now();
+        let reply_by = self.termination.reply_by();
+        // The configuration child's exit watch and kill timer report through `Event::Ready`.
+        let mut open = usize::from(!reload.reaped());
+        let mut deadline = reply_by;
         if let Some(session) = session {
-            session.service_closing(Instant::now(), watches)?;
-            if session.has_closing() {
-                wake_at(readiness, session.closing_deadline())?;
-                return Ok(ControlFlow::Continue(()));
-            }
+            session.service_closing(now, watches)?;
+            open += session.closing_count();
+            deadline = deadline.into_iter().chain(session.closing_deadline()).min();
         }
-        readiness.remove(DEADLINE);
-        // The child's exit watch and its kill timer report through `Event::Ready`.
-        Ok(if reload.reaped() {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        })
+        if open == 0 || reply_by.is_some_and(|at| at <= now) {
+            if open > 0 {
+                tracing::warn!(
+                    open,
+                    "replying to the system quit; launchd inherits the rest"
+                );
+            }
+            self.termination.stage(Stage::Exiting, open);
+            readiness.remove(DEADLINE);
+            return Ok(ControlFlow::Break(()));
+        }
+        self.termination.stage(Stage::Reaping, open);
+        wake_at(readiness, deadline)?;
+        Ok(ControlFlow::Continue(()))
     }
 }
 
@@ -329,4 +420,27 @@ fn wake_at(readiness: &Readiness, at: Option<Instant>) -> Result<()> {
         None => readiness.remove(DEADLINE),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use sumie_macos::termination::SYSTEM_KILL;
+    use sumie_pty::{Command, Size, SpawnOptions};
+
+    /// A system quit kills closing children by `SYSTEM_KILL`; panes rely on the PTY's grace
+    /// period never being longer, since nothing shortens it.
+    #[test]
+    fn the_pane_grace_period_ends_by_the_system_kill() {
+        let env = BTreeMap::new();
+        let size = Size {
+            cols: 80,
+            rows: 24,
+            width_px: 0,
+            height_px: 0,
+        };
+        let options = SpawnOptions::new(Command::LoginShell, &env, size);
+        assert!(options.close_grace <= SYSTEM_KILL);
+    }
 }
