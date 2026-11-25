@@ -275,6 +275,27 @@ fn symlinks_modes_and_watch_survive_writes() {
     assert_eq!(fs::read_dir(&dotfiles).unwrap().count(), 2);
 }
 
+#[test]
+fn a_link_to_a_missing_file_stays_a_link() {
+    let scratch = Scratch::new("edit-dangling");
+    let (dotfiles, config) = (scratch.0.join("dotfiles"), scratch.0.join("config"));
+    fs::create_dir(&dotfiles).unwrap();
+    fs::create_dir(&config).unwrap();
+    let main = config.join("sumie.toml");
+    // Two hops, the first relative to the link's own directory.
+    symlink("../dotfiles/link.toml", &main).unwrap();
+    symlink(dotfiles.join("sumie.toml"), dotfiles.join("link.toml")).unwrap();
+
+    set(&main, "font.size", &Value::Float(16.0)).unwrap();
+    assert!(fs::symlink_metadata(&main).unwrap().is_symlink());
+    assert!(
+        fs::symlink_metadata(dotfiles.join("link.toml"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(text(&dotfiles.join("sumie.toml")), "[font]\nsize = 16.0\n");
+}
+
 /// A loaded watch on `main`, waited on the way the platform's event loop does.
 struct Watched {
     watch: Watch,
