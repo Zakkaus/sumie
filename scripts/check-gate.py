@@ -31,6 +31,8 @@ GATED_LINTS = {
 CLIPPY_CONFIGS = {"clippy.toml", ".clippy.toml"}
 TEST_SUMMARY = re.compile(r"^test result: (ok|FAILED)\. ([0-9]+) passed;")
 CARGO_RECORDS = ("compiler-artifact", "compiler-message", "build-script-executed", "build-finished")
+FULL_REV = re.compile(r"[0-9a-f]{40}")
+DEBUG_PRINT = re.compile(r"\b(?:e?println|dbg)!")
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -216,6 +218,43 @@ def check_clippy_configs():
     return errors
 
 
+def check_patches():
+    """Git patches pin the locked commit; vendored diffs add no debug prints."""
+    try:
+        with (ROOT / "Cargo.toml").open("rb") as manifest:
+            patches = tomllib.load(manifest).get("patch", {})
+        with (ROOT / "Cargo.lock").open("rb") as lock:
+            locked = tomllib.load(lock)
+        vendored = ROOT / "third_party"
+        files = sorted(vendored.rglob("*.patch")) if vendored.is_dir() else []
+        diffs = {path.relative_to(ROOT): path.read_text(encoding="utf-8") for path in files}
+    except (OSError, UnicodeError, ValueError) as error:
+        raise CannotCheck(f"patches: {error}") from error
+    packages = locked.get("package", []) + locked.get("patch", {}).get("unused", [])
+    sources = {pkg.get("source", "") for pkg in packages}
+    errors = []
+    entries = 0
+    for registry, table in patches.items():
+        for name, spec in table.items():
+            if not isinstance(spec, dict) or "git" not in spec:
+                continue
+            entries += 1
+            entry = f"patch: [patch.{registry}] {name}"
+            rev = spec.get("rev", "")
+            if "branch" in spec or "tag" in spec:
+                errors.append(f"{entry}: pin a full rev, not a branch or tag")
+            elif not FULL_REV.fullmatch(rev):
+                errors.append(f"{entry}: rev must be a full 40-hex commit")
+            elif not any(src.startswith("git+") and src.endswith(f"#{rev}") for src in sources):
+                errors.append(f"{entry}: rev {rev} is not the commit in Cargo.lock")
+    for path, diff in diffs.items():
+        for number, line in enumerate(diff.splitlines(), 1):
+            if line.startswith("+") and not line.startswith("+++") and DEBUG_PRINT.search(line):
+                errors.append(f"patch: {path}:{number}: debug print in an added line")
+    print(f"patches: scanned {entries} git patch entries and {len(diffs)} third_party patch files")
+    return errors
+
+
 def reserved_name(name):
     return name.replace("_", "-").removeprefix("sumie-") in FORBIDDEN_NAMES
 
@@ -229,6 +268,7 @@ def check_structure():
     errors = check_edges(packages)
     errors.extend(check_members(packages))
     errors.extend(check_clippy_configs())
+    errors.extend(check_patches())
     roots = set()
     safe_roots = set()
     crate_names = set()
@@ -348,6 +388,8 @@ def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
         "clippy": ("clippy", "--locked", "--workspace", "--all-targets", "--message-format=json", "--", "-D", "warnings"),
+        "clippy-macos-ci": ("clippy", "--locked", "--workspace", "--all-targets", "--features", "macos-ci",
+                            "--message-format=json", "--", "-D", "warnings"),
         "test": ("test", "--locked", "--workspace", "--message-format=json"),
     }
     parser = argparse.ArgumentParser()
@@ -365,6 +407,8 @@ def main():
                 sys.exit("macos-quit: set SUMIE_SPIKE_EVIDENCE to an evidence directory")
             return int(any(subprocess.call(["bash", ROOT / "scripts/macos-spike/quit.sh", evidence, case])
                               for case in ("menu", "key", "nested")))
+        if gate == "clippy-macos-ci" and sys.platform != "darwin":
+            raise CannotCheck("the macos-ci feature builds only on macOS")
         if gate == "structure":
             return check_structure()
         if gate == "terminfo":

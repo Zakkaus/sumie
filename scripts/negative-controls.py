@@ -121,6 +121,12 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
          "workspace: crates/sumie-orphan: directory is not a workspace member", True),
     ):
         probe(name, "structure", path, edit, marker, new=new)
+    probe("git patch pinned to a branch", "structure", "Cargo.toml",
+          append('[patch.crates-io]\nwinit = { git = "https://github.com/Zakkaus/winit", branch = "sumie/0.30.13" }\n'),
+          "patch: [patch.crates-io] winit: pin a full rev, not a branch or tag")
+    probe("debug print in a vendored patch", "structure", "third_party/0001-probe.patch",
+          append('--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n fn probe() {}\n+eprintln!("probe");\n'),
+          "patch: third_party/0001-probe.patch:6: debug print in an added line", new=True)
     probe("file length", "structure", CORE, append("// Deliberate line-limit probe.\n" * 601),
           "lines exceeds 600")
     probe("forbidden module", "structure", CORE, append("mod /* nested /* comment */ */ r#helper {}\n"),
@@ -303,6 +309,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "        }"),
               "test tests::search_pointer_only_scrolls_history ... FAILED")
     if sys.platform == "darwin":
+        probe("pedantic lint in macos-ci code", "clippy-macos-ci", "crates/sumie-macos/src/runner.rs",
+              append("#[must_use]\npub fn narrow_probe(value: u16) -> u8 {\n    value as u8\n}\n"),
+              "clippy::cast_possible_truncation")
         probe("Core Text bypasses the fallback cascade", "test", "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),
               "test tests::core_text_loads_the_named_collection_face_and_cjk_fallback ... FAILED")
