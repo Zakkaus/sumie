@@ -518,6 +518,31 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
             probe("an 8-byte PTY read buffer", "macos-throughput", "crates/sumie-pty/src/reader.rs",
                   replace_once("const CHUNK_SIZE: usize = 8192;", "const CHUNK_SIZE: usize = 8;"),
                   "(below 20 MB/s)")
+    if sys.platform.startswith("linux") and shutil.which("kwin_wayland"):
+        pane_controls()
+    else:
+        print("\n== skipped: the pane budget controls need kwin_wayland", flush=True)
+
+
+def pane_controls():
+    probe("150 ms busy wait in Session::draw", "panes", "src/app.rs",
+          replace_once("    ) -> Result<bool> {\n        self.frame_retry = None;\n",
+                       "    ) -> Result<bool> {\n        let busy = Instant::now();\n"
+                       "        while busy.elapsed() < Duration::from_millis(150) {}\n"
+                       "        self.frame_retry = None;\n"),
+          "(stall gap over 100 ms)")
+    probe("one writer never prints", "panes", "scripts/perf/stall.py",
+          replace_once("        if os.path.exists(stop):\n", "        if os.path.exists(stop) or index == 7:\n"),
+          "FAIL: 19 of 20 panes advanced")
+    probe("only the first ten visible panes refresh", "panes", "src/app/pane_layout.rs",
+          replace_once("            pane.rebuild_snapshot()?;\n",
+                       "            if i < 10 || pane.snapshot.is_none() {\n"
+                       "                pane.rebuild_snapshot()?;\n            }\n"),
+          "starved: a line waited")
+    probe("frame log hook removed", "panes", "src/app.rs",
+          replace_once("                self.frame_log\n"
+                       "                    .presented(self.view.repainted_panes().filter(|_| dirty));\n", ""),
+          "FAIL: no frame log")
 
 
 def interrupted(_signum, _frame):

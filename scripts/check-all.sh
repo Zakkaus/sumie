@@ -22,7 +22,13 @@ linux_panes=
 if [ "$(uname -s)" = Linux ] && command -v kwin_wayland >/dev/null; then
     linux_panes=linux-panes
 fi
-for gate in structure terminfo shell fmt clippy $macos_ci test $macos_window; do
+# The pane budget runs in a private nested KWin for about a minute, so only the full gate
+# on a Linux host with KWin runs it.
+panes=
+if [ "$fast" = false ] && [ "$(uname -s)" = Linux ] && command -v kwin_wayland >/dev/null; then
+    panes=panes
+fi
+for gate in structure terminfo shell fmt clippy $macos_ci test $macos_window $panes; do
     python3 "$scripts/check-gate.py" "$gate" || exit "$?"
 done
 

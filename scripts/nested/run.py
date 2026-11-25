@@ -15,13 +15,16 @@ SOCKET = "wl-sumie"
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        usage="run.sh SCALE SECONDS [--input] [--type TEXT [--after-ms MS]] -- CLIENT [ARGS ...]",
+        usage="run.sh SCALE SECONDS [--type TEXT | --keys CHORDS [--after-ms MS] | --injector]"
+              " -- CLIENT [ARGS ...]",
     )
     parser.add_argument("scale", type=float)
     parser.add_argument("seconds", type=float)
-    parser.add_argument("--type", dest="text", help="UTF-8 text; a newline presses Enter")
-    parser.add_argument("--input", action="store_true",
-                        help="build the injector and export its path as SUMIE_NESTED_INPUT")
+    inject = parser.add_mutually_exclusive_group()
+    inject.add_argument("--type", dest="text", help="UTF-8 text; a newline presses Enter")
+    inject.add_argument("--keys", help="comma-separated chords such as ctrl+shift+e,ctrl+alt+left")
+    inject.add_argument("--injector", action="store_true",
+                        help="export the input helper to the client as SUMIE_NESTED_TYPE")
     parser.add_argument("--after-ms", type=int, help="delay from client launch (default: 1500)")
     args = sys.argv[1:]
     split = args.index("--") if "--" in args else len(args)
@@ -31,9 +34,11 @@ def parse_args():
         parser.error("expected -- followed by a client command")
     if any(not math.isfinite(n) or n <= 0 for n in (options.scale, options.seconds)):
         parser.error("scale and seconds must be positive finite numbers")
-    if options.after_ms is not None and options.text is None:
-        parser.error("--after-ms requires --type")
-    if options.text is not None:
+    options.input = (None if options.text is None and options.keys is None
+                     else [options.text] if options.keys is None else ["--keys", options.keys])
+    if options.after_ms is not None and options.input is None:
+        parser.error("--after-ms requires --type or --keys")
+    if options.input is not None:
         options.after_ms = 1500 if options.after_ms is None else options.after_ms
         if not 0 <= options.after_ms < options.seconds * 1000:
             parser.error("--after-ms must fall within the client timeout")
@@ -69,11 +74,11 @@ def run_client(options, command, injector):
     client = subprocess.Popen(["timeout", "--kill-after=2s", str(options.seconds), *command])
     deadline = time.monotonic() + options.seconds
     try:
-        if options.text is not None:
+        if injector is not None:
             try:
                 status = client.wait(timeout=options.after_ms / 1000)
             except subprocess.TimeoutExpired:
-                subprocess.run([injector, options.text], check=True,
+                subprocess.run([injector, *options.input], check=True,
                                timeout=max(0, deadline - time.monotonic()))
             else:
                 if status == 0:
@@ -93,9 +98,8 @@ def main():
             or "DISPLAY" in os.environ or "WAYLAND_SOCKET" in os.environ):
         raise RuntimeError("start with run.sh to create a private runtime and D-Bus session")
 
-    injector = build_injector(runtime) if options.text is not None or options.input else None
-    if options.input:
-        os.environ["SUMIE_NESTED_INPUT"] = str(injector)
+    injector = (build_injector(runtime)
+                if options.input is not None or options.injector else None)
     env = os.environ.copy()
     if injector is not None:
         env.update(KWIN_WAYLAND_NO_PERMISSION_CHECKS="1", KWIN_XKB_DEFAULT_KEYMAP="1",
@@ -115,6 +119,9 @@ def main():
         # Virtual outputs can start at scale 1 despite KWin's --scale argument.
         subprocess.run(["kscreen-doctor", f"output.Virtual-0.scale.{options.scale}"],
                        check=True, timeout=10, env=dict(os.environ, QT_QPA_PLATFORM="wayland"))
+        if options.injector:
+            os.environ["SUMIE_NESTED_TYPE"] = str(injector)
+            injector = None
         return run_client(options, command, injector)
     finally:
         stop(kwin)

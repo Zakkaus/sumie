@@ -87,7 +87,7 @@ class Run:
         self.errors = []
 
     def chord(self, chord):
-        subprocess.run([self.injector, '--chord', chord], check=True, timeout=10)
+        subprocess.run([self.injector, '--keys', chord], check=True, timeout=10)
 
     def type(self, text):
         subprocess.run([self.injector, text], check=True, timeout=10)
@@ -234,7 +234,7 @@ def main():
     parent = sys.argv[1]
     artifacts = artifact_dir(parent, 'panes.')
     print(f'Artifacts: {artifacts}', file=sys.stderr, flush=True)
-    injector = os.environ.get('SUMIE_NESTED_INPUT')
+    injector = os.environ.get('SUMIE_NESTED_TYPE')
     if not injector:
         raise RuntimeError('start with panes.sh, which asks the runner for the key injector')
     home = artifacts / 'home'

@@ -101,35 +101,57 @@ presentation log. The one-minute host load average at sample end was
 
 ## Presentation stall watchdog
 
-From the repository root, build an optimized binary with debug assertions and
-run the check in the same private KWin setup as the startup baseline:
+From the repository root, build the release binary and run the check in the
+same private KWin setup as the startup baseline:
 
 ```sh
 export CARGO_TARGET_DIR=/scratch/ssd/sumie-target-present
-CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo build --release --locked
-SUMIE_BIN="$CARGO_TARGET_DIR/release/sumie" scripts/perf/stall.sh /absolute/path/to/artifacts
+cargo build --release --locked
+SUMIE_BIN="$CARGO_TARGET_DIR/release/sumie" scripts/perf/stall.sh /absolute/path/to/artifacts 60 --panes 20
 ```
 
-The check defaults to 60 seconds. It launches one sumie window with a pane that
-prints a changing line every 10 ms. The independent watchdog starts before sumie
-launches and reports the wait for the first visible `presented` as startup time.
-The stall check passes only if it observes a visible `presented` and no visible
-gap after it exceeds 100 ms, including the tail at test end. A `discarded`
-does not reset the clock. The watchdog reports suspended intervals separately
-and starts a new visible interval on restore.
+`SECONDS` is the measured interval. Every pane's login shell is a writer that
+prints one changing line every 100 ms and reads `CLOCK_MONOTONIC` just before
+and after each write. A loaded host can preempt the writer between the two, so a
+frame counts for a line only if it took its snapshot after the first stamp, and
+each wait is measured from the second; the run reports how many writes spanned
+more than 10 ms. `--panes N` splits the window into N panes with injected
+Ctrl+Shift+E/O and Ctrl+Alt+Arrow chords (default 1). The interval starts 1 s
+after the last pane's writer started. `--refresh-hz HZ` adds and selects a
+custom mode on the virtual output first; the default output runs at 60 Hz.
 
-`SUMIE_PRESENT_LOG` appends feedback receipt and visibility transitions with
-`CLOCK_MONOTONIC` timestamps in nanoseconds. The log is available only in
-builds with debug assertions. The watchdog keeps it, the client log, and the
-virtual output mode under the supplied artifact directory.
+The independent watchdog starts before sumie launches and reports the wait for
+the first visible `presented` as startup time. The stall check passes only if
+every line written during the interval while the window was visible is followed
+by a visible `presented` within 100 ms. A writer prints every 100 ms, so a pane
+legitimately goes idle between lines; measuring from output rather than from the
+previous `presented` keeps those idle periods from counting as stalls, and is
+the same check as a 100 ms presentation gap while output is continuous. The
+watchdog also prints the largest gap between visible presentations in the
+interval. A `discarded` does not count as a presentation. By default presentation events come
+from the `WAYLAND_DEBUG` trace, which has no visibility events. With
+`--present-log`, they come from `SUMIE_PRESENT_LOG` instead, which needs a
+build with debug assertions
+(`CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true`). It appends feedback receipt and
+visibility transitions with `CLOCK_MONOTONIC` timestamps in nanoseconds, so the
+watchdog reports suspended intervals separately and starts a new visible
+interval on restore.
+
+The run also sets `SUMIE_FRAME_LOG` (see `ARCHITECTURE.md`) and fails if the log
+has no records, if any writer printed fewer than two lines in the interval, or
+if a pane starved: within 200 ms of each write, a frame that took its snapshot
+after the line must have repainted that pane and returned from present. It prints frame CPU (snapshot
+refresh start to present returned) p50, p99 and maximum, per-stage p50/p99, and
+each pane's worst line-to-repaint latency and repaint gap. The artifact
+directory keeps the frame log, the writers' stamps, the client log and the
+virtual output mode.
 
 The full gate is four hours (`14400` seconds) with 20 panes producing output.
-Pass `14400` as the second argument to extend the single-pane check to four
-hours; that run does not cover the full gate's 20-pane workload.
+The `panes` merge gate runs the same check for 20 seconds.
 
 ### Recorded 60-second check
 
-On 2026-11-23, virtual KWin 6.8.3 at 60 Hz and scale 1.25 reported 3,586
+This run used the earlier single-pane workload, one line every 10 ms. On 2026-11-23, virtual KWin 6.8.3 at 60 Hz and scale 1.25 reported 3,586
 `presented`, zero `discarded`, and no suspended intervals. The one-minute host
 load average at launch was 31.54. The original watchdog failed because it counted
 the 194.098 ms startup against the stall limit. The maximum after the first

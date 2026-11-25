@@ -58,6 +58,8 @@ TEST_TIMEOUT = 600
 TEST_GATES = ("test", "font-test")
 PANES_TIMEOUT = 700
 PANES_TOOLS = ("kwin_wayland", "kscreen-doctor", "wayland-scanner", "cc", "pkg-config")
+PANES = 20
+PANES_SECONDS = 20
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -558,6 +560,24 @@ def check_linux_panes():
     raise CannotCheck(f"the scenario exited {result.returncode} without a verdict")
 
 
+def check_panes():
+    """20 writer panes in a private nested KWin, release build: every writer advances, each
+    pane repaints within 200 ms of every line, and no presentation gap exceeds 100 ms."""
+    if sys.platform != "linux" or not shutil.which("kwin_wayland"):
+        raise CannotCheck("the pane budget needs kwin_wayland for a private nested session")
+    binary = built_binary("--release")
+    artifacts = tempfile.mkdtemp(prefix="sumie-panes.")
+    result = subprocess.run(["sh", ROOT / "scripts/perf/stall.sh", artifacts, str(PANES_SECONDS),
+                             "--panes", str(PANES)], env={**os.environ, "SUMIE_BIN": binary},
+                            stdin=subprocess.DEVNULL)
+    if result.returncode:
+        print(f"panes: stall.sh exited {result.returncode}; artifacts kept in {artifacts}",
+              file=sys.stderr)
+        return 1
+    shutil.rmtree(artifacts)
+    return 0
+
+
 def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
@@ -569,8 +589,8 @@ def main():
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
-                                         "macos-keys", "linux-panes", *FRAME_GATES, *LIFETIME_GATES,
-                                         *commands))
+                                         "macos-keys", "linux-panes", "panes", *FRAME_GATES,
+                                         *LIFETIME_GATES, *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -598,6 +618,8 @@ def main():
             return check_macos_lifetime(LIFETIME_GATES[gate])
         if gate == "linux-panes":
             return check_linux_panes()
+        if gate == "panes":
+            return check_panes()
         if gate == "structure":
             return check_structure()
         if gate == "terminfo":

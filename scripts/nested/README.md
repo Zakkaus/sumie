@@ -18,9 +18,14 @@ for Enter and a literal tab for Tab. Choose a delay long enough for the client
 window to take focus. Omit `--type` to run without injection. `SECONDS` limits the
 client's runtime; a timeout exits with status 124 (137 if forced to kill it).
 
-`--input` builds the injector without typing and exports its path as
-`SUMIE_NESTED_INPUT`, so a client can drive the window itself. `type --chord ctrl+shift+e`
-presses the named modifiers around one US-keymap letter or digit (`ctrl`, `shift`, `alt`, `super`).
+`--keys CHORDS` sends comma-separated chords instead of text, for example
+`--keys ctrl+shift+e,ctrl+alt+left`. Each chord presses its keys in order and
+releases them in reverse. Names are `ctrl`, `shift`, `alt`, `super`, `left`,
+`right`, `up`, `down`, `enter`, `tab`, `esc` and the letters `a`–`z`; they are
+sent as US keycodes on both fake input versions. `--injector` builds the helper
+without sending anything and exports its path to the client as
+`SUMIE_NESTED_TYPE`, so a test harness can run `"$SUMIE_NESTED_TYPE" TEXT` or
+`"$SUMIE_NESTED_TYPE" --keys CHORDS` whenever it needs to.
 
 For a screenshot, pass `--exit-after-frames N --screenshot /path/to/output.png`
 to sumie. Choose a frame count reached after the output you want to capture.

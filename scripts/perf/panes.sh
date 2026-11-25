@@ -7,4 +7,4 @@ if [ "$#" -ne 1 ]; then
     exit 2
 fi
 # 400 cycles take about two minutes; the limit covers a loaded host.
-exec sh "$perf/run.sh" 600 --input -- python3 -B "$perf/panes.py" "$1"
+exec sh "$perf/run.sh" 600 --injector -- python3 -B "$perf/panes.py" "$1"
