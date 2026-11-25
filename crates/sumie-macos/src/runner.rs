@@ -37,7 +37,7 @@ pub enum Command {
     AppKitKeys,
     CgKeys,
     Close,
-    /// Measurement steps for the timing mode; see `scripts/macos-spike/animations.py`.
+    /// Window steps for the idle mode; see `scripts/macos-spike/animations.py`.
     Step(Step),
     Invalid,
     /// Not a controller command: the readiness bridge's wake.

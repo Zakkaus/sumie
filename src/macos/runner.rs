@@ -26,6 +26,8 @@ pub(super) enum Mode {
     Timing(Option<Sample>),
     Capabilities,
     Wake(Option<wake::Wake>),
+    /// One frame, then pings and window steps while `AppKit` animates.
+    Idle,
 }
 
 impl Mode {
@@ -34,6 +36,7 @@ impl Mode {
             Ok(value) if value == "timing" => Ok(Some(Self::Timing(None))),
             Ok(value) if value == "capabilities" => Ok(Some(Self::Capabilities)),
             Ok(value) if value == "wake" => Ok(Some(Self::Wake(None))),
+            Ok(value) if value == "idle" => Ok(Some(Self::Idle)),
             Err(env::VarError::NotPresent) => Ok(None),
             _ => Err("invalid SUMIE_MACOS_CI_RUNNER mode".into()),
         }
@@ -133,9 +136,11 @@ impl Driver {
                     return Err("native probe window is missing at close".into());
                 }
             }
-            (Mode::Timing(_), Command::Ping(sequence)) => println!("runner ack {sequence}"),
+            (Mode::Timing(_) | Mode::Idle, Command::Ping(sequence)) => {
+                println!("runner ack {sequence}");
+            }
             (Mode::Timing(Some(sample)), Command::Finish) => sample.report()?,
-            (Mode::Timing(_), Command::Step(step)) => {
+            (Mode::Idle, Command::Step(step)) => {
                 let window = &self.state.as_ref().ok_or("no window for the step")?.window;
                 println!("runner step {step:?} {}", self.started.elapsed().as_nanos());
                 native::step(context, window, step);
@@ -175,7 +180,7 @@ fn repaint(mode: &mut Mode, smoke: &mut Smoke, started: Instant) -> Result<()> {
     }
     let count = smoke.surface.present_count();
     let clear = match mode {
-        Mode::Capabilities | Mode::Wake(_) => FIXTURE,
+        Mode::Capabilities | Mode::Wake(_) | Mode::Idle => FIXTURE,
         Mode::Timing(_) if count.is_multiple_of(2) => wgpu::Color::RED,
         Mode::Timing(_) => wgpu::Color::BLUE,
     };

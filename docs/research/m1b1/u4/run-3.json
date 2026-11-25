@@ -1,0 +1,161 @@
+{
+ "phases": [
+  {
+   "phase": "idle",
+   "pings": 163,
+   "max_ms": 1.12,
+   "p50_ms": 0.15,
+   "over_100ms": 0,
+   "detail": null
+  },
+  {
+   "phase": "cmd-m",
+   "pings": 156,
+   "max_ms": 20.45,
+   "p50_ms": 0.14,
+   "over_100ms": 0,
+   "detail": {
+    "front": "74701",
+    "after": "642 254 480 212 1"
+   }
+  },
+  {
+   "phase": "restore-0",
+   "pings": 122,
+   "max_ms": 0.22,
+   "p50_ms": 0.12,
+   "over_100ms": 0,
+   "detail": null
+  },
+  {
+   "phase": "minimize-button",
+   "pings": 170,
+   "max_ms": 552.76,
+   "p50_ms": 0.15,
+   "over_100ms": 38,
+   "detail": {
+    "front": "74701",
+    "button": [
+     "681",
+     "270"
+    ],
+    "after": "642 254 480 212 0"
+   }
+  },
+  {
+   "phase": "restore-1",
+   "pings": 123,
+   "max_ms": 530.93,
+   "p50_ms": 0.16,
+   "over_100ms": 37,
+   "detail": null
+  },
+  {
+   "phase": "minimize-after-handler",
+   "pings": 122,
+   "max_ms": 554.88,
+   "p50_ms": 0.17,
+   "over_100ms": 38,
+   "detail": {
+    "after": "642 254 480 212 0"
+   }
+  },
+  {
+   "phase": "restore-2",
+   "pings": 123,
+   "max_ms": 539.24,
+   "p50_ms": 0.17,
+   "over_100ms": 37,
+   "detail": null
+  },
+  {
+   "phase": "minimize-in-handler",
+   "pings": 123,
+   "max_ms": 573.49,
+   "p50_ms": 0.17,
+   "over_100ms": 39,
+   "detail": {
+    "after": "642 254 480 212 0"
+   }
+  },
+  {
+   "phase": "restore-3",
+   "pings": 123,
+   "max_ms": 523.88,
+   "p50_ms": 0.17,
+   "over_100ms": 34,
+   "detail": null
+  },
+  {
+   "phase": "live-resize",
+   "pings": 193,
+   "max_ms": 143.65,
+   "p50_ms": 36.5,
+   "over_100ms": 17,
+   "detail": {
+    "before": [
+     480,
+     212
+    ],
+    "after": "642 254 680 332 1"
+   }
+  },
+  {
+   "phase": "menu-2s",
+   "pings": 235,
+   "max_ms": 41.49,
+   "p50_ms": 0.13,
+   "over_100ms": 0,
+   "detail": {
+    "front": "74701",
+    "item": [
+     "43",
+     "0",
+     "60",
+     "38"
+    ]
+   }
+  },
+  {
+   "phase": "fullscreen-in",
+   "pings": 203,
+   "max_ms": 24.26,
+   "p50_ms": 0.13,
+   "over_100ms": 0,
+   "detail": {
+    "after": "0 38 1710 1074 1"
+   }
+  },
+  {
+   "phase": "fullscreen-out",
+   "pings": 203,
+   "max_ms": 29.17,
+   "p50_ms": 0.15,
+   "over_100ms": 0,
+   "detail": {
+    "after": "642 254 680 332 1"
+   }
+  }
+ ],
+ "load": [
+  4.70751953125,
+  13.41845703125,
+  14.0078125
+ ],
+ "front": "74701",
+ "exit": 0,
+ "lines": [
+  "runner window 93652291",
+  "runner first 180589250",
+  "runner step Restore 8381072166",
+  "runner step Restore 14635871166",
+  "runner step MinimizeAfterHandler 17448551875",
+  "runner step Restore 20324824750",
+  "runner step MinimizeInHandler 23141074833",
+  "runner step Restore 26013124958",
+  "runner step Fullscreen 36704376833",
+  "runner step Windowed 40561538833",
+  "runner close",
+  "runner dropped"
+ ]
+}
