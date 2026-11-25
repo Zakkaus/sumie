@@ -175,7 +175,7 @@ impl App {
 }
 
 /// Show a settings diagnostic. Returns whether the banner changed.
-pub(super) fn show_error(banner: &mut Option<String>, message: String) -> bool {
+pub(crate) fn show_error(banner: &mut Option<String>, message: String) -> bool {
     if banner.as_ref() == Some(&message) {
         return false;
     }

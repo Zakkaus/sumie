@@ -3,6 +3,8 @@ pub(crate) use animation::Wake;
 mod directory;
 mod frame_steps;
 pub(crate) use frame_steps::App;
+#[cfg(target_os = "macos")]
+pub(crate) use window_events::show_error;
 mod highlights;
 mod lifetime;
 mod links;

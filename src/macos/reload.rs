@@ -56,7 +56,6 @@ pub(super) struct Reload {
     timers: Timers,
     kill: Option<(Instant, Key)>,
     reaped: bool,
-    pub(super) banner: Option<String>,
 }
 
 /// The production child: this executable in watcher mode.
@@ -95,7 +94,6 @@ impl Reload {
             timers: watches.animation_timer(),
             kill: None,
             reaped: false,
-            banner: None,
         })
     }
 
@@ -151,15 +149,6 @@ impl Reload {
 
     pub(super) fn reaped(&self) -> bool {
         self.reaped
-    }
-
-    pub(super) fn show_error(&mut self, message: String) -> bool {
-        if self.banner.as_ref() == Some(&message) {
-            return false;
-        }
-        eprintln!("sumie: invalid configuration: {message}");
-        self.banner = Some(message);
-        true
     }
 
     /// Drain the socket into `updates`; returns a fault that ends the watcher.

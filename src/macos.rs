@@ -13,7 +13,7 @@ use sumie_macos::{
 };
 use sumie_render::{SurfaceError, SurfaceFrame, SurfaceRenderer, instance_descriptor, wgpu};
 
-use crate::{Result, capture, frame_window::FrameWindow};
+use crate::{Result, app::show_error, capture, frame_window::FrameWindow};
 
 mod driver;
 pub(crate) mod login;
@@ -96,6 +96,8 @@ struct Smoke {
     watches: Watches,
     reload: Reload,
     config: Config,
+    /// The settings diagnostic in the first row.
+    banner: Option<String>,
     /// Set when settings or the banner changed since the last composition.
     compose: bool,
     closing: bool,
@@ -144,6 +146,7 @@ impl Smoke {
             watches,
             reload,
             config: Config::default(),
+            banner: None,
             compose: false,
             closing: false,
             blink: None,
@@ -181,9 +184,9 @@ impl Smoke {
 
     fn apply(&mut self, update: Update) -> Result<bool> {
         let (next, repaired) = match update {
-            Update::Settings(next) => (next, self.reload.banner.take().is_some()),
+            Update::Settings(next) => (next, self.banner.take().is_some()),
             Update::Diagnostic(message) => {
-                let shown = self.reload.show_error(message);
+                let shown = show_error(&mut self.banner, message);
                 if self.page.is_some() {
                     return Ok(shown);
                 }
@@ -200,7 +203,7 @@ impl Smoke {
             match Page::new(&next.font, scale) {
                 Ok(page) => self.page = Some(page),
                 Err(error) => {
-                    let shown = self.reload.show_error(format!("sumie.toml:1:1: {error}"));
+                    let shown = show_error(&mut self.banner, format!("sumie.toml:1:1: {error}"));
                     if !first {
                         return Ok(shown);
                     }
@@ -262,7 +265,7 @@ impl Smoke {
         let mut dirty = std::mem::take(&mut self.compose);
         if self.size != size {
             self.surface.resize(size);
-            dirty |= self.size[0] != size[0] && self.reload.banner.is_some();
+            dirty |= self.size[0] != size[0] && self.banner.is_some();
             self.size = size;
         }
         if self.scale.to_bits() != scale.to_bits() {
@@ -273,7 +276,7 @@ impl Smoke {
         if dirty {
             page.compose(
                 &self.config,
-                self.reload.banner.as_deref(),
+                self.banner.as_deref(),
                 size[0],
                 &mut self.surface,
             )?;
