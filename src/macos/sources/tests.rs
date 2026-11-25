@@ -1,6 +1,7 @@
 use std::io::{PipeReader, PipeWriter, Read as _, Write as _, pipe};
 use std::os::fd::AsFd as _;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 
 use sumie_macos::readiness::Bridge;
 
@@ -11,8 +12,10 @@ const QUIET: Duration = Duration::from_millis(100);
 const PANE: u64 = 5;
 
 struct Fixture {
-    _bridge: Bridge,
+    bridge: Bridge,
     wakes: mpsc::Receiver<()>,
+    /// Wakes the bridge thread has sent, delivered or not.
+    sent: Arc<AtomicUsize>,
     watches: Watches,
     output: (PipeReader, PipeWriter),
     exit: (PipeReader, PipeWriter),
@@ -21,7 +24,10 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let (sender, wakes) = mpsc::channel();
+        let sent = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&sent);
         let bridge = Bridge::spawn(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
             let _ = sender.send(());
         })
         .unwrap();
@@ -32,19 +38,38 @@ impl Fixture {
             .register_pane(PANE, output.0.as_fd(), exit.0.as_fd())
             .unwrap();
         Self {
-            _bridge: bridge,
+            bridge,
             wakes,
+            sent,
             watches,
             output,
             exit,
         }
     }
 
-    /// Wait for the bridge's wake, then fold its reports like `Event::Ready` does.
+    /// Wait for a wake that `run` would deliver, then fold its reports like `Event::Ready`.
     fn dispatch(&mut self, within: Duration) -> bool {
-        let woke = self.wakes.recv_timeout(within).is_ok();
+        let deadline = Instant::now() + within;
+        let mut woke = false;
+        while !woke
+            && self
+                .wakes
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .is_ok()
+        {
+            woke = self.bridge.readiness().accept_wake();
+        }
         self.watches.dispatch().unwrap();
         woke
+    }
+
+    /// Wait until the bridge thread sends its next wake, without delivering it.
+    fn await_sent(&self, before: usize) {
+        let deadline = Instant::now() + WAIT;
+        while self.sent.load(Ordering::SeqCst) == before {
+            assert!(Instant::now() < deadline, "the bridge sent no wake");
+            std::thread::yield_now();
+        }
     }
 }
 
@@ -176,4 +201,34 @@ fn timers_and_config_wake_dispatch() {
         !fixture.dispatch(QUIET),
         "an unregistered exit watch reported"
     );
+}
+
+#[test]
+fn a_report_queued_before_unregister_never_surfaces_after_it() {
+    let mut fixture = Fixture::new();
+    let (results, _writer) = pipe().unwrap();
+    let (exit, mut exited) = pipe().unwrap();
+    fixture
+        .watches
+        .register_config(results.as_fd(), exit.as_fd())
+        .unwrap();
+    exited.write_all(b"x").unwrap();
+    assert!(fixture.dispatch(WAIT));
+    let before = fixture.sent.load(Ordering::SeqCst);
+    // Re-arming the undrained exit reports it again. Let the bridge send that wake before
+    // unregistering, as a loaded machine sometimes does.
+    assert!(fixture.watches.take_config_ready().unwrap());
+    fixture.await_sent(before);
+    fixture.watches.unregister_config();
+    assert!(
+        !fixture.dispatch(QUIET),
+        "a report queued before unregister woke the main thread"
+    );
+
+    fixture.output.1.write_all(b"out").unwrap();
+    assert!(
+        fixture.dispatch(WAIT),
+        "a refused wake blocked later reports"
+    );
+    assert!(fixture.watches.take_ready(PANE).output);
 }

@@ -153,6 +153,7 @@ impl<F: Callback> ApplicationHandler<Command> for RunnerHandler<F> {
 
     fn user_event(&mut self, context: &WindowContext, event: Command) {
         let event = match event {
+            Command::Wake if !self.0.bridge.readiness().accept_wake() => return,
             Command::Wake => Event::Ready,
             command => Event::RunnerCommand(command),
         };

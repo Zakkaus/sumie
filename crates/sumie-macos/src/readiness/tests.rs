@@ -77,6 +77,33 @@ fn removal_drops_reports_from_the_old_generation() {
 }
 
 #[test]
+fn a_wake_sent_before_removal_is_refused_and_signalling_resumes() {
+    let (bridge, wakes) = bridge();
+    let readiness = bridge.readiness();
+    let (reader, mut writer) = pipe().unwrap();
+    let exit = Key::new(2, Interest::Exit);
+    readiness.watch(exit, reader.as_fd()).unwrap();
+    writer.write_all(b"x").unwrap();
+    // The wake is already sent; removal cannot recall it, so delivery must refuse it.
+    wakes.recv_timeout(WAIT).unwrap();
+    readiness.remove(exit);
+    assert!(
+        !readiness.accept_wake(),
+        "a wake for a removed key was delivered"
+    );
+
+    let (other, mut other_writer) = pipe().unwrap();
+    let output = Key::new(3, Interest::Output);
+    readiness.watch(output, other.as_fd()).unwrap();
+    other_writer.write_all(b"o").unwrap();
+    wakes
+        .recv_timeout(WAIT)
+        .expect("a refused wake left signalling blocked");
+    assert!(readiness.accept_wake());
+    assert_eq!(readiness.take(), [output]);
+}
+
+#[test]
 fn an_exit_watch_reports_every_rearm_until_removed() {
     // An early NOTE_EXIT leaves the child unreaped; the watch must survive the first report.
     let (bridge, wakes) = bridge();

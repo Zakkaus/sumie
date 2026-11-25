@@ -5,7 +5,8 @@
 //! winit's proxy source fires in all common run-loop modes, so menu tracking, live resize and
 //! `NSTerminateLater`'s modal-panel loop still deliver it. A descriptor reports once, then stays
 //! disabled until the main thread re-arms it after servicing. Every registration has its own
-//! generation, so a report for a removed or replaced registration is dropped.
+//! generation, so a report for a removed or replaced registration is dropped, and a wake sent
+//! only for such reports is refused on delivery.
 
 use std::collections::HashMap;
 use std::io;
@@ -226,6 +227,18 @@ impl Readiness {
         );
         self.0.queue.kevent(&[event], &mut [], None)?;
         Ok(())
+    }
+
+    /// Whether a wake still carries reports. [`Readiness::remove`] drops a removed key's
+    /// report but cannot recall a wake already sent for it, so check this before handling a
+    /// wake: a removed key never surfaces after `remove` returns. A stale wake re-enables
+    /// signalling, so the next report sends a new one.
+    #[must_use]
+    pub fn accept_wake(&self) -> bool {
+        let mut state = self.lock();
+        let live = !state.ready.is_empty();
+        state.signalled &= live;
+        live
     }
 
     /// Take the keys reported since the last call; the next report sends a new wake.

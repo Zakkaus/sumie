@@ -139,7 +139,9 @@ impl<F: Callback> ApplicationHandler for Handler<F> {
     }
 
     fn user_event(&mut self, context: &WindowContext, (): ()) {
-        self.emit(context, Event::Ready);
+        if self.bridge.readiness().accept_wake() {
+            self.emit(context, Event::Ready);
+        }
     }
 
     fn window_event(&mut self, context: &WindowContext, _: WindowId, event: WindowEvent) {

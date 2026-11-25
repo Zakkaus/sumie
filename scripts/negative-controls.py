@@ -386,6 +386,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "        }\n"
                            "        exit\n"),
               "test macos::sources::tests::an_unreaped_exit_keeps_reporting_until_unregistered ... FAILED")
+        probe("wake for a removed key delivered", "test", "crates/sumie-macos/src/readiness.rs",
+              replace_once("        let live = !state.ready.is_empty();\n", "        let live = true;\n"),
+              "test macos::sources::tests::a_report_queued_before_unregister_never_surfaces_after_it ... FAILED")
         probe("no re-watch after an early NOTE_EXIT", "test", "crates/sumie-pty/src/child/macos.rs",
               replace_once("            self.rewatch()?;\n        }\n        Ok(status",
                            "        }\n        Ok(status"),
