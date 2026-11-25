@@ -1,5 +1,7 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::Problem;
 
 /// Window background and pane padding in logical pixels.
 #[derive(Debug, Default, Deserialize, JsonSchema, Serialize)]
@@ -73,14 +75,15 @@ const fn opaque() -> f32 {
 }
 
 fn deserialize_opacity<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f32>, D::Error> {
-    let Some(opacity) = Option::<f64>::deserialize(input)? else {
-        return Ok(None);
-    };
-    if !(0.0..=1.0).contains(&opacity) {
-        return Err(de::Error::custom(
-            "background opacity must be between 0.0 and 1.0",
-        ));
-    }
+    let opacity = crate::checked(input, opacity)?;
     #[expect(clippy::cast_possible_truncation, reason = "validated unit interval")]
-    Ok(Some(opacity as f32))
+    Ok(opacity.map(|opacity| opacity as f32))
+}
+
+pub(crate) fn opacity(opacity: f64) -> Result<f64, Problem> {
+    if (0.0..=1.0).contains(&opacity) {
+        Ok(opacity)
+    } else {
+        Err(Problem::range("window.background-opacity", 0.0, 1.0))
+    }
 }

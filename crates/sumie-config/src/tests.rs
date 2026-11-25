@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-struct Scratch(PathBuf);
+pub(crate) struct Scratch(pub(crate) PathBuf);
 
 impl Drop for Scratch {
     fn drop(&mut self) {
@@ -14,8 +14,8 @@ impl Drop for Scratch {
 }
 
 impl Scratch {
-    fn new() -> Self {
-        let dir = env::temp_dir().join(format!("sumie-config-{}", std::process::id()));
+    pub(crate) fn new(name: &str) -> Self {
+        let dir = env::temp_dir().join(format!("sumie-{name}-{}", std::process::id()));
         fs::create_dir(&dir).unwrap();
         Self(dir)
     }
@@ -25,7 +25,7 @@ impl Scratch {
 fn load_configuration() {
     type Case<'a> = (&'a str, Result<fn(Config), (usize, usize, &'static str)>);
 
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("config");
     let main = scratch.0.join("sumie.toml");
     fs::write(
         scratch.0.join("shared.toml"),
@@ -118,7 +118,7 @@ fn assert_invalid(error: Error, main: &Path, (line, column, reason): (usize, usi
     };
     assert_eq!(path, main);
     assert_eq!((actual_line, actual_column), (line, column), "{message}");
-    assert!(message.contains(reason), "{message}");
+    assert!(message.to_string().contains(reason), "{message}");
 }
 
 fn assert_font(font: Font, family: &str, px: f32, weight: u16, hinting: Hinting) {

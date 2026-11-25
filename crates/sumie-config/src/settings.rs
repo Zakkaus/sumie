@@ -99,6 +99,18 @@ static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
         .into_root_schema_for::<Config>()
 });
 
+/// Field names of `table` (`""` for the top level) in declaration order, or `None` if it is
+/// not a table.
+pub(crate) fn fields(table: &str) -> Option<Vec<&'static str>> {
+    let root = &SCHEMA.as_value()["properties"];
+    let properties = if table.is_empty() {
+        root
+    } else {
+        &root[table]["properties"]
+    };
+    Some(properties.as_object()?.keys().map(String::as_str).collect())
+}
+
 /// Generate the JSON Schema for the main file and its includes.
 ///
 /// # Errors

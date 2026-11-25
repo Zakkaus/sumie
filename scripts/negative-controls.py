@@ -245,6 +245,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("settings key without a title", "test", "crates/sumie-config/src/images.rs",
           replace_once(',\n        title = "Thumbnail rows"\n', '\n'),
           "test settings::tests::every_leaf_has_title_and_category ... FAILED")
+    probe("settings problem reworded", "test", "crates/sumie-config/src/problem.rs",
+          replace_once('"font size must be a positive finite number of points"',
+                       '"font size must be a positive number of points"'),
+          "test problem::tests::each_problem_is_typed_located_and_worded_as_before ... FAILED")
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")

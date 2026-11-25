@@ -3,20 +3,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::Config;
+use serde::Deserialize as _;
+use toml::de::{DeTable, Deserializer};
 
-const MAX_INCLUDE_DEPTH: usize = 64;
+use crate::{Config, Problem, problem};
+
+pub(crate) const MAX_INCLUDE_DEPTH: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{path}: {source}")]
     Read { path: PathBuf, source: io::Error },
+    /// `message` is typed; its `Display` is the English diagnostic.
     #[error("{path}:{line}:{column}: {message}")]
     Invalid {
         path: PathBuf,
         line: usize,
         column: usize,
-        message: String,
+        message: Problem,
     },
 }
 
@@ -37,20 +41,33 @@ pub fn user_config_path() -> Option<PathBuf> {
 /// Load the primary settings and its includes. An absent main file uses defaults.
 ///
 /// # Errors
-/// Returns the path of an unreadable file or the location of invalid settings.
+/// Returns the path of an unreadable file or the first problem in the first invalid file.
 pub fn load(path: &Path) -> Result<Config, Error> {
     load_visited(path, &mut |_| {})
 }
 
+/// Load like [`load`], but report every problem in the first invalid file, in file order.
+///
+/// # Errors
+/// Returns one or more errors, all from the same file.
+pub fn check(path: &Path) -> Result<Config, Vec<Error>> {
+    check_visited(path, &mut |_| {})
+}
+
 pub(crate) fn load_visited(path: &Path, visit: &mut impl FnMut(&Path)) -> Result<Config, Error> {
+    check_visited(path, visit)
+        .map_err(|errors| errors.into_iter().next().expect("errors are never empty"))
+}
+
+fn check_visited(path: &Path, visit: &mut impl FnMut(&Path)) -> Result<Config, Vec<Error>> {
     visit(path);
     match fs::read_to_string(path) {
         Ok(text) => load_document(path, &text, &mut Vec::new(), visit),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
-        Err(source) => Err(Error::Read {
+        Err(source) => Err(vec![Error::Read {
             path: path.to_owned(),
             source,
-        }),
+        }]),
     }
 }
 
@@ -59,24 +76,36 @@ fn load_document(
     text: &str,
     active: &mut Vec<PathBuf>,
     visit: &mut impl FnMut(&Path),
-) -> Result<Config, Error> {
-    let mut file: Config = toml::from_str(text).map_err(|error: toml::de::Error| {
-        invalid(
+) -> Result<Config, Vec<Error>> {
+    let syntax = |error: toml::de::Error| {
+        let offset = error.span().map_or(0, |span| span.start);
+        vec![invalid(
             path,
             text,
-            error.span().map_or(0, |span| span.start),
-            error.message().into(),
-        )
-    })?;
+            offset,
+            Problem::Syntax(error.message().into()),
+        )]
+    };
+    let document = DeTable::parse(text).map_err(syntax)?;
+    let problems = problem::audit(document.get_ref());
+    if !problems.is_empty() {
+        return Err(problems
+            .into_iter()
+            .map(|(offset, problem)| invalid(path, text, offset, problem))
+            .collect());
+    }
+    let mut file = Config::deserialize(Deserializer::from(document)).map_err(syntax)?;
     let include = std::mem::take(&mut file.include);
     if include.is_empty() {
         return Ok(file);
     }
 
     if active.is_empty() {
-        let identity = fs::canonicalize(path).map_err(|source| Error::Read {
-            path: path.to_owned(),
-            source,
+        let identity = fs::canonicalize(path).map_err(|source| {
+            vec![Error::Read {
+                path: path.to_owned(),
+                source,
+            }]
         })?;
         active.push(identity);
     }
@@ -84,22 +113,22 @@ fn load_document(
     for entry in include {
         let included = path.with_file_name(entry.get_ref());
         visit(&included);
-        let at_entry = |message| invalid(path, text, entry.span().start, message);
-        let identity = fs::canonicalize(&included)
-            .map_err(|error| at_entry(format!("{}: {error}", included.display())))?;
+        let at_entry = |problem| vec![invalid(path, text, entry.span().start, problem)];
+        let unreadable = |error: io::Error| {
+            at_entry(Problem::Read {
+                path: included.clone(),
+                kind: error.kind(),
+                detail: error.to_string(),
+            })
+        };
+        let identity = fs::canonicalize(&included).map_err(unreadable)?;
         if active.contains(&identity) {
-            return Err(at_entry(format!(
-                "include cycle through {}",
-                included.display()
-            )));
+            return Err(at_entry(Problem::IncludeCycle { path: included }));
         }
         if active.len() == MAX_INCLUDE_DEPTH {
-            return Err(at_entry(format!(
-                "includes are nested more than {MAX_INCLUDE_DEPTH} files deep"
-            )));
+            return Err(at_entry(Problem::IncludeDepth));
         }
-        let source = fs::read_to_string(&included)
-            .map_err(|error| at_entry(format!("{}: {error}", included.display())))?;
+        let source = fs::read_to_string(&included).map_err(unreadable)?;
         active.push(identity);
         merged.overlay(load_document(&included, &source, active, visit)?);
         active.pop();
@@ -108,7 +137,7 @@ fn load_document(
     Ok(merged)
 }
 
-fn invalid(path: &Path, text: &str, offset: usize, message: String) -> Error {
+fn invalid(path: &Path, text: &str, offset: usize, message: Problem) -> Error {
     let (mut line, mut column) = (1, 1);
     for byte in text.bytes().take(offset) {
         if byte == b'\n' {

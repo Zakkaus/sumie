@@ -9,6 +9,7 @@ mod cursor;
 mod images;
 mod language;
 mod load;
+mod problem;
 mod settings;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[cfg_attr(target_os = "macos", path = "watch_macos.rs")]
@@ -22,7 +23,8 @@ pub use images::Images;
 pub use language::Language;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use load::load_visited;
-pub use load::{Error, load, user_config_path};
+pub use load::{Error, check, load, user_config_path};
+pub use problem::Problem;
 pub use settings::{Category, Choice, Kind, SettingInfo, defaults_toml, schema_json, settings};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use watch::Watch;
@@ -164,16 +166,26 @@ const fn default_scrollback_limit() -> usize {
     50_000_000
 }
 
+/// Read an optional value and apply the check that a settings file also gets from the audit.
+fn checked<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    input: D,
+    check: fn(T) -> Result<T, Problem>,
+) -> Result<Option<T>, D::Error> {
+    Option::<T>::deserialize(input)?
+        .map(check)
+        .transpose()
+        .map_err(de::Error::custom)
+}
+
 fn deserialize_contrast<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f64>, D::Error> {
-    let Some(ratio) = Option::<f64>::deserialize(input)? else {
-        return Ok(None);
-    };
+    checked(input, contrast)
+}
+
+fn contrast(ratio: f64) -> Result<f64, Problem> {
     if (1.0..=21.0).contains(&ratio) {
-        Ok(Some(ratio))
+        Ok(ratio)
     } else {
-        Err(de::Error::custom(
-            "minimum contrast must be between 1.0 and 21.0",
-        ))
+        Err(Problem::range("minimum-contrast", 1.0, 21.0))
     }
 }
 
@@ -262,28 +274,26 @@ fn positive_number(schema: &mut Schema) {
 }
 
 fn deserialize_size<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f32>, D::Error> {
-    let Some(size) = Option::<f32>::deserialize(input)? else {
-        return Ok(None);
-    };
+    checked(input, font_size)
+}
+
+fn font_size(size: f32) -> Result<f32, Problem> {
     if size > 0.0 && (size * POINT_TO_PX).is_finite() {
-        Ok(Some(size))
+        Ok(size)
     } else {
-        Err(de::Error::custom(
-            "font size must be a positive finite number of points",
-        ))
+        Err(Problem::FontSize)
     }
 }
 
 fn deserialize_weight<'de, D: Deserializer<'de>>(input: D) -> Result<Option<u16>, D::Error> {
-    let Some(weight) = Option::<u16>::deserialize(input)? else {
-        return Ok(None);
-    };
+    checked(input, font_weight)
+}
+
+fn font_weight(weight: u16) -> Result<u16, Problem> {
     if (MIN_WEIGHT..=MAX_WEIGHT).contains(&weight) {
-        Ok(Some(weight))
+        Ok(weight)
     } else {
-        Err(de::Error::custom(format_args!(
-            "font weight must be between {MIN_WEIGHT} and {MAX_WEIGHT}"
-        )))
+        Err(Problem::range("font.weight", MIN_WEIGHT, MAX_WEIGHT))
     }
 }
 

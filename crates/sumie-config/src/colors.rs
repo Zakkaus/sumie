@@ -18,18 +18,24 @@ impl<'de> Deserialize<'de> for Color {
             }
 
             fn visit_str<E: de::Error>(self, text: &str) -> Result<Color, E> {
-                let rgb = text
-                    .strip_prefix('#')
-                    .filter(|hex| hex.len() == 6 && !hex.starts_with('+'))
-                    .and_then(|hex| u32::from_str_radix(hex, 16).ok())
-                    .ok_or_else(|| E::invalid_value(de::Unexpected::Str(text), &self))?
-                    .to_be_bytes();
-                Ok(Color([rgb[1], rgb[2], rgb[3]]))
+                parse(text)
+                    .map(Color)
+                    .ok_or_else(|| E::invalid_value(de::Unexpected::Str(text), &self))
             }
         }
 
         input.deserialize_str(HexColor)
     }
+}
+
+/// Parse `#rrggbb`; the audit and the serde visitor share it.
+pub(crate) fn parse(text: &str) -> Option<[u8; 3]> {
+    let [_, r, g, b] = text
+        .strip_prefix('#')
+        .filter(|hex| hex.len() == 6 && !hex.starts_with('+'))
+        .and_then(|hex| u32::from_str_radix(hex, 16).ok())?
+        .to_be_bytes();
+    Some([r, g, b])
 }
 
 impl Serialize for Color {
