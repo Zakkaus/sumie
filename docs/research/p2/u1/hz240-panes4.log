@@ -1,0 +1,18 @@
+KWIN environment variables: QList("KWIN_WAYLAND_NO_PERMISSION_CHECKS=1", "KWIN_XKB_DEFAULT_KEYMAP=1")
+kwin_xkbcommon: Could not create xkb keymap from configuration
+Artifacts: /scratch/ssd/sumie-p2u1-art/measure3/stall._b97s9uz
+Duration: 60 s; panes: 4; output: 1600x1000@239.82; sumie: /scratch/ssd/sumie-target-p2u1/release/sumie; source: WAYLAND_DEBUG trace (no visibility); load: (39.890625, 28.6875, 30.91259765625)
+Writer write spans over 10 ms: 3 of 2400; max 40.366 ms
+First visible presented: 290.950 ms
+Presented: 2453; discarded: 0
+Invisible: 0 periods, 0.000 ms
+Max visible presentation gap in window: 85.077 ms
+Max output-to-presentation wait: 64.968 ms
+PASS: every line was presented within 100 ms
+Frames in window: 2395 (39.9/s); dirty panes per frame: 1.00; repainted per frame: 1.00
+Frame CPU (start to present returned): p50 0.749 ms, p99 2.332 ms, max 39.547 ms
+Stage p50/p99 (ms): snapshots 0.053/0.095, paint 0.056/0.093, acquire+submit 0.520/0.994, present 0.136/1.132
+Writers advanced: 4 of 4
+Max per-pane line-to-repaint latency: 68.750 ms (pane 0)
+Max per-pane repaint gap while writing: 167.893 ms (pane 0)
+PASS: 4 panes advanced, and each repainted within 200 ms of every line
