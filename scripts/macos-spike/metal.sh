@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# != 1 ]]; then
-    echo "usage: $0 EVIDENCE_DIR" >&2
+if [[ $# -lt 1 ]]; then
+    echo "usage: $0 EVIDENCE_DIR [SCENARIO...]" >&2
     exit 2
 fi
 if [[ $(uname -s) != Darwin || $(uname -m) != arm64 ]]; then
@@ -54,4 +54,4 @@ PY
         -C "link-arg=$build/metal.o" -l framework=AppKit -l framework=Metal -l framework=QuartzCore
 } 2>&1 | tee "$evidence/metal-build.log"
 
-python3 -B "$scripts/metal.py" "$CARGO_TARGET_DIR/$target/debug/metal-spike" "$evidence"
+python3 -B "$scripts/metal.py" "$CARGO_TARGET_DIR/$target/debug/metal-spike" "$evidence" "${@:2}"

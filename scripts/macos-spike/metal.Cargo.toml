@@ -16,4 +16,12 @@ wgpu-core = { version = "=30.0.2", default-features = false }
 wgpu-hal = { version = "=30.0.2", default-features = false }
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 
+# The same wgpu-hal fork as the root manifest; see third_party/README.md.
+[patch.crates-io]
+naga = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+naga-types = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+wgpu-hal = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+wgpu-naga-bridge = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+wgpu-types = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+
 [workspace]

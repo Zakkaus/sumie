@@ -808,8 +808,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "30.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd0dd362bf26c0ffdd143df6da66a25d287e196eff482f117771010b207ad163"
+source = "git+https://github.com/Zakkaus/wgpu?rev=391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb#391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -834,8 +833,7 @@ dependencies = [
 [[package]]
 name = "naga-types"
 version = "30.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14474170feb673cfb18b3565111a9869797cc1d290fb9ec969c53f5e1e231c6d"
+source = "git+https://github.com/Zakkaus/wgpu?rev=391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb#391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb"
 dependencies = [
  "hashbrown 0.17.2",
  "indexmap",
@@ -1883,6 +1881,7 @@ name = "sumie-render"
 version = "0.0.0"
 dependencies = [
  "bytemuck",
+ "objc2-quartz-core 0.3.2",
  "pollster",
  "sumie-core",
  "thiserror 2.0.21",
@@ -2421,8 +2420,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a57452fe453658e141aafdb09de1028afa498805fab518238ddf372a518813ff"
+source = "git+https://github.com/Zakkaus/wgpu?rev=391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb#391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -2473,8 +2471,7 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "30.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44a62ead68aad7cd40ac9e2cd2b8ec64f32dfbad2765f429b9fb74b8b735869f"
+source = "git+https://github.com/Zakkaus/wgpu?rev=391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb#391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -2483,8 +2480,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "30.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9f6ee0bd50f5ab79fb8c25e3f33afb27126f034af4ba5909c7a0967058659e6"
+source = "git+https://github.com/Zakkaus/wgpu?rev=391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb#391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb"
 dependencies = [
  "bitflags 2.13.2",
  "bytemuck",

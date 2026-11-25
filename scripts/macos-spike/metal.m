@@ -97,7 +97,7 @@ static id<CAMetalDrawable> acquire(CAMetalLayer *layer, SEL selector) {
     require(isVisible(window), "nextDrawable has no visible window");
     NSUInteger capacity = layer.maximumDrawableCount;
     require(capacity == 3, "unexpected layer capacity for frame latency 2");
-    require(!layer.allowsNextDrawableTimeout, "wgpu did not disable drawable timeout");
+    require(layer.allowsNextDrawableTimeout, "wgpu did not enable drawable timeout");
     pthread_mutex_lock(&state);
     if (probeLayer == nil) probeLayer = layer;
     require(probeLayer == layer, "acquires did not use one layer");
@@ -168,7 +168,7 @@ static void setSize(CAMetalLayer *layer, SEL selector, CGSize size) {
 }
 
 // The occlusion race: wgpu sampled "visible" just before the window was covered. Keep acquiring
-// and presenting as if that sample were stale, with Apple's drawable timeout enabled to bound
+// and presenting as if that sample were stale, with the drawable timeout wgpu enables bounding
 // each wait, until one acquire waits or RACE_FRAMES frames have been presented.
 static void raceOcclusion(NSNotification *note) {
     NSWindow *window = note.object;
@@ -177,7 +177,6 @@ static void raceOcclusion(NSNotification *note) {
     raced = true;
     enum { RACE_FRAMES = 6 };
     id<MTLCommandQueue> queue = [layer.device newCommandQueue];
-    layer.allowsNextDrawableTimeout = YES;
     for (unsigned long frame = 1; frame <= RACE_FRAMES; frame++) {
         unsigned long pending = (unsigned long)attempt + frame - 1 - atomic_load(&presented);
         uint64_t start = micros();
@@ -195,7 +194,6 @@ static void raceOcclusion(NSNotification *note) {
         [buffer commit];
         [buffer waitUntilCompleted];
     }
-    layer.allowsNextDrawableTimeout = NO;
     emit("RACE_DONE");
 }
 

@@ -279,18 +279,21 @@ def run(binary, evidence, scenario):
 
 
 def main():
-    binary, evidence = map(Path, sys.argv[1:])
-    result = {scenario: run(binary, evidence, scenario) for scenario in BLOCKING}
+    binary, evidence = map(Path, sys.argv[1:3])
+    scenarios = sys.argv[3:] or list(BLOCKING)
+    require(set(scenarios) <= BLOCKING.keys(), f"unknown scenario in {scenarios}")
+    result = {scenario: run(binary, evidence, scenario) for scenario in scenarios}
     result["clock"] = "Trace timestamps are watchdog send/receipt times in monotonic nanoseconds since launch."
     result["scope"] = (
         "GPU holds are test-owned event waits on real wgpu submissions; FIFO and occlusion use the "
-        "compositor's own pacing. The race acquire enables Apple's drawable timeout to bound the wait. "
+        "compositor's own pacing. The pinned wgpu-hal fork enables Apple's drawable timeout, which "
+        "bounds the race acquire. "
         "None of these establishes worker safety or safe teardown ownership."
     )
     text = json.dumps(result, indent=2) + "\n"
     (evidence / "metal.json").write_text(text, encoding="utf-8")
     print(text, end="")
-    return int(any("error" in result[case] for case in BLOCKING))
+    return int(any("error" in result[case] for case in scenarios))
 
 
 if __name__ == "__main__":

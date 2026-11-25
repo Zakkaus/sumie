@@ -1,0 +1,16 @@
+diff --git a/wgpu-hal/src/metal/surface.rs b/wgpu-hal/src/metal/surface.rs
+index b51e3be..547b182 100644
+--- a/wgpu-hal/src/metal/surface.rs
++++ b/wgpu-hal/src/metal/surface.rs
+@@ -331,8 +331,10 @@ impl crate::Surface for super::Surface {
+         render_layer.setMaximumDrawableCount(config.maximum_frame_latency as usize + 1);
+         render_layer.setDrawableSize(drawable_size);
+         // https://developer.apple.com/documentation/quartzcore/cametallayer/allowsnextdrawabletimeout
++        // On macOS, let nextDrawable time out (about 1 s) so a display change cannot block
++        // the main thread without bound; a nil drawable already maps to SurfaceError::Timeout.
+         if available!(macos = 10.13, ios = 11.0, tvos = 11.0, visionos = 1.0) {
+-            render_layer.setAllowsNextDrawableTimeout(false);
++            render_layer.setAllowsNextDrawableTimeout(cfg!(target_os = "macos"));
+         }
+         if OsFeatures::display_sync() {
+             render_layer.setDisplaySyncEnabled(display_sync);

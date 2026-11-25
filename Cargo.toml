@@ -90,3 +90,13 @@ undocumented_unsafe_blocks = "deny"
 
 [lints]
 workspace = true
+
+# Reviewed forks; third_party/README.md lists each patch and how to regenerate it.
+# The wgpu-hal fork resolves its path siblings from the same checkout; pinning them to that
+# rev keeps one copy of each. Their sources equal the crates.io 30.0.2 releases.
+[patch.crates-io]
+naga = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+naga-types = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+wgpu-hal = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+wgpu-naga-bridge = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
+wgpu-types = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }

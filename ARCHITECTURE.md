@@ -100,6 +100,8 @@ The Linux adapter creates the wgpu instance and surface with the native display 
 
 `sumie-macos` owns the winit event loop and creates its window on the main thread when winit resumes. The binary's `macos` module owns the Metal surface and frame scheduling. Both platforms use the binary's `FrameWindow` contract to notify the window system just before presentation. The macOS test page owns a fixed grid of ASCII, CJK and box-drawing glyphs, not a terminal or PTY. It rebuilds the atlas on scale changes; a size change only reconfigures the surface. In frame-limited mode it requests redraws until the requested presentation, then writes that frame if a screenshot was requested.
 
+The root manifest pins `wgpu-hal` and its path siblings to the reviewed fork listed in `third_party/README.md`. On macOS the fork lets `CAMetalLayer.nextDrawable` time out after about 1 s, so a stalled acquire returns `SurfaceFrame::Timeout` instead of blocking the main thread without bound; the retry policy is unchanged. `sumie-render`'s `metal_layer` test checks the flag after configure from its own test target, so the library keeps `forbid(unsafe_code)`.
+
 ## Terminal core (`sumie-vt`)
 
 `Terminal` owns one libghostty-vt terminal, one render state, and their row and cell iterators. Its handles are `!Send` and `!Sync`: this API keeps the terminal on its owner thread. Writes, resizes, and snapshots require an exclusive borrow. A snapshot copies the viewport into Rust-owned rows, with one entry per column and width zero on a wide glyph's trailing cell. It includes resolved foreground and background colors and the viewport cursor. No native handles or borrowed pixels are stored in the snapshot.
