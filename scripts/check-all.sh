@@ -9,14 +9,14 @@ esac
 
 scripts=$(CDPATH='' cd "$(dirname "$0")" && pwd -P) || exit 2
 command -v python3 >/dev/null || { echo 'check-all: python3 not found' >&2; exit 2; }
-# The macos-ci feature links AppKit, so only a Mac can lint it or run its wake scenario.
+# The macos-ci feature links AppKit, so only a Mac can lint it or run its window scenarios.
 macos_ci=
-macos_wake=
+macos_window=
 if [ "$(uname -s)" = Darwin ]; then
     macos_ci=clippy-macos-ci
-    macos_wake=macos-wake
+    macos_window='macos-wake macos-resize macos-idle macos-flood macos-timeout'
 fi
-for gate in structure terminfo shell fmt clippy $macos_ci test $macos_wake; do
+for gate in structure terminfo shell fmt clippy $macos_ci test $macos_window; do
     python3 "$scripts/check-gate.py" "$gate" || exit "$?"
 done
 

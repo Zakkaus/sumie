@@ -76,10 +76,13 @@ jobs:
             ${{ runner.temp }}/sumie-target
           key: build-${{ matrix.runner }}-${{ hashFiles('Cargo.lock', 'crates/sumie-vt/build.rs') }}
           restore-keys: build-${{ matrix.runner }}-
+      # Hosted timing is noisy: the frame-slot gates record pings and acquire times here and
+      # enforce them on the owner's Mac.
       - if: runner.os == 'macOS'
         run: |
           echo 'MACOSX_DEPLOYMENT_TARGET=13.0' >> "$GITHUB_ENV"
           echo 'SUMIE_REQUIRE_GPU=1' >> "$GITHUB_ENV"
+          echo 'SUMIE_TIMING=record' >> "$GITHUB_ENV"
       - run: scripts/check-all.sh
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target

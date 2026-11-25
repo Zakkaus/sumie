@@ -37,6 +37,10 @@ DEBUG_PRINT = re.compile(r"\b(?:e?print(?:ln)?|dbg)!")
 WAKE_MODES = ("default", "event-tracking", "modal-panel")
 WAKE_LIMIT_NS = 100_000_000
 WAKE_TIMEOUT = 120
+# The terminal driver's frame-slot checks; scripts/macos/frames.py runs one case per gate.
+FRAME_GATES = {"macos-resize": "resize", "macos-idle": "idle", "macos-flood": "flood",
+               "macos-timeout": "timeout"}
+FRAME_TIMEOUT = 300
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -397,7 +401,7 @@ def check_shell():
     return 0
 
 
-def wake_binary():
+def runner_binary():
     result = run("cargo", "build", "--locked", "--features", "macos-ci", "--message-format=json")
     if result.returncode:
         print(result.stderr.decode(errors="replace"), end="", file=sys.stderr)
@@ -414,7 +418,7 @@ def check_macos_wake():
     """A pipe write during each AppKit run-loop mode reaches the handler within 100 ms."""
     if sys.platform != "darwin":
         raise CannotCheck("the wake scenario needs the macOS window server")
-    binary = wake_binary()
+    binary = runner_binary()
     with tempfile.TemporaryDirectory(prefix="sumie-wake.") as home:
         env = {**os.environ, "SUMIE_MACOS_CI_RUNNER": "wake", "HOME": home,
                "XDG_CONFIG_HOME": str(Path(home) / "config")}
@@ -451,6 +455,19 @@ def check_macos_wake():
     return int(bool(errors))
 
 
+def check_macos_frames(case):
+    """One frame-slot case on the terminal driver; see scripts/macos/frames.py."""
+    if sys.platform != "darwin":
+        raise CannotCheck("the frame-slot checks need the macOS window server")
+    binary = runner_binary()
+    try:
+        return subprocess.run([sys.executable, ROOT / "scripts/macos/frames.py", case, binary],
+                              timeout=FRAME_TIMEOUT).returncode
+    except subprocess.TimeoutExpired:
+        print(f"macos-{case}: the case timed out", file=sys.stderr)
+        return 1
+
+
 def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
@@ -461,7 +478,7 @@ def main():
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
-                                         *commands))
+                                         *FRAME_GATES, *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -481,6 +498,8 @@ def main():
             raise CannotCheck("the macos-ci feature builds only on macOS")
         if gate == "macos-wake":
             return check_macos_wake()
+        if gate in FRAME_GATES:
+            return check_macos_frames(FRAME_GATES[gate])
         if gate == "structure":
             return check_structure()
         if gate == "terminfo":

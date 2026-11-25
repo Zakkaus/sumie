@@ -437,6 +437,27 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("Bash 3.2 DEBUG trap not reinstalled", "test", "shell-integration/bash/sumie.bash",
               replace_once('|| eval "${_sumie_trap-}"', "|| :"),
               login + "bash::bash_3_2_reinstalls_its_trap_after_one_set_at_the_prompt ... FAILED")
+        probe("configure on Resized", "macos-resize", "src/app/window_events.rs",
+              replace_once("session.view.request_resize(scale, logical, device);\n",
+                           "session.view.request_resize(scale, logical, device);\n"
+                           "                    self.gpu.resize(device);\n"),
+              "configures ran while GPU work was pending")
+        probe("present every turn even when clean", "macos-idle", "src/macos/window.rs",
+              replace_once("    fn background_commit_needed(&self) -> bool {\n        false",
+                           "    fn background_commit_needed(&self) -> bool {\n        true"),
+              "presents within")
+        probe("retry 50 ms after a drawable timeout", "macos-timeout", "src/macos/window.rs",
+              replace_once("    fn hold_after_timeout(&mut self) -> bool {\n",
+                           "    fn hold_after_timeout(&mut self) -> bool {\n        if self.fixed_title {\n"
+                           "            return false;\n        }\n"),
+              "timeout: acquired again")
+        # Its marker is an acquire time, which hosted runners only record.
+        if os.environ.get("SUMIE_TIMING") != "record":
+            probe("free the frame slot on every wake", "macos-flood", "src/macos/driver.rs",
+                  replace_once("                open.window.watches.dispatch()?;\n",
+                               "                open.window.watches.dispatch()?;\n"
+                               "                crate::platform::WindowOps::recover_frame_slot(&mut open.window);\n"),
+                  "flood: median acquire")
 
 
 def interrupted(_signum, _frame):
