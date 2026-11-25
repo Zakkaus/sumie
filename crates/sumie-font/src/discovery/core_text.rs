@@ -44,6 +44,10 @@ pub(crate) struct Discovery {
     /// System-wide lookups, counted for tests of the undrawable-character guard.
     #[cfg(test)]
     pub system_wide_lookups: usize,
+    /// Counts system-wide lookups without asking Core Text. On macOS 15 a worker query for an
+    /// undrawable character can stall every later Core Text call in the test binary.
+    #[cfg(test)]
+    pub system_wide_counted_only: bool,
     /// Extra time the worker takes per lookup, for tests of the wait bound.
     #[cfg(test)]
     pub system_wide_delay: Duration,
@@ -103,6 +107,8 @@ impl Discovery {
             #[cfg(test)]
             system_wide_lookups: 0,
             #[cfg(test)]
+            system_wide_counted_only: false,
+            #[cfg(test)]
             system_wide_delay: Duration::ZERO,
         })
     }
@@ -145,6 +151,9 @@ impl Discovery {
         #[cfg(test)]
         {
             self.system_wide_lookups += 1;
+            if self.system_wide_counted_only {
+                return Err(missing_glyph(ch, rejected, false));
+            }
         }
         if self.system_wide.is_none() {
             self.system_wide = self.spawn_system_wide();

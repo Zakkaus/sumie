@@ -45,6 +45,7 @@ fn drawable_excludes_noncharacters_unassigned_and_private_use() {
 #[test]
 fn undrawable_misses_skip_the_system_wide_step() {
     let mut fonts = FontSystem::new("Menlo", 20.0, 1.0, FontOptions::default()).unwrap();
+    fonts.discovery.system_wide_counted_only = true;
     // Load the cascade first: only the cost of each miss is under test.
     let _ = fonts.face_for('\u{fdd0}', FontStyle::default());
     for ch in ['\u{10ffff}', '\u{378}', '\u{e000}'] {
