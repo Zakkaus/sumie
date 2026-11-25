@@ -19,8 +19,9 @@ pub(crate) struct Gpu {
     target: SurfaceRenderer<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    /// Calls that may configure the surface, and those made while GPU work was pending.
-    #[cfg(target_os = "macos")]
+    /// For the runner's frame-slot checks: calls that may configure the surface, and those
+    /// made while GPU work was pending.
+    #[cfg(feature = "macos-ci")]
     pub(crate) configures: (u64, u64),
     _instance: wgpu::Instance,
 }
@@ -51,7 +52,7 @@ impl Gpu {
             target,
             device,
             queue,
-            #[cfg(target_os = "macos")]
+            #[cfg(feature = "macos-ci")]
             configures: (0, 0),
             _instance: instance,
         })
@@ -102,16 +103,25 @@ impl Gpu {
     }
 
     pub(crate) fn set_transparent(&mut self, transparent: bool) -> bool {
-        #[cfg(target_os = "macos")]
+        #[cfg(feature = "macos-ci")]
         self.count_configure();
         self.target.set_transparent(transparent)
     }
 
     /// Whether no submission is in flight. Configuring then cannot wait for the GPU.
     pub(crate) fn queue_empty(&self) -> bool {
-        self.device
-            .poll(wgpu::PollType::Poll)
-            .is_ok_and(|status| status.is_queue_empty())
+        match self.device.poll(wgpu::PollType::Poll) {
+            Ok(status) => status.is_queue_empty(),
+            // wgpu 30 has no error for `Poll`: `Timeout` needs a wait, `WrongSubmissionIndex` a
+            // submission index, and a lost device panics inside wgpu. Should one appear, it
+            // says nothing about pending work and would not clear on retry, so it must not
+            // hold the configure.
+            Err(error) => {
+                static LOGGED: std::sync::Once = std::sync::Once::new();
+                LOGGED.call_once(|| tracing::error!(%error, "could not poll the GPU queue"));
+                true
+            }
+        }
     }
 
     /// Wait up to `limit` for submitted work. Returns whether it finished.
@@ -125,7 +135,7 @@ impl Gpu {
             .is_ok()
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(feature = "macos-ci")]
     fn count_configure(&mut self) {
         self.configures.0 += 1;
         self.configures.1 += u64::from(!self.queue_empty());
@@ -148,7 +158,7 @@ impl Gpu {
     }
 
     pub(crate) fn resize(&mut self, device: [u32; 2]) {
-        #[cfg(target_os = "macos")]
+        #[cfg(feature = "macos-ci")]
         self.count_configure();
         self.target.resize(device);
     }

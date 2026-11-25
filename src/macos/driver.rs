@@ -32,8 +32,9 @@ use crate::{
 const DEADLINE: Key = Key::new(u64::MAX - 1, Interest::Timer);
 /// The window's first size in points.
 const SIZE: [u32; 2] = [800, 500];
-/// How long teardown waits for submitted GPU work before dropping the surface anyway.
-const DRAIN: Duration = Duration::from_secs(1);
+/// How long teardown waits for submitted GPU work before dropping the surface anyway. The
+/// window is already off screen; the wait blocks the main thread.
+const DRAIN: Duration = Duration::from_millis(100);
 
 pub(super) enum State {
     Starting,
