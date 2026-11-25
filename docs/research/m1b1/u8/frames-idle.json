@@ -1,0 +1,28 @@
+{
+ "case": "idle",
+ "load": [
+  4.8388671875,
+  8.53515625,
+  8.9833984375
+ ],
+ "before": {
+  "presents": 2,
+  "configures": 2,
+  "busy_configures": 0,
+  "deferred_configures": 0,
+  "timeouts": 0,
+  "columns": 52,
+  "rows": 16
+ },
+ "after": {
+  "presents": 2,
+  "configures": 2,
+  "busy_configures": 0,
+  "deferred_configures": 0,
+  "timeouts": 0,
+  "columns": 52,
+  "rows": 16
+ },
+ "explained": 0,
+ "exit": 0
+}

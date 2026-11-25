@@ -1,0 +1,29 @@
+{
+ "case": "resize",
+ "load": [
+  4.8251953125,
+  8.59521484375,
+  9.00732421875
+ ],
+ "before": {
+  "presents": 2,
+  "configures": 2,
+  "busy_configures": 0,
+  "deferred_configures": 0,
+  "timeouts": 0,
+  "columns": 52,
+  "rows": 16
+ },
+ "after": {
+  "presents": 43,
+  "configures": 41,
+  "busy_configures": 0,
+  "deferred_configures": 38,
+  "timeouts": 0,
+  "columns": 65,
+  "rows": 20
+ },
+ "held_from": 0.009450999999899068,
+ "bounds_after": "562 199 800 532 1",
+ "exit": 0
+}

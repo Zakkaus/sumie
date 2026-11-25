@@ -1,0 +1,105 @@
+{
+ "load": [
+  2.05224609375,
+  5.056640625,
+  6.9482421875
+ ],
+ "phases": [
+  {
+   "phase": "yes-200M",
+   "seconds": 117.88,
+   "worst_ping_ms": 4.0,
+   "pings": 8591,
+   "over_100": 0,
+   "presents": 8,
+   "acquire_max_ms": 0.055,
+   "finished": true,
+   "elapsed_s": 117.57
+  },
+  {
+   "phase": "drag-two-sizes",
+   "seconds": 3.81,
+   "worst_ping_ms": 6.3,
+   "pings": 309,
+   "over_100": 0,
+   "presents": 143,
+   "acquire_max_ms": 0.667,
+   "bounds": "562 199 580 397 1"
+  },
+  {
+   "phase": "stty",
+   "seconds": 0.41,
+   "worst_ping_ms": 2.0,
+   "pings": 33,
+   "over_100": 0,
+   "presents": 5,
+   "acquire_max_ms": 0.415,
+   "finished": true
+  },
+  {
+   "phase": "cover-restore",
+   "seconds": 4.73,
+   "worst_ping_ms": 2.9,
+   "pings": 385,
+   "over_100": 0,
+   "presents": 1,
+   "acquire_max_ms": 0.041
+  },
+  {
+   "phase": "fullscreen-in",
+   "seconds": 2.51,
+   "worst_ping_ms": 20.3,
+   "pings": 203,
+   "over_100": 0,
+   "presents": 2,
+   "acquire_max_ms": 0.455
+  },
+  {
+   "phase": "fullscreen-out",
+   "seconds": 2.51,
+   "worst_ping_ms": 11.9,
+   "pings": 205,
+   "over_100": 0,
+   "presents": 2,
+   "acquire_max_ms": 6.05
+  }
+ ],
+ "stty": [
+  "15",
+  "47"
+ ],
+ "report_after_drags": {
+  "presents": 163,
+  "configures": 123,
+  "busy_configures": 0,
+  "deferred_configures": 0,
+  "timeouts": 0,
+  "columns": 47,
+  "rows": 15
+ },
+ "cover": {
+  "occluded": [
+   [
+    0.1,
+    "true"
+   ],
+   [
+    3.239,
+    "false"
+   ]
+  ],
+  "presents_at": [
+   3.249
+  ]
+ },
+ "final_report": {
+  "presents": 188,
+  "configures": 125,
+  "busy_configures": 0,
+  "deferred_configures": 0,
+  "timeouts": 0,
+  "columns": 47,
+  "rows": 15
+ },
+ "exit": 0
+}

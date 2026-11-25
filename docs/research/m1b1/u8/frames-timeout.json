@@ -1,0 +1,32 @@
+{
+ "case": "timeout",
+ "load": [
+  2.9814453125,
+  7.2080078125,
+  8.44482421875
+ ],
+ "acquires": [
+  [
+   12098.756649,
+   "nil"
+  ],
+  [
+   12099.761503,
+   "nil"
+  ],
+  [
+   12101.765906,
+   "drawable"
+  ]
+ ],
+ "report": {
+  "presents": 3,
+  "configures": 2,
+  "busy_configures": 0,
+  "deferred_configures": 0,
+  "timeouts": 2,
+  "columns": 52,
+  "rows": 16
+ },
+ "exit": 0
+}

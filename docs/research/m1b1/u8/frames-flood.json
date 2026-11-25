@@ -1,0 +1,17 @@
+{
+ "case": "flood",
+ "load": [
+  2.97998046875,
+  7.279296875,
+  8.47705078125
+ ],
+ "presents": 150,
+ "seconds": 2.4833560419999996,
+ "refresh_ms": 16.666666,
+ "min_gap_ms": 16.230958999999984,
+ "median_gap_ms": 16.661417000000256,
+ "acquires": 150,
+ "median_acquire_ms": 0.011,
+ "max_acquire_ms": 0.028,
+ "exit": 0
+}
