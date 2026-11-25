@@ -1,0 +1,34 @@
+{
+  "capabilities": {
+    "window_server": "supported",
+    "key_window": "supported",
+    "first_responder": "supported",
+    "named_pasteboard": "supported",
+    "appkit_key_delivery": "supported",
+    "cg_event_delivery": "supported",
+    "known_pixel_capture": "supported",
+    "native_quit": "separate:see native Quit probe evidence"
+  },
+  "screen_capture_preflight": true,
+  "cg_event_post_preflight": true,
+  "window_open_ns": 135663250,
+  "launch_to_window_notice_ns": 171414625,
+  "first_submission_ns": 405611958,
+  "launch_to_first_submission_notice_ns": 441628833,
+  "winit_key_observations": {
+    "appkit": [
+      "down",
+      "up"
+    ],
+    "cg": [
+      "down",
+      "up"
+    ]
+  },
+  "close": {
+    "request_to_close_callback_notice_ns": 172746709,
+    "request_to_smoke_drop_notice_ns": 178916250,
+    "request_to_reaped_exit_ns": 187492667
+  },
+  "status": "measured"
+}

@@ -1,0 +1,55 @@
+quit: first request returned
+quit: draining
+quit: veto
+quit: repeat request returned
+quit: reaped
+
+thread 'main' (9614) panicked at vendor/winit-0.30.13/src/platform_impl/macos/event_handler.rs:135:17:
+tried to handle event while another event is currently being handled
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (9614) panicked at /rustc/0ef1bc386059596dada8fb65b50425aab2ea637a/library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:        0x102dda048 - <<std[d28d9deb04fda6f8]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[e78f7293afa7e62d]::fmt::Display>::fmt
+   1:        0x102dec180 - core[e78f7293afa7e62d]::fmt::write
+   2:        0x102dddc98 - <std[d28d9deb04fda6f8]::sys::stdio::unix::Stderr as core[e78f7293afa7e62d]::io::write::Write>::write_fmt
+   3:        0x102dc254c - std[d28d9deb04fda6f8]::panicking::default_hook::{closure#0}
+   4:        0x102dd477c - std[d28d9deb04fda6f8]::panicking::default_hook
+   5:        0x102dd4c3c - std[d28d9deb04fda6f8]::panicking::panic_with_hook
+   6:        0x102dc25fc - std[d28d9deb04fda6f8]::panicking::panic_handler::{closure#0}
+   7:        0x102dbaf98 - std[d28d9deb04fda6f8]::sys::backtrace::__rust_end_short_backtrace::<std[d28d9deb04fda6f8]::panicking::panic_handler::{closure#0}, !>
+   8:        0x102dc2c94 - __rustc[45371133cddedda4]::rust_begin_unwind
+   9:        0x102df9610 - core[e78f7293afa7e62d]::panicking::panic_nounwind_fmt
+  10:        0x102df955c - core[e78f7293afa7e62d]::panicking::panic_nounwind
+  11:        0x102df96ec - core[e78f7293afa7e62d]::panicking::panic_cannot_unwind
+  12:        0x102da6d78 - <_ as block2[b1f21529fab25beb]::traits::IntoBlock<(), _>>::__get_invoke_stack_block::invoke::<(), <winit[b403f7b687b5ccbe]::platform_impl::macos::observer::RunLoop>::queue_closure<<winit[b403f7b687b5ccbe]::platform_impl::macos::app_state::ApplicationDelegate>::maybe_queue_event::{closure#0}>::{closure#0}>
+  13:        0x19833ef84 - <unknown>
+  14:        0x19833ee94 - <unknown>
+  15:        0x19833dd28 - <unknown>
+  16:        0x19833d368 - <unknown>
+  17:        0x19990dc98 - <unknown>
+  18:        0x199981444 - <unknown>
+  19:        0x102d89a6c - <sumie_quit_probe[476facec183b2852]::Probe as winit[b403f7b687b5ccbe]::application::ApplicationHandler>::about_to_wait
+  20:        0x102d8cc30 - winit[b403f7b687b5ccbe]::platform_impl::macos::event_loop::map_user_event::<(), <winit[b403f7b687b5ccbe]::event_loop::EventLoop<()>>::run_app<sumie_quit_probe[476facec183b2852]::Probe>::{closure#0}>::{closure#0}
+  21:        0x102daa534 - <winit[b403f7b687b5ccbe]::platform_impl::macos::event_handler::EventHandler>::handle_event
+  22:        0x102da2604 - <winit[b403f7b687b5ccbe]::platform_impl::macos::app_state::ApplicationDelegate>::cleared
+  23:        0x102da4058 - winit[b403f7b687b5ccbe]::platform_impl::macos::observer::control_flow_end_handler
+  24:        0x19833e7a8 - <unknown>
+  25:        0x19833e690 - <unknown>
+  26:        0x19833dda0 - <unknown>
+  27:        0x19833d368 - <unknown>
+  28:        0x1a3deb27c - <unknown>
+  29:        0x1a3dee4e8 - <unknown>
+  30:        0x1a3f79484 - <unknown>
+  31:        0x19c263a34 - <unknown>
+  32:        0x19cc025cc - <unknown>
+  33:        0x19c256be4 - <unknown>
+  34:        0x102d8c528 - <winit[b403f7b687b5ccbe]::platform_impl::macos::event_handler::EventHandler>::set::<(), winit[b403f7b687b5ccbe]::platform_impl::macos::event_loop::map_user_event<(), <winit[b403f7b687b5ccbe]::event_loop::EventLoop<()>>::run_app<sumie_quit_probe[476facec183b2852]::Probe>::{closure#0}>::{closure#0}, <winit[b403f7b687b5ccbe]::platform_impl::macos::event_loop::EventLoop<()>>::run_on_demand<<winit[b403f7b687b5ccbe]::event_loop::EventLoop<()>>::run_app<sumie_quit_probe[476facec183b2852]::Probe>::{closure#0}>::{closure#0}>
+  35:        0x102d86db8 - <winit[b403f7b687b5ccbe]::platform_impl::macos::event_loop::EventLoop<()>>::run::<<winit[b403f7b687b5ccbe]::event_loop::EventLoop<()>>::run_app<sumie_quit_probe[476facec183b2852]::Probe>::{closure#0}>
+  36:        0x102d892d0 - sumie_quit_probe[476facec183b2852]::main
+  37:        0x102d87610 - std[d28d9deb04fda6f8]::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  38:        0x102d8cab0 - std[d28d9deb04fda6f8]::rt::lang_start::<()>::{closure#0}
+  39:        0x102dd3c24 - std[d28d9deb04fda6f8]::rt::lang_start_internal
+  40:        0x102d8a03c - _main
+thread caused non-unwinding panic. aborting.

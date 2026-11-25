@@ -1,0 +1,9 @@
+quit: first request returned
+quit: draining
+quit: veto
+quit: repeat request returned
+quit: reaped
+quit: handler busy
+quit: nested run loop returned
+quit: grant
+quit: exiting

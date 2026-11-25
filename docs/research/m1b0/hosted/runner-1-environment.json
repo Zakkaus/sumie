@@ -1,0 +1,30 @@
+{
+  "image_os": "macos15",
+  "image_version": "20261118.0550.1",
+  "runner_arch": "ARM64",
+  "machine": "arm64",
+  "macos_version": "15.8.2",
+  "macos_build": "24H232",
+  "kernel_release": "24.6.0",
+  "logical_cpus": 3,
+  "load_before_timing": [
+    20.412109375,
+    16.61572265625,
+    7.44140625
+  ],
+  "load_after_timing": [
+    11.52685546875,
+    14.8154296875,
+    7.39404296875
+  ],
+  "load_before_capabilities": [
+    11.52685546875,
+    14.8154296875,
+    7.39404296875
+  ],
+  "load_after_capabilities": [
+    10.68359375,
+    14.5859375,
+    7.3564453125
+  ]
+}

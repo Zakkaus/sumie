@@ -1,0 +1,8 @@
+arm64
+ProductName:		macOS
+ProductVersion:		15.8.2
+BuildVersion:		24H232
+ImageOS=macos15
+ImageVersion=20261118.0550.1
+commit=d9bfd314cf0bc2e0c48cc1146f80dcae2416b2c3
+13:03  up 1 min, 1 user, load averages: 116.79 41.75 16.12
