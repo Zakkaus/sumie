@@ -86,14 +86,21 @@ def main():
     options, command = parse_args()
     runtime = Path(os.environ.get("XDG_RUNTIME_DIR", ""))
     bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "").partition(",")[0]
-    if (runtime.parent != Path("/scratch/ram") or not runtime.name.startswith("sumie-rt.")
-            or bus != f"unix:path={runtime}/bus"):
+    if (not runtime.is_absolute() or not runtime.name.startswith("sumie-rt.")
+            or bus != f"unix:path={runtime}/bus" or os.environ.get("WAYLAND_DISPLAY") != SOCKET
+            or "DISPLAY" in os.environ or "WAYLAND_SOCKET" in os.environ):
         raise RuntimeError("start with run.sh to create a private runtime and D-Bus session")
 
     injector = build_injector(runtime) if options.text is not None else None
+    env = os.environ.copy()
+    if injector is not None:
+        env.update(KWIN_WAYLAND_NO_PERMISSION_CHECKS="1", KWIN_XKB_DEFAULT_KEYMAP="1",
+                   XKB_DEFAULT_RULES="evdev", XKB_DEFAULT_MODEL="pc105", XKB_DEFAULT_LAYOUT="us",
+                   XKB_DEFAULT_VARIANT="", XKB_DEFAULT_OPTIONS="")
     kwin = subprocess.Popen(["kwin_wayland", "--virtual", "--no-lockscreen", "--no-kactivities",
                              "--no-global-shortcuts", "--socket", SOCKET,
-                             "--width", "1280", "--height", "800", "--scale", str(options.scale)])
+                             "--width", "1280", "--height", "800", "--scale", str(options.scale)],
+                            env=env)
     try:
         deadline = time.monotonic() + 10
         while not (runtime / SOCKET).is_socket():

@@ -10,7 +10,7 @@ REPO = Path(__file__).resolve().parents[2]
 def artifact_dir(parent, prefix):
     runtime = Path(os.environ.get('XDG_RUNTIME_DIR', ''))
     bus = os.environ.get('DBUS_SESSION_BUS_ADDRESS', '').partition(',')[0]
-    if (runtime.parent != Path('/scratch/ram') or not runtime.name.startswith('sumie-rt.')
+    if (not runtime.is_absolute() or not runtime.name.startswith('sumie-rt.')
             or bus != f'unix:path={runtime}/bus' or os.environ.get('WAYLAND_DISPLAY') != 'wl-sumie'
             or 'DISPLAY' in os.environ or 'WAYLAND_SOCKET' in os.environ):
         raise RuntimeError('start with the private performance runner')

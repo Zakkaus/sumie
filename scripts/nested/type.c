@@ -1,3 +1,4 @@
+#include <linux/input-event-codes.h>
 #include <locale.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,11 +12,12 @@ static void global(void *data, struct wl_registry *registry, uint32_t name,
                    const char *interface, uint32_t version)
 {
     struct org_kde_kwin_fake_input **input = data;
-    if (strcmp(interface, org_kde_kwin_fake_input_interface.name) == 0 &&
-        version >= ORG_KDE_KWIN_FAKE_INPUT_KEYBOARD_KEYSYM_SINCE_VERSION) {
-        *input = wl_registry_bind(registry, name, &org_kde_kwin_fake_input_interface,
-                                  ORG_KDE_KWIN_FAKE_INPUT_KEYBOARD_KEYSYM_SINCE_VERSION);
-    }
+    if (strcmp(interface, org_kde_kwin_fake_input_interface.name) != 0 ||
+        version < ORG_KDE_KWIN_FAKE_INPUT_DESTROY_SINCE_VERSION)
+        return;
+    uint32_t supported = (uint32_t)org_kde_kwin_fake_input_interface.version;
+    *input = wl_registry_bind(registry, name, &org_kde_kwin_fake_input_interface,
+                              version < supported ? version : supported);
 }
 
 static void global_remove(void *data, struct wl_registry *registry, uint32_t name)
@@ -27,7 +29,31 @@ static void global_remove(void *data, struct wl_registry *registry, uint32_t nam
 
 static const struct wl_registry_listener listener = {global, global_remove};
 
-static int send_text(struct wl_display *display, struct org_kde_kwin_fake_input *input,
+static int send_keycode(struct org_kde_kwin_fake_input *input, struct xkb_keymap *keymap,
+                        xkb_keysym_t sym)
+{
+    for (xkb_keycode_t key = xkb_keymap_min_keycode(keymap);
+         key <= xkb_keymap_max_keycode(keymap); ++key) {
+        for (xkb_level_index_t level = 0; level < 2; ++level) {
+            const xkb_keysym_t *syms;
+            if (xkb_keymap_key_get_syms_by_level(keymap, key, 0, level, &syms) != 1 ||
+                syms[0] != sym)
+                continue;
+            if (level)
+                org_kde_kwin_fake_input_keyboard_key(input, KEY_LEFTSHIFT, WL_KEYBOARD_KEY_STATE_PRESSED);
+            // XKB's evdev keymap adds 8 to Linux input keycodes.
+            org_kde_kwin_fake_input_keyboard_key(input, key - 8, WL_KEYBOARD_KEY_STATE_PRESSED);
+            org_kde_kwin_fake_input_keyboard_key(input, key - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
+            if (level)
+                org_kde_kwin_fake_input_keyboard_key(input, KEY_LEFTSHIFT, WL_KEYBOARD_KEY_STATE_RELEASED);
+            return 0;
+        }
+    }
+    fputs("nested input: character is not on the v5 US keymap\n", stderr);
+    return 1;
+}
+
+static int send_text(struct org_kde_kwin_fake_input *input, struct xkb_keymap *keymap,
                      const char *text)
 {
     mbstate_t state = {0};
@@ -42,16 +68,46 @@ static int send_text(struct wl_display *display, struct org_kde_kwin_fake_input 
         }
         uint32_t sym = codepoint == '\n' ? XKB_KEY_Return :
                        codepoint == '\t' ? XKB_KEY_Tab : xkb_utf32_to_keysym(codepoint);
-        org_kde_kwin_fake_input_keyboard_keysym(input, sym, WL_KEYBOARD_KEY_STATE_PRESSED);
-        org_kde_kwin_fake_input_keyboard_keysym(input, sym, WL_KEYBOARD_KEY_STATE_RELEASED);
+#ifdef ORG_KDE_KWIN_FAKE_INPUT_KEYBOARD_KEYSYM_SINCE_VERSION
+        if (!keymap) {
+            org_kde_kwin_fake_input_keyboard_keysym(input, sym, WL_KEYBOARD_KEY_STATE_PRESSED);
+            org_kde_kwin_fake_input_keyboard_keysym(input, sym, WL_KEYBOARD_KEY_STATE_RELEASED);
+        } else
+#endif
+        if (send_keycode(input, keymap, sym))
+            return 1;
         text += n;
         remaining -= n;
     }
-    if (wl_display_roundtrip(display) < 0) {
+    return 0;
+}
+
+static int type_text(struct wl_display *display, struct org_kde_kwin_fake_input *input,
+                     const char *text)
+{
+    struct xkb_keymap *keymap = NULL;
+#ifdef ORG_KDE_KWIN_FAKE_INPUT_KEYBOARD_KEYSYM_SINCE_VERSION
+    if (org_kde_kwin_fake_input_get_version(input) < ORG_KDE_KWIN_FAKE_INPUT_KEYBOARD_KEYSYM_SINCE_VERSION)
+#endif
+    {
+        const struct xkb_rule_names names = {"evdev", "pc105", "us", "", ""};
+        struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+        if (context) {
+            keymap = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+            xkb_context_unref(context);
+        }
+        if (!keymap) {
+            fputs("nested input: could not load the US keymap\n", stderr);
+            return 1;
+        }
+    }
+    int status = send_text(input, keymap, text);
+    xkb_keymap_unref(keymap);
+    if (status == 0 && wl_display_roundtrip(display) < 0) {
         perror("nested input: send keys");
         return 1;
     }
-    return 0;
+    return status;
 }
 
 int main(int argc, char **argv)
@@ -72,11 +128,11 @@ int main(int argc, char **argv)
     if (wl_display_roundtrip(display) < 0) {
         perror("nested input: read globals");
     } else if (!input) {
-        fputs("nested input: KWin fake input v6 is not available\n", stderr);
+        fputs("nested input: KWin fake input v5 or newer is not available\n", stderr);
     } else {
         org_kde_kwin_fake_input_authenticate(input, "sumie nested test",
                                             "Type into the focused test client");
-        status = send_text(display, input, argv[1]);
+        status = type_text(display, input, argv[1]);
         org_kde_kwin_fake_input_destroy(input);
     }
     wl_registry_destroy(registry);

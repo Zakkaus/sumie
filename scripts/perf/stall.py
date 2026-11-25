@@ -1,4 +1,5 @@
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -9,6 +10,26 @@ from session import artifact_dir, stop, sumie_binary
 
 NS_PER_MS = 1_000_000
 LIMIT_NS = 100 * NS_PER_MS
+DAY_US = 86_400_000_000
+STAMP = re.compile(r'\[(\d\d):(\d\d):(\d\d)\.(\d{6})\] (.*)')
+PRESENTATION_DONE = re.compile(r'wp_presentation_feedback#\d+\.(presented|discarded)\(')
+
+
+def trace_events(log, launch_us, start):
+    # Release builds have no presentation log. Their WAYLAND_DEBUG trace carries the
+    # same feedback events, stamped in UTC, so map them onto the watchdog's clock.
+    while True:
+        offset = log.tell()
+        line = log.readline()
+        if not line.endswith('\n'):
+            log.seek(offset)
+            return
+        stamp = STAMP.match(line)
+        if not stamp or not (done := PRESENTATION_DONE.search(stamp[5])):
+            continue
+        h, m, s, us = map(int, stamp.groups()[:4])
+        elapsed_us = (((h * 60 + m) * 60 + s) * 1_000_000 + us - launch_us) % DAY_US
+        yield f'{done[1]} {start + elapsed_us * 1000}'
 
 
 class Watchdog:
@@ -100,24 +121,40 @@ def main():
     workload.chmod(0o700)
     present_log = artifacts / 'present.log'
     client_log = artifacts / 'sumie.log'
-    env = dict(os.environ, SHELL=str(workload), SUMIE_PRESENT_LOG=str(present_log))
+    env = dict(os.environ, SHELL=str(workload))
     binary = sumie_binary('debug')
-    print(f'Duration: {seconds} s; sumie: {shlex.quote(str(binary))}; load: {os.getloadavg()}',
-          flush=True)
+    # Only debug builds write the presentation log. Release builds fall back to the
+    # WAYLAND_DEBUG trace, which has no visibility events, so hidden periods are not counted.
+    release = not os.access(binary, os.X_OK)
+    if release:
+        binary = sumie_binary('release')
+        env['WAYLAND_DEBUG'] = '1'
+    else:
+        env['SUMIE_PRESENT_LOG'] = str(present_log)
+    source = 'WAYLAND_DEBUG trace (release; no visibility)' if release else 'presentation log'
+    print(f'Duration: {seconds} s; sumie: {shlex.quote(str(binary))}; source: {source}; '
+          f'load: {os.getloadavg()}', flush=True)
     present_log.touch()
-    with client_log.open('w') as output, present_log.open() as log:
+    with client_log.open('w') as output, (client_log if release else present_log).open(
+            errors='replace') as log:
         start = time.monotonic_ns()
+        launch_us = time.time_ns() // 1000
         watch = Watchdog(start, start + seconds * 1_000_000_000)
+        watch.ready = release
         client = subprocess.Popen([binary], env=env, stdout=output, stderr=subprocess.STDOUT)
+
+        def read_events():
+            watch.read(trace_events(log, launch_us, start) if release else log)
+
         try:
             while (left := watch.end - time.monotonic_ns()) > 0:
-                watch.read(log)
+                read_events()
                 try:
                     status = client.wait(timeout=min(left / 1_000_000_000, 0.02))
                 except subprocess.TimeoutExpired:
                     continue
                 raise RuntimeError(f'sumie exited with status {status}; see {client_log}')
-            watch.read(log)
+            read_events()
         finally:
             stop(client)
     return watch.finish()

@@ -2,8 +2,9 @@
 
 `run.sh` starts a private KWin and types into its focused Wayland client. It needs
 no root, desktop-file permission, or change to the desktop compositor. Run it
-from the repository root on Linux with `/scratch/ram`, KWin with fake input v6
-(tested on 6.8.3), `kscreen-doctor`, `dbus-run-session`, Python 3, and GNU `timeout`.
+from the repository root on Linux with KWin fake input v5 or v6 (v6 tested on 6.8.3,
+v5 offered by 6.7.6), `kscreen-doctor`, `dbus-run-session`, Python 3, and GNU `timeout`.
+The private runtime goes in `/scratch/ram` when it exists, otherwise in `$TMPDIR` or `/tmp`.
 For `--type`, also install `wayland-scanner`, a C compiler, `pkg-config`, the
 Wayland and xkbcommon development files, and the Plasma Wayland protocols.
 
@@ -24,9 +25,12 @@ Use changing terminal output or an enabled cursor blink to reach later frames.
 ## Why fake input
 
 KWin advertises [`org_kde_kwin_fake_input`](https://invent.kde.org/libraries/plasma-wayland-protocols/-/blob/master/src/protocols/fake-input.xml)
-v6 to the helper on the private socket. The helper calls `authenticate`, then
-sends `keyboard_keysym` presses and releases. KWin 6.8.3 accepts the request for
-this unsandboxed client without bypassing its protocol filter.
+to the helper on the private socket. The helper binds the newest version offered,
+up to v6. v6 adds `keyboard_keysym`; with v5 the helper sends keycodes against a
+US XKB keymap. KWin 6.7.6 offers v5 only when the nested KWin runs with
+`KWIN_WAYLAND_NO_PERMISSION_CHECKS=1`, which `run.py` sets for that KWin alone
+when `--type` is given. KWin 6.8.3 accepts the request for this unsandboxed
+client without bypassing its protocol filter.
 
 - `zwp_virtual_keyboard_v1`: the nested KWin registry did not advertise its manager.
 - KWin scripts: the [scripting API](https://develop.kde.org/docs/plasma/kwin/api/)
@@ -37,7 +41,7 @@ this unsandboxed client without bypassing its protocol filter.
   not run against the host.
 
 The private session bus has no desktop service activation. The runner removes
-its `/scratch/ram/sumie-rt.*` directory on exit. It does not sandbox the client.
+its `sumie-rt.*` directory under `/scratch/ram` or `$TMPDIR` on exit. It does not sandbox the client.
 
 ## Terminal performance baseline
 
