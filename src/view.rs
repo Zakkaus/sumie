@@ -92,21 +92,27 @@ struct Line {
     shaped: sumie_font::ShapedRun,
 }
 
+/// Distinct missing code points whose errors are logged; terminal output can show many more.
+const MISSING_GLYPH_WARNINGS: usize = 32;
+
 #[derive(Default)]
-struct FontErrors(HashSet<Discriminant<FontError>>);
+struct FontErrors {
+    kinds: HashSet<Discriminant<FontError>>,
+    missing: HashSet<u32>,
+}
 
 impl FontErrors {
     fn warn(&mut self, error: &FontError) {
-        if !self.0.insert(discriminant(error)) {
-            return;
-        }
-        // A missing code point comes from terminal output or IME input.
-        let reason: &dyn std::fmt::Display = if matches!(error, FontError::MissingGlyph { .. }) {
-            &"no font covers a character"
-        } else {
-            error
+        let first = match error {
+            // The first error for a code point lists the fonts that fallback rejected.
+            FontError::MissingGlyph { codepoint, .. } => {
+                self.missing.len() < MISSING_GLYPH_WARNINGS && self.missing.insert(*codepoint)
+            }
+            _ => self.kinds.insert(discriminant(error)),
         };
-        tracing::warn!(%reason, "could not draw terminal glyphs");
+        if first {
+            tracing::warn!(reason = %error, "could not draw terminal glyphs");
+        }
     }
 }
 

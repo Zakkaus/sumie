@@ -15,7 +15,10 @@ mod sprite;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use discovery::{Discovery, Face};
 use skrifa::{GlyphId, font::attribute::Weight};
@@ -153,7 +156,7 @@ pub struct Rejection {
     /// PostScript name.
     pub font: String,
     pub path: Option<PathBuf>,
-    pub error: Box<FontError>,
+    pub error: FontError,
 }
 
 impl std::fmt::Display for Rejection {
@@ -182,6 +185,11 @@ pub struct FontSystem {
     faces: Vec<Face>,
     primary: [Option<FaceId>; 4],
     fallback: [HashMap<char, FaceId>; 4],
+    /// Characters whose fallback lookup failed. Only the first error lists the rejected fonts.
+    missing: [HashSet<char>; 4],
+    /// Fallback discovery calls, counted for cache tests.
+    #[cfg(test)]
+    fallback_finds: usize,
     metrics: CellMetrics,
     layout: layout::Layout,
     rasterizer: raster::Rasterizer,
@@ -225,6 +233,9 @@ impl FontSystem {
             }],
             primary: [Some(FaceId(0)), None, None, None],
             fallback: Default::default(),
+            missing: Default::default(),
+            #[cfg(test)]
+            fallback_finds: 0,
             metrics,
             layout: layout::Layout::default(),
             rasterizer: raster::Rasterizer::new(options.hinting),
@@ -325,14 +336,36 @@ impl FontSystem {
         if let Some(&face) = self.fallback[style.index()].get(&ch) {
             return Ok(face);
         }
+        if self.missing[style.index()].contains(&ch) {
+            return Err(FontError::MissingGlyph {
+                codepoint: u32::from(ch),
+                rejected: Vec::new(),
+            });
+        }
+        let face = self.load_fallback(ch, style);
+        match &face {
+            Ok(face) => {
+                self.fallback[style.index()].insert(ch, *face);
+            }
+            Err(_) => {
+                self.missing[style.index()].insert(ch);
+            }
+        }
+        face
+    }
 
+    fn load_fallback(&mut self, ch: char, style: FontStyle) -> Result<FaceId, FontError> {
+        #[cfg(test)]
+        {
+            self.fallback_finds += 1;
+        }
         let matched = self.discovery.find(Some(ch), style)?;
         let regular_weight = self.non_bold_weight(Some(ch), style);
         let missing = FontError::MissingGlyph {
             codepoint: u32::from(ch),
             rejected: Vec::new(),
         };
-        let face = if let Some(index) = self
+        if let Some(index) = self
             .faces
             .iter()
             .position(|face| face.matches(&matched, regular_weight))
@@ -342,7 +375,7 @@ impl FontSystem {
                 .charmap()
                 .map_unicode(ch)
                 .ok_or(missing)?;
-            FaceId(index)
+            Ok(FaceId(index))
         } else {
             let (font, weight, synthetic) = matched.load(&self.faces, regular_weight)?;
             font.charmap().map_unicode(ch).ok_or(missing)?;
@@ -356,10 +389,8 @@ impl FontSystem {
                 ppem,
                 synthetic,
             });
-            id
-        };
-        self.fallback[style.index()].insert(ch, face);
-        Ok(face)
+            Ok(id)
+        }
     }
 
     fn non_bold_weight(&mut self, ch: Option<char>, style: FontStyle) -> Option<Weight> {

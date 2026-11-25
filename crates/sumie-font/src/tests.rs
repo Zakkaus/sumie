@@ -410,6 +410,47 @@ fn bold_shape_uses_a_heavier_face_or_synthesizes_on_the_same_grid() {
 }
 
 #[test]
+fn missing_fallback_is_discovered_once_per_style() {
+    use crate::{FontError, FontOptions, FontStyle, FontSystem};
+
+    #[cfg(target_os = "linux")]
+    const FAMILY: &str = "monospace";
+    #[cfg(target_os = "macos")]
+    const FAMILY: &str = "Menlo";
+
+    let bold = FontStyle {
+        bold: true,
+        italic: false,
+    };
+    let italic = FontStyle {
+        bold: false,
+        italic: true,
+    };
+    // Unassigned code points, which no installed font covers.
+    let cases = [
+        ('\u{378}', FontStyle::default()),
+        ('\u{378}', bold),
+        ('\u{379}', italic),
+    ];
+    let mut fonts = FontSystem::new(FAMILY, 20.0, 1.0, FontOptions::default()).unwrap();
+    for (ch, style) in cases {
+        let before = fonts.fallback_finds;
+        assert!(fonts.face_for(ch, style).is_err(), "{ch:?} {style:?}");
+        let finds = fonts.fallback_finds;
+        assert!(finds > before, "{ch:?} {style:?}");
+        let codepoint = u32::from(ch);
+        assert!(
+            matches!(
+                fonts.face_for(ch, style),
+                Err(FontError::MissingGlyph { codepoint: missing, .. }) if missing == codepoint
+            ),
+            "{ch:?} {style:?}"
+        );
+        assert_eq!(fonts.fallback_finds, finds, "{ch:?} {style:?}");
+    }
+}
+
+#[test]
 fn atlas_keeps_rectangles_and_reports_uploads() {
     use skrifa::GlyphId;
     use zeno::Placement;
@@ -516,7 +557,15 @@ fn core_text_system_wide_fallback_covers_cjk() {
         let matched = discovery
             .find_system_wide('水', style)
             .unwrap_or_else(|error| panic!("{style:?}: {error}"));
-        assert_ne!(matched.family, "Menlo", "{style:?}");
+        // The cascade follows the user's language order, which ranks Chinese families ahead
+        // of Korean ones such as AppleGothic.
+        assert!(
+            ["Hiragino Sans GB", "PingFang", "Songti", "STHeiti"]
+                .iter()
+                .any(|family| matched.family.starts_with(family)),
+            "{style:?}: {}",
+            matched.family
+        );
         let (font, ..) = matched.load(&[], None).unwrap();
         assert!(
             font.charmap().map_unicode('水').is_some(),

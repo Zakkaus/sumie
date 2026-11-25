@@ -333,6 +333,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("Core Text bypasses every fallback step", "test", "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),
               "test tests::core_text_loads_the_named_collection_face_and_cjk_fallback ... FAILED")
+        probe("Core Text system-wide fallback queries an uncovered character", "test",
+              "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("location: u32::from(ch).try_into().ok()?,", "location: 0x378,"),
+              "test tests::core_text_system_wide_fallback_covers_cjk ... FAILED")
 
 
 def interrupted(_signum, _frame):
