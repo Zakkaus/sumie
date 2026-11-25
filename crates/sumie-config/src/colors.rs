@@ -44,22 +44,35 @@ impl Serialize for Color {
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Colors {
     /// Default text color.
-    #[schemars(with = "Color", default = "default_foreground")]
+    #[schemars(with = "Color", default = "default_foreground", title = "Foreground")]
     foreground: Option<Color>,
     /// Default terminal background color.
-    #[schemars(with = "Color", default = "default_background")]
+    #[schemars(with = "Color", default = "default_background", title = "Background")]
     background: Option<Color>,
     /// Cursor color. Omit to use the foreground color.
-    #[schemars(with = "Color", default = "default_foreground")]
+    #[schemars(with = "Color", default = "default_foreground", title = "Cursor")]
     cursor: Option<Color>,
     /// Selected text color.
-    #[schemars(with = "Color", default = "default_foreground")]
+    #[schemars(
+        with = "Color",
+        default = "default_foreground",
+        title = "Selection foreground"
+    )]
     selection_foreground: Option<Color>,
     /// Selection background color.
-    #[schemars(with = "Color", default = "default_selection_background")]
+    #[schemars(
+        with = "Color",
+        default = "default_selection_background",
+        title = "Selection background"
+    )]
     selection_background: Option<Color>,
     /// ANSI colors 0 through 15, in index order.
-    #[schemars(with = "Vec<Color>", length(equal = 16), default = "default_palette")]
+    #[schemars(
+        with = "Vec<Color>",
+        length(equal = 16),
+        default = "default_palette",
+        title = "Palette"
+    )]
     palette: Option<[Color; 16]>,
 }
 

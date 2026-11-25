@@ -6,10 +6,14 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 pub struct Cursor {
     /// Cursor shape: block, bar, or underline.
-    #[schemars(with = "CursorStyle", default = "CursorStyle::default")]
+    #[schemars(
+        with = "CursorStyle",
+        default = "CursorStyle::default",
+        title = "Style"
+    )]
     style: Option<CursorStyle>,
     /// Blink while the window is focused.
-    #[schemars(with = "bool", default = "default_cursor_blink")]
+    #[schemars(with = "bool", default = "default_cursor_blink", title = "Blink")]
     blink: Option<bool>,
 }
 
@@ -17,8 +21,11 @@ pub struct Cursor {
 #[serde(rename_all = "lowercase")]
 pub enum CursorStyle {
     #[default]
+    #[schemars(title = "Block")]
     Block,
+    #[schemars(title = "Bar")]
     Bar,
+    #[schemars(title = "Underline")]
     Underline,
 }
 

@@ -7,7 +7,9 @@ mod changes;
 mod colors;
 mod cursor;
 mod images;
+mod language;
 mod load;
+mod settings;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[cfg_attr(target_os = "macos", path = "watch_macos.rs")]
 mod watch;
@@ -17,9 +19,11 @@ pub use changes::Changes;
 pub use colors::Colors;
 pub use cursor::{Cursor, CursorStyle};
 pub use images::Images;
+pub use language::Language;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use load::load_visited;
 pub use load::{Error, load, user_config_path};
+pub use settings::{Category, Choice, Kind, SettingInfo, defaults_toml, schema_json, settings};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use watch::Watch;
 #[cfg(target_os = "macos")]
@@ -28,9 +32,8 @@ pub use window::Window;
 
 use std::{borrow::Cow, path::PathBuf};
 
-use schemars::{JsonSchema, Schema, generate::SchemaSettings};
+use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Deserializer, Serialize, de};
-use serde_json::Value;
 use toml::Spanned;
 
 mod scroll;
@@ -49,34 +52,56 @@ const MAX_WEIGHT: u16 = 900;
 pub struct Config {
     /// Share settings across machines. Paths are relative to the file that lists them.
     /// Later includes override earlier ones; this file overrides all of them per key.
-    #[schemars(with = "Vec<PathBuf>")]
+    #[schemars(with = "Vec<PathBuf>", title = "Include files", extend("x-sumie-category" = "general"))]
     #[serde(skip_serializing)]
     include: Vec<Spanned<PathBuf>>,
+    /// Language of the settings editor and window messages. `auto` follows the locale environment.
+    #[schemars(
+        with = "Language",
+        default = "Language::default",
+        title = "Language",
+        extend("x-sumie-category" = "general")
+    )]
+    language: Option<Language>,
     /// Font selection and rasterization settings.
+    #[schemars(title = "Font", extend("x-sumie-category" = "font"))]
     pub font: Font,
     /// Default terminal cursor appearance.
+    #[schemars(title = "Cursor", extend("x-sumie-category" = "cursor"))]
     pub cursor: Cursor,
     /// Default terminal colors and selection overrides.
+    #[schemars(title = "Colors", extend("x-sumie-category" = "colors"))]
     pub colors: Colors,
     /// Kitty image placement settings.
+    #[schemars(title = "Images", extend("x-sumie-category" = "terminal"))]
     pub images: Images,
     /// Interactive login shell settings.
+    #[schemars(title = "Shell", extend("x-sumie-category" = "terminal"))]
     pub shell: Shell,
     /// Pane padding and window background settings.
+    #[schemars(title = "Window", extend("x-sumie-category" = "window"))]
     pub window: Window,
     /// History scrolling behavior.
+    #[schemars(title = "Scrolling", extend("x-sumie-category" = "terminal"))]
     pub scroll: Scroll,
     /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
     #[serde(deserialize_with = "deserialize_contrast")]
     #[schemars(
         with = "f64",
         range(min = 1.0, max = 21.0),
-        default = "default_contrast"
+        default = "default_contrast",
+        title = "Minimum contrast",
+        extend("x-sumie-category" = "colors")
     )]
     minimum_contrast: Option<f64>,
     /// Approximate scrollback limit in bytes. Lowering it can discard history immediately.
     /// Set to 0 to clear and disable scrollback.
-    #[schemars(with = "usize", default = "default_scrollback_limit")]
+    #[schemars(
+        with = "usize",
+        default = "default_scrollback_limit",
+        title = "Scrollback limit",
+        extend("x-sumie-category" = "terminal")
+    )]
     scrollback_limit: Option<usize>,
 }
 
@@ -99,6 +124,11 @@ impl Config {
     }
 
     #[must_use]
+    pub fn language(&self) -> Language {
+        self.language.unwrap_or_default()
+    }
+
+    #[must_use]
     pub fn minimum_contrast(&self) -> f32 {
         #[expect(clippy::cast_possible_truncation, reason = "validated ratio in 1..=21")]
         {
@@ -113,6 +143,7 @@ impl Config {
     }
 
     fn overlay(&mut self, file: Self) {
+        self.language = file.language.or(self.language);
         self.font.overlay(file.font);
         self.colors.overlay(&file.colors);
         self.cursor.overlay(file.cursor);
@@ -151,27 +182,35 @@ fn deserialize_contrast<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f6
 #[serde(default, deny_unknown_fields)]
 pub struct Font {
     /// Choose a different installed font family for the terminal grid.
-    #[schemars(with = "String", default = "default_family")]
+    #[schemars(with = "String", default = "default_family", title = "Family")]
     family: Option<String>,
     /// Adjust text size for readability, in points at 96 DPI.
     #[serde(deserialize_with = "deserialize_size")]
-    #[schemars(with = "f32", default = "default_size", transform = positive_number)]
+    #[schemars(
+        with = "f32",
+        default = "default_size",
+        transform = positive_number,
+        title = "Size"
+    )]
     size: Option<f32>,
     /// Set a CSS weight for primary and fallback fonts. Omit to use platform matching.
     #[serde(deserialize_with = "deserialize_weight")]
-    #[schemars(with = "u16", range(min = MIN_WEIGHT, max = MAX_WEIGHT))]
+    #[schemars(with = "u16", range(min = MIN_WEIGHT, max = MAX_WEIGHT), title = "Weight")]
     weight: Option<u16>,
     /// Tune glyph grid fitting for legibility on low-DPI displays: off, light, or normal.
-    #[schemars(with = "Hinting", default = "Hinting::default")]
+    #[schemars(with = "Hinting", default = "Hinting::default", title = "Hinting")]
     hinting: Option<Hinting>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Hinting {
+    #[schemars(title = "Off")]
     Off,
     #[default]
+    #[schemars(title = "Light")]
     Light,
+    #[schemars(title = "Normal")]
     Normal,
 }
 
@@ -245,67 +284,6 @@ fn deserialize_weight<'de, D: Deserializer<'de>>(input: D) -> Result<Option<u16>
         Err(de::Error::custom(format_args!(
             "font weight must be between {MIN_WEIGHT} and {MAX_WEIGHT}"
         )))
-    }
-}
-
-fn schema() -> Schema {
-    SchemaSettings::default()
-        .with(|settings| settings.inline_subschemas = true)
-        .into_generator()
-        .into_root_schema_for::<Config>()
-}
-
-/// Generate the JSON Schema for the main file and its includes.
-///
-/// # Errors
-/// Returns a JSON serialization error if the generated schema cannot be encoded.
-pub fn schema_json() -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&schema())
-}
-
-/// Generate a parseable example with descriptions and defaults from the schema.
-#[must_use]
-pub fn defaults_toml() -> String {
-    let schema = schema();
-    let properties = &schema.as_value()["properties"];
-    let mut text = String::from("#:schema ./sumie.schema.json\n\n");
-    write_default(&mut text, "include", &properties["include"]);
-    write_default(
-        &mut text,
-        "minimum-contrast",
-        &properties["minimum-contrast"],
-    );
-    write_default(
-        &mut text,
-        "scrollback-limit",
-        &properties["scrollback-limit"],
-    );
-    for table in [
-        "font", "colors", "cursor", "shell", "images", "window", "scroll",
-    ] {
-        use std::fmt::Write as _;
-        writeln!(text, "\n[{table}]").expect("writing to a String is infallible");
-        if let Some(fields) = properties[table]["properties"].as_object() {
-            for (key, value) in fields {
-                write_default(&mut text, key, value);
-            }
-        }
-    }
-    text
-}
-
-fn write_default(text: &mut String, key: &str, schema: &Value) {
-    use std::fmt::Write as _;
-
-    if let Some(description) = schema["description"].as_str() {
-        for line in description.lines() {
-            writeln!(text, "# {line}").expect("writing to a String is infallible");
-        }
-    }
-    if let Some(value) = schema.get("default").filter(|value| !value.is_null()) {
-        writeln!(text, "{key} = {value}").expect("writing to a String is infallible");
-    } else {
-        writeln!(text, "# {key} (unset)").expect("writing to a String is infallible");
     }
 }
 

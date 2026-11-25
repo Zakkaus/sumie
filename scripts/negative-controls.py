@@ -242,6 +242,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("contrast above the supported range", "test", "crates/sumie-config/src/lib.rs",
           replace_once("(1.0..=21.0).contains(&ratio)", "(1.0..=22.0).contains(&ratio)"),
           "test tests::load_configuration ... FAILED")
+    probe("settings key without a title", "test", "crates/sumie-config/src/images.rs",
+          replace_once(',\n        title = "Thumbnail rows"\n', '\n'),
+          "test settings::tests::every_leaf_has_title_and_category ... FAILED")
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")

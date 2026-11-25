@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 pub struct Scroll {
     /// Scroll history by pixels with kinetic touchpad motion. Set to false to scroll whole rows.
-    #[schemars(with = "bool", default = "enabled")]
+    #[schemars(with = "bool", default = "enabled", title = "Smooth scrolling")]
     smooth: Option<bool>,
 }
 

@@ -16,6 +16,7 @@ pub struct Changes {
     pub thumbnail_rows: bool,
     pub padding: bool,
     pub background: bool,
+    pub language: bool,
 }
 
 impl Config {
@@ -49,6 +50,7 @@ impl Config {
             background: self.window.background_opacity().to_bits()
                 != next.window.background_opacity().to_bits()
                 || self.window.background_blur() != next.window.background_blur(),
+            language: self.language() != next.language(),
         }
     }
 }
@@ -99,6 +101,7 @@ mod tests {
                 "[images]\nthumbnail-rows = 0",
                 [false, false, false, false, false, false, true, false],
             ),
+            ("language = 'ja'", [false; 8]),
         ] {
             let new = toml::from_str(text).unwrap();
             let Changes {
@@ -111,8 +114,10 @@ mod tests {
                 thumbnail_rows,
                 padding,
                 background,
+                language,
             } = old.changes(&new);
             assert!(!background, "{text}");
+            assert_eq!(language, text.starts_with("language"), "{text}");
             assert_eq!(
                 [
                     font,

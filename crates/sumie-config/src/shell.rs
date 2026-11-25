@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 pub struct Shell {
     /// Report prompts and working directories and use xterm-256color for SSH.
-    #[schemars(with = "bool", default = "enabled")]
+    #[schemars(with = "bool", default = "enabled", title = "Shell integration")]
     integration: Option<bool>,
 }
 

@@ -6,17 +6,30 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Window {
     /// Left and right padding. Set to 0 to remove it.
-    #[schemars(with = "u16", default = "default_padding_x")]
+    #[schemars(
+        with = "u16",
+        default = "default_padding_x",
+        title = "Horizontal padding"
+    )]
     padding_x: Option<u16>,
     /// Top and bottom padding. Set to 0 to remove it.
-    #[schemars(with = "u16", default = "default_padding_y")]
+    #[schemars(
+        with = "u16",
+        default = "default_padding_y",
+        title = "Vertical padding"
+    )]
     padding_y: Option<u16>,
     /// Opacity of the default terminal background, including pane padding and split gutters.
     #[serde(deserialize_with = "deserialize_opacity")]
-    #[schemars(with = "f32", range(min = 0.0, max = 1.0), default = "opaque")]
+    #[schemars(
+        with = "f32",
+        range(min = 0.0, max = 1.0),
+        default = "opaque",
+        title = "Background opacity"
+    )]
     background_opacity: Option<f32>,
     /// Ask the Wayland compositor to blur the area behind a translucent window.
-    #[schemars(with = "bool", default = "bool::default")]
+    #[schemars(with = "bool", default = "bool::default", title = "Background blur")]
     background_blur: Option<bool>,
 }
 

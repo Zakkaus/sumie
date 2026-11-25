@@ -5,7 +5,11 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Images {
     /// Maximum height of new natural-size placements, in rows. Set to 0 to disable thumbnails.
-    #[schemars(with = "u16", default = "default_thumbnail_rows")]
+    #[schemars(
+        with = "u16",
+        default = "default_thumbnail_rows",
+        title = "Thumbnail rows"
+    )]
     thumbnail_rows: Option<u16>,
 }
 
