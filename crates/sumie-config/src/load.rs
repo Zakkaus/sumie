@@ -60,9 +60,20 @@ pub(crate) fn load_visited(path: &Path, visit: &mut impl FnMut(&Path)) -> Result
 }
 
 fn check_visited(path: &Path, visit: &mut impl FnMut(&Path)) -> Result<Config, Vec<Error>> {
+    check_with(path, visit, &mut |path| fs::read_to_string(path))
+}
+
+/// Reads a settings file; the editor substitutes the text it is about to write.
+pub(crate) type Read<'a> = &'a mut dyn FnMut(&Path) -> io::Result<String>;
+
+pub(crate) fn check_with(
+    path: &Path,
+    visit: &mut impl FnMut(&Path),
+    read: Read<'_>,
+) -> Result<Config, Vec<Error>> {
     visit(path);
-    match fs::read_to_string(path) {
-        Ok(text) => load_document(path, &text, &mut Vec::new(), visit),
+    match read(path) {
+        Ok(text) => load_document(path, &text, &mut Vec::new(), visit, read),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
         Err(source) => Err(vec![Error::Read {
             path: path.to_owned(),
@@ -76,6 +87,7 @@ fn load_document(
     text: &str,
     active: &mut Vec<PathBuf>,
     visit: &mut impl FnMut(&Path),
+    read: Read<'_>,
 ) -> Result<Config, Vec<Error>> {
     let syntax = |error: toml::de::Error| {
         let offset = error.span().map_or(0, |span| span.start);
@@ -128,9 +140,9 @@ fn load_document(
         if active.len() == MAX_INCLUDE_DEPTH {
             return Err(at_entry(Problem::IncludeDepth));
         }
-        let source = fs::read_to_string(&included).map_err(unreadable)?;
+        let source = read(&included).map_err(unreadable)?;
         active.push(identity);
-        merged.overlay(load_document(&included, &source, active, visit)?);
+        merged.overlay(load_document(&included, &source, active, visit, read)?);
         active.pop();
     }
     merged.overlay(file);

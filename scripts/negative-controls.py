@@ -249,6 +249,17 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           replace_once('"font size must be a positive finite number of points"',
                        '"font size must be a positive number of points"'),
           "test problem::tests::each_problem_is_typed_located_and_worded_as_before ... FAILED")
+    # A full re-serialize loses comments; dropping them stands in for toml::to_string, which
+    # this toml build does not compile.
+    probe("settings write re-serializes without comments", "test", "crates/sumie-config/src/edit.rs",
+          replace_once("    Ok(document.to_string())\n",
+                       "    Ok(document.to_string().lines().filter(|line| !line.contains('#'))"
+                       ".map(|line| format!(\"{line}\\n\")).collect())\n"),
+          "test edit::tests::edit_keeps_comments_and_order ... FAILED")
+    probe("settings write skips the identity check", "test", "crates/sumie-config/src/write.rs",
+          replace_once("discard(failed(error)))? != current.stat {",
+                       "discard(failed(error)))? != current.stat && false {"),
+          "test edit::tests::rebase_on_foreign_write ... FAILED")
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")

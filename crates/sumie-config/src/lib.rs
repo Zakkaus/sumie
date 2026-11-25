@@ -6,6 +6,8 @@
 mod changes;
 mod colors;
 mod cursor;
+#[cfg(unix)]
+mod edit;
 mod images;
 mod language;
 mod load;
@@ -15,10 +17,14 @@ mod settings;
 #[cfg_attr(target_os = "macos", path = "watch_macos.rs")]
 mod watch;
 mod window;
+#[cfg(unix)]
+mod write;
 
 pub use changes::Changes;
 pub use colors::Colors;
 pub use cursor::{Cursor, CursorStyle};
+#[cfg(unix)]
+pub use edit::{WriteError, save, winner};
 pub use images::Images;
 pub use language::Language;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -26,11 +32,14 @@ use load::load_visited;
 pub use load::{Error, check, load, user_config_path};
 pub use problem::Problem;
 pub use settings::{Category, Choice, Kind, SettingInfo, defaults_toml, schema_json, settings};
+pub use toml::Value;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use watch::Watch;
 #[cfg(target_os = "macos")]
 pub use watch::WatchEvent;
 pub use window::Window;
+#[cfg(unix)]
+pub use write::{Refusal, Snapshot};
 
 use std::{borrow::Cow, path::PathBuf};
 
