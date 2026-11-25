@@ -63,7 +63,7 @@ const MAX_WEIGHT: u16 = 900;
 pub struct Config {
     /// Share settings across machines. Paths are relative to the file that lists them.
     /// Later includes override earlier ones; this file overrides all of them per key.
-    #[schemars(with = "Vec<PathBuf>", title = "Include files", extend("x-sumie-category" = "general"))]
+    #[schemars(with = "Vec<PathBuf>", title = "Include files", extend("x-sumie-category" = "behavior"))]
     #[serde(skip_serializing)]
     include: Vec<Spanned<PathBuf>>,
     /// Language of the settings editor and window messages. `auto` follows the locale environment.
@@ -71,29 +71,29 @@ pub struct Config {
         with = "Language",
         default = "Language::default",
         title = "Language",
-        extend("x-sumie-category" = "general")
+        extend("x-sumie-category" = "behavior")
     )]
     language: Option<Language>,
     /// Font selection and rasterization settings.
     #[schemars(title = "Font", extend("x-sumie-category" = "font"))]
     pub font: Font,
     /// Default terminal cursor appearance.
-    #[schemars(title = "Cursor", extend("x-sumie-category" = "cursor"))]
+    #[schemars(title = "Cursor", extend("x-sumie-category" = "appearance"))]
     pub cursor: Cursor,
     /// Default terminal colors and selection overrides.
     #[schemars(title = "Colors", extend("x-sumie-category" = "colors"))]
     pub colors: Colors,
     /// Kitty image placement settings.
-    #[schemars(title = "Images", extend("x-sumie-category" = "terminal"))]
+    #[schemars(title = "Images", extend("x-sumie-category" = "behavior"))]
     pub images: Images,
     /// Interactive login shell settings.
-    #[schemars(title = "Shell", extend("x-sumie-category" = "terminal"))]
+    #[schemars(title = "Shell", extend("x-sumie-category" = "behavior"))]
     pub shell: Shell,
     /// Pane padding and window background settings.
-    #[schemars(title = "Window", extend("x-sumie-category" = "window"))]
+    #[schemars(title = "Window", extend("x-sumie-category" = "appearance"))]
     pub window: Window,
     /// History scrolling behavior.
-    #[schemars(title = "Scrolling", extend("x-sumie-category" = "terminal"))]
+    #[schemars(title = "Scrolling", extend("x-sumie-category" = "behavior"))]
     pub scroll: Scroll,
     /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
     #[serde(deserialize_with = "deserialize_contrast")]
@@ -111,7 +111,7 @@ pub struct Config {
         with = "usize",
         default = "default_scrollback_limit",
         title = "Scrollback limit",
-        extend("x-sumie-category" = "terminal")
+        extend("x-sumie-category" = "behavior")
     )]
     scrollback_limit: Option<usize>,
 }

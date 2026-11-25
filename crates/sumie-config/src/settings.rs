@@ -9,38 +9,42 @@ use crate::Config;
 
 const CATEGORY: &str = "x-sumie-category";
 
-/// Settings editor tab that lists a key.
+/// Settings editor tab that lists a key, as the design book's settings section orders them.
+/// Keybinds, links and input method have no keys yet; the editor hides empty tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Category {
-    General,
+    Appearance,
     Font,
     Colors,
-    Cursor,
-    Window,
-    Terminal,
+    Behavior,
+    Keybinds,
+    Links,
+    InputMethod,
 }
 
 impl Category {
     /// Tabs in display order.
-    pub const ALL: [Self; 6] = [
-        Self::General,
+    pub const ALL: [Self; 7] = [
+        Self::Appearance,
         Self::Font,
         Self::Colors,
-        Self::Cursor,
-        Self::Window,
-        Self::Terminal,
+        Self::Behavior,
+        Self::Keybinds,
+        Self::Links,
+        Self::InputMethod,
     ];
 
     /// Stable identifier used in the schema and in translation keys.
     #[must_use]
     pub fn id(self) -> &'static str {
         match self {
-            Self::General => "general",
+            Self::Appearance => "appearance",
             Self::Font => "font",
             Self::Colors => "colors",
-            Self::Cursor => "cursor",
-            Self::Window => "window",
-            Self::Terminal => "terminal",
+            Self::Behavior => "behavior",
+            Self::Keybinds => "keybinds",
+            Self::Links => "links",
+            Self::InputMethod => "input-method",
         }
     }
 }
@@ -279,11 +283,15 @@ mod tests {
                 );
             }
         }
-        assert!(
-            Category::ALL
+        let count = |category| {
+            settings
                 .iter()
-                .all(|category| settings.iter().any(|info| info.category == *category))
-        );
+                .filter(|info| info.category == category)
+                .count()
+        };
+        let counts = Category::ALL.map(count);
+        // Appearance, font, colors, behavior; keybinds, links and input method have no keys yet.
+        assert_eq!(counts, [6, 4, 7, 6, 0, 0, 0]);
     }
 
     #[test]
@@ -301,7 +309,10 @@ mod tests {
         assert_eq!(find("colors.palette").kind, Kind::Palette);
         assert_eq!(find("colors.cursor").category, Category::Colors);
         assert_eq!(find("minimum-contrast").category, Category::Colors);
-        assert_eq!(find("scroll.smooth").category, Category::Terminal);
+        assert_eq!(find("cursor.blink").category, Category::Appearance);
+        assert_eq!(find("window.padding-x").category, Category::Appearance);
+        assert_eq!(find("scroll.smooth").category, Category::Behavior);
+        assert_eq!(find("language").category, Category::Behavior);
         let Kind::Choice(languages) = &find("language").kind else {
             panic!("language is not a choice");
         };
