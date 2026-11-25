@@ -159,3 +159,30 @@ fn a_nested_bash_runs_nothing_of_sumie() {
     }
     assert_clean(&session);
 }
+
+/// A DEBUG trap set at the prompt does not chain sumie's; the next prompt reinstalls it.
+#[test]
+fn bash_3_2_reinstalls_its_trap_after_one_set_at_the_prompt() {
+    let Some((home, mut session)) = assert_marks(
+        "bash_3_2_reinstalls_its_trap_after_one_set_at_the_prompt",
+        &[],
+        "",
+        None,
+        true,
+    ) else {
+        return;
+    };
+    assert_command(
+        &mut session,
+        r#"trap 'echo "debug:$BASH_COMMAND" >> "$HOME/debug.log"' DEBUG"#,
+        0,
+        "[0]$ ",
+    );
+    assert_command(&mut session, "false", 1, "[1]$ ");
+    assert_clean(&session);
+    let debug = home.read("debug.log");
+    assert!(
+        debug.contains("debug:false\n"),
+        "the user's DEBUG trap lost: {debug:?}"
+    );
+}

@@ -433,7 +433,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               login + "bash::bash_3_2_profile_appends_after_the_bootstrap ... FAILED")
         probe("Bash 3.2 DEBUG trap not reinstalled", "test", "shell-integration/bash/sumie.bash",
               replace_once('|| eval "${_sumie_trap-}"', "|| :"),
-              login + "bash::bash_3_2_chains_a_debug_trap_installed_at_the_first_prompt ... FAILED")
+              login + "bash::bash_3_2_reinstalls_its_trap_after_one_set_at_the_prompt ... FAILED")
 
 
 def interrupted(_signum, _frame):
