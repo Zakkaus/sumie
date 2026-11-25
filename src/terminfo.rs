@@ -7,6 +7,11 @@ use std::sync::LazyLock;
 use std::{fs, fs::File};
 
 pub(super) const NAME: &str = "xterm-sumie";
+/// A GUI launch on macOS has a sparse `PATH`; the system `tic` is always here.
+#[cfg(target_os = "macos")]
+const TIC: &str = "/usr/bin/tic";
+#[cfg(target_os = "linux")]
+const TIC: &str = "tic";
 const SOURCE: &str = include_str!("../terminfo/xterm-sumie.terminfo");
 static DIRECTORY: LazyLock<Option<PathBuf>> = LazyLock::new(|| match install() {
     Ok(path) => Some(path),
@@ -51,14 +56,15 @@ fn install() -> io::Result<PathBuf> {
 }
 
 fn compile(dir: &Path) -> io::Result<()> {
-    let mut child = Command::new("tic")
+    let mut command = Command::new(TIC);
+    command
         .args(["-x", "-o"])
         .arg(dir)
         .arg("/dev/stdin")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    let mut child = sumie_pty::spawn(&mut command)
         .map_err(|error| io::Error::other(format!("could not start tic: {error}")))?;
     let sent = child.stdin.take().unwrap().write_all(SOURCE.as_bytes());
     let status = child.wait()?;

@@ -1,20 +1,16 @@
 mod mouse;
-#[path = "shell_integration.rs"]
-mod shell_integration;
-#[path = "terminfo.rs"]
-mod terminfo;
 
-use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::sync::mpsc::TryRecvError;
 
 use sumie_core::{KeyAction, KeyModifiers, Pane, PaneCommand, PaneEffect};
-use sumie_pty::{Command, Pty, Size, SpawnOptions};
+use sumie_pty::{Pty, Size, SpawnOptions};
 use sumie_vt::{KeyEncoder, KeyEvent, Snapshot, Terminal};
 
 use crate::Result;
+use crate::login::Login;
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) use crate::login::request_environment;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 const XTVERSION: &str = concat!("sumie ", env!("CARGO_PKG_VERSION"));
 
 pub(crate) struct LocalPane {
@@ -31,19 +27,8 @@ impl LocalPane {
         config: &sumie_config::Config,
         cwd: &std::path::Path,
     ) -> Result<Self> {
-        let mut env = request_environment();
-        let args = if config.shell.integration() {
-            shell_integration::inject(&mut env)
-        } else {
-            None
-        };
-        let command = args
-            .as_ref()
-            .map_or(Command::LoginShell, |args| Command::Argv {
-                program: &env[std::ffi::OsStr::new("SHELL")],
-                args,
-            });
-        let mut options = SpawnOptions::new(command, &env, size);
+        let login = Login::new(std::env::vars_os(), config.shell.integration())?;
+        let mut options = SpawnOptions::new(login.command(), &login.env, size);
         options.cwd = Some(cwd);
         Self::spawn(options, cell, config)
     }
@@ -223,26 +208,6 @@ impl Pane for LocalPane {
     fn snapshot(&mut self) -> Result<Snapshot> {
         Ok(self.terminal.render_snapshot()?)
     }
-}
-
-pub(crate) fn request_environment() -> BTreeMap<OsString, OsString> {
-    let mut env: BTreeMap<_, _> = std::env::vars_os().collect();
-    let term = if let Some(dir) = terminfo::directory() {
-        env.insert("TERMINFO".into(), dir.as_os_str().into());
-        terminfo::NAME
-    } else {
-        env.remove(std::ffi::OsStr::new("TERMINFO"));
-        "xterm-256color"
-    };
-    env.insert("TERM".into(), term.into());
-    env.insert("COLORTERM".into(), "truecolor".into());
-    env.insert("TERM_PROGRAM".into(), "sumie".into());
-    env.insert("TERM_PROGRAM_VERSION".into(), VERSION.into());
-    // Node's supports-hyperlinks (Claude Code, npm) only trusts terminals it knows by name.
-    // Respect a value the user already set, including 0.
-    env.entry("FORCE_HYPERLINK".into())
-        .or_insert_with(|| "1".into());
-    env
 }
 
 fn modifier_bits(modifiers: KeyModifiers) -> u16 {

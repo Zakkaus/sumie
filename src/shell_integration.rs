@@ -22,6 +22,10 @@ const SCRIPTS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Runs the bash hooks from `PROMPT_COMMAND` on macOS; `bash/sumie.bash` replaces this text.
+#[cfg(target_os = "macos")]
+const BASH_BOOT: &str = r#". "$SUMIE_BASH_SCRIPT" && eval "$_sumie_start""#;
+
 static DIRECTORY: LazyLock<Option<PathBuf>> = LazyLock::new(|| match install() {
     Ok(dir) => Some(dir),
     Err(error) => {
@@ -29,6 +33,11 @@ static DIRECTORY: LazyLock<Option<PathBuf>> = LazyLock::new(|| match install() {
         None
     }
 });
+
+/// The installed scripts, installing them on the first call.
+pub(super) fn directory() -> Option<&'static Path> {
+    DIRECTORY.as_deref()
+}
 
 fn install() -> io::Result<PathBuf> {
     let dir = env::var_os("XDG_DATA_HOME")
@@ -61,8 +70,25 @@ pub(super) fn inject(env: &mut BTreeMap<OsString, OsString>) -> Option<[OsString
     if !matches!(shell, "bash" | "zsh" | "fish") {
         return None;
     }
-    let dir = DIRECTORY.as_ref()?;
+    let dir = directory()?;
     match shell {
+        // macOS's bash 3.2 reads ENV only when started as `sh`, so it starts as a plain login
+        // shell, reads its own profiles, and runs the hooks from PROMPT_COMMAND.
+        #[cfg(target_os = "macos")]
+        "bash" => {
+            env.insert(
+                "SUMIE_BASH_SCRIPT".into(),
+                dir.join("bash/sumie.bash").into(),
+            );
+            let mut command = OsString::from(BASH_BOOT);
+            if let Some(requested) = env.remove(OsStr::new("PROMPT_COMMAND")) {
+                command.push("\n");
+                command.push(requested);
+            }
+            env.insert("PROMPT_COMMAND".into(), command);
+            None
+        }
+        #[cfg(target_os = "linux")]
         "bash" => {
             save(env, "ENV", "SUMIE_ORIG_ENV");
             // ENV is shell-expanded: keep the path itself out of the expression.

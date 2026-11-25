@@ -388,6 +388,12 @@ def check_shell():
         if "7;file://" not in (scripts / file).read_text():
             print(f"{file}: missing OSC 7 file URI", file=sys.stderr)
             return 1
+    # The macOS login test runs /bin/bash 3.2; this also holds where it cannot run.
+    for file in ("bash/sumie.bash", "cwd.sh"):
+        lines = (scripts / file).read_text().splitlines()
+        if any("[[ -v" in line for line in lines if not line.lstrip().startswith("#")):
+            print(f"{file}: [[ -v needs Bash 4.2; macOS has 3.2", file=sys.stderr)
+            return 1
     return 0
 
 

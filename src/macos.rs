@@ -14,6 +14,7 @@ use sumie_render::{SurfaceError, SurfaceFrame, SurfaceRenderer, instance_descrip
 
 use crate::{Result, capture, frame_window::FrameWindow};
 
+pub(crate) mod login;
 mod page;
 mod reload;
 #[cfg(feature = "macos-ci")]
@@ -50,6 +51,8 @@ pub(crate) fn run(options: &capture::Options) -> Result<()> {
         return runner::run(mode, options);
     }
 
+    // The terminal driver starts panes with this login; the test page only proves it.
+    let _login = login::prepare()?;
     let mut state = None;
     sumie_macos::run(|context, readiness, event| {
         match (&mut state, event) {

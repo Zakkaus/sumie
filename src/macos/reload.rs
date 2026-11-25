@@ -67,12 +67,10 @@ pub(super) fn command() -> io::Result<Command> {
 impl Reload {
     /// Start the child and register its socket and exit watch. Does not wait for a result.
     pub(super) fn spawn(mut command: Command, watches: &mut Watches) -> Result<Self> {
-        let (socket, remote) = UnixStream::pair()?;
+        let (socket, remote) = sumie_pty::socket_pair()?;
         socket.set_nonblocking(true)?;
-        let mut child = command
-            .stdin(OwnedFd::from(remote))
-            .stdout(Stdio::null())
-            .spawn()?;
+        let mut child =
+            sumie_pty::spawn(command.stdin(OwnedFd::from(remote)).stdout(Stdio::null()))?;
         // The command holds the child's end; the child alone must keep it open.
         drop(command);
         let registered = (|| -> Result<ExitWatch> {

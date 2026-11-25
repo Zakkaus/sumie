@@ -7,6 +7,7 @@ mod child;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod opener;
 mod reader;
+mod spawn;
 mod wake;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -28,6 +29,7 @@ use child::{Child, Cleanup, ExitWatch};
 pub use opener::open_url;
 pub use reader::OUTPUT_SLOTS;
 use reader::Reader;
+pub use spawn::{socket_pair, spawn};
 
 pub const INPUT_LIMIT: usize = 1024 * 1024;
 const MAX_CLOSE_GRACE: Duration = Duration::from_secs(5);
@@ -146,7 +148,10 @@ impl Pty {
             return Err(SpawnError::CloseGrace);
         }
         let command = options.command()?;
-        let (master, slave) = pty_process::blocking::open()?;
+        let (master, slave) = {
+            let _creating = spawn::creating();
+            pty_process::blocking::open()?
+        };
         let master: OwnedFd = master.into();
         setup_master(&master, options.size)?;
         let reader = Reader::start(master.try_clone()?)?;
@@ -158,7 +163,11 @@ impl Pty {
             close_grace: options.close_grace,
         };
 
-        let pid = Pid::from_child(&command.spawn(slave)?);
+        let spawned = {
+            let _spawning = spawn::spawning();
+            command.spawn(slave)?
+        };
+        let pid = Pid::from_child(&spawned);
         pty.child = match ExitWatch::attach(pid) {
             Ok(watch) => Some(Child::new(pid, watch)),
             Err(err) => {

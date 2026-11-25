@@ -22,11 +22,15 @@ impl Wake {
             use rustix::fs::{OFlags, fcntl_setfl};
             use rustix::io::{FdFlags, fcntl_setfd};
 
-            let (read, write) = rustix::pipe::pipe()?;
-            for fd in [&read, &write] {
-                fcntl_setfd(fd, FdFlags::CLOEXEC)?;
-                fcntl_setfl(fd, OFlags::NONBLOCK)?;
-            }
+            let (read, write) = {
+                let _creating = crate::spawn::creating();
+                let (read, write) = rustix::pipe::pipe()?;
+                fcntl_setfd(&read, FdFlags::CLOEXEC)?;
+                fcntl_setfd(&write, FdFlags::CLOEXEC)?;
+                (read, write)
+            };
+            fcntl_setfl(&read, OFlags::NONBLOCK)?;
+            fcntl_setfl(&write, OFlags::NONBLOCK)?;
             Ok(Self { read, write })
         }
     }

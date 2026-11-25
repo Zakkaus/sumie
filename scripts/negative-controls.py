@@ -117,6 +117,12 @@ def probe(name, gate, file, change, marker, expected=1, *, new=False):
 def controls():
     probe("shell drops command status", "shell", "shell-integration/bash/sumie.bash",
           replace_once("133;D;%d", "133;D"), "bash/sumie.bash: missing 133;D;%d")
+    probe("spawn ignores descriptor creation", "test", "crates/sumie-pty/src/spawn.rs",
+          replace_once("    let _spawning = spawning();\n    command.spawn()", "    command.spawn()"),
+          "test spawn::tests::a_spawn_waits_for_a_descriptor_being_created ... FAILED")
+    probe("Bash 3.2 lacks [[ -v", "shell", "shell-integration/bash/sumie.bash",
+          replace_once("[[ -n ${SUMIE_ORIG_ENV+set} ]]", "[[ -v SUMIE_ORIG_ENV ]]"),
+          "bash/sumie.bash: [[ -v needs Bash 4.2; macOS has 3.2")
     probe("terminfo replaces Tc with RGB", "terminfo", "terminfo/xterm-sumie.terminfo",
           replace_once("\tTc,", "\tRGB,"),
           "xterm-sumie: missing or invalid capability Tc\nxterm-sumie: RGB must be query-only")
@@ -406,6 +412,22 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("location: u32::from(ch).try_into().ok()?,", "location: 0x378,"),
               "test tests::core_text_system_wide_fallback_covers_cjk ... FAILED")
+        login = "test macos::login::tests::"
+        lsof = login + "a_login_shell_inherits_no_parent_descriptor ... "
+        probe("bridge duplicate inherited across exec", "test", "crates/sumie-macos/src/readiness.rs",
+              replace_once("        let fd = fd.try_clone_to_owned()?;\n",
+                           "        let fd = fd.try_clone_to_owned()?;\n"
+                           "        fcntl(&fd, FcntlArg::F_SETFD(FdFlag::empty()))?;\n"),
+              lsof + "FAILED")
+        # XNU never copies a kqueue into a child, so the lsof test stays green here; the flag
+        # test catches it, and the duplicates above are what the bridge could leak.
+        probe("bridge kqueue without FD_CLOEXEC", "test", "crates/sumie-macos/src/readiness.rs",
+              replace_once("fcntl(&queue, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;",
+                           "fcntl(&queue, FcntlArg::F_SETFD(FdFlag::empty()))?;"),
+              "test readiness::tests::bridge_descriptors_close_on_exec ... FAILED")
+        probe("PS0 exported to Bash 3.2", "test", "shell-integration/bash/sumie.bash",
+              replace_once("\n_sumie_ran=0\n", "\n_sumie_ran=0\nexport PS0='\\e]133;C\\a'\n"),
+              login + "bash_3_2_login_shell_reads_its_profile_once_and_marks_prompts ... FAILED")
 
 
 def interrupted(_signum, _frame):
