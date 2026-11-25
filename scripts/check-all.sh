@@ -14,7 +14,8 @@ macos_ci=
 macos_window=
 if [ "$(uname -s)" = Darwin ]; then
     macos_ci=clippy-macos-ci
-    macos_window='macos-wake macos-keys macos-resize macos-idle macos-flood macos-timeout macos-throughput macos-loading'
+    macos_window='macos-wake macos-keys macos-resize macos-idle macos-flood macos-timeout macos-throughput macos-loading
+        macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit'
 fi
 for gate in structure terminfo shell fmt clippy $macos_ci test $macos_window; do
     python3 "$scripts/check-gate.py" "$gate" || exit "$?"

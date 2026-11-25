@@ -8,6 +8,10 @@
 //   cgtool minbutton PID        print the centre of the window's minimize button
 //   cgtool click X Y            press and release at X Y
 //   cgtool hold X Y MS RX RY    press at X Y, hold MS, move to RX RY, release
+//   cgtool cmdq PID             post Cmd+Q to the HID tap if PID is frontmost
+//   cgtool axquit PID           press the application menu's Quit item through AX
+//   cgtool closebutton PID      print the centre of the window's close button
+//   cgtool dockquit PID         choose Quit from PID's Dock item menu through AX
 import AppKit
 import ApplicationServices
 import CoreGraphics
@@ -22,6 +26,39 @@ func windowInfo(_ pid: Int32) -> [String: Any]? {
     let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as! [[String: Any]]
     return list.first { ($0[kCGWindowOwnerPID as String] as? Int32) == pid
         && ($0[kCGWindowName as String] as? String) == "sumie / CI runner probe" }
+}
+
+func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+}
+
+func children(_ element: AXUIElement) -> [AXUIElement] {
+    (attribute(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+}
+
+func title(_ element: AXUIElement) -> String {
+    (attribute(element, kAXTitleAttribute) as? String) ?? ""
+}
+
+func centre(_ element: AXUIElement) -> CGPoint? {
+    guard let position = attribute(element, kAXPositionAttribute), let size = attribute(element, kAXSizeAttribute)
+    else { return nil }
+    var p = CGPoint.zero, s = CGSize.zero
+    AXValueGetValue(position as! AXValue, .cgPoint, &p)
+    AXValueGetValue(size as! AXValue, .cgSize, &s)
+    return CGPoint(x: p.x + s.width / 2, y: p.y + s.height / 2)
+}
+
+/// The first menu item below `element` whose title passes `matches`, searched depth first.
+func menuItem(_ element: AXUIElement, _ matches: (String) -> Bool) -> AXUIElement? {
+    for child in children(element) {
+        if (attribute(child, kAXRoleAttribute) as? String) == kAXMenuItemRole && matches(title(child)) {
+            return child
+        }
+        if let found = menuItem(child, matches) { return found }
+    }
+    return nil
 }
 
 let args = CommandLine.arguments
@@ -102,6 +139,51 @@ case "hold":
     post(.leftMouseDragged, CGPoint(x: rx, y: ry))
     usleep(50_000)
     post(.leftMouseUp, CGPoint(x: rx, y: ry))
+case "cmdq":
+    // Only ever quit the probe: refuse unless it is the frontmost application.
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == Int32(args[2])! else {
+        print("not frontmost"); exit(1)
+    }
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 12, keyDown: down)!
+        event.flags = .maskCommand
+        event.post(tap: .cghidEventTap)
+        usleep(20_000)
+    }
+case "axquit":
+    let app = AXUIElementCreateApplication(Int32(args[2])!)
+    guard let bar = attribute(app, kAXMenuBarAttribute), let menu = children(bar as! AXUIElement).dropFirst().first,
+          let item = menuItem(menu, { $0.hasPrefix("Quit") }) else {
+        print("no Quit item (trusted: \(AXIsProcessTrusted()))"); exit(1)
+    }
+    exit(AXUIElementPerformAction(item, kAXPressAction as CFString) == .success ? 0 : 1)
+case "closebutton":
+    let app = AXUIElementCreateApplication(Int32(args[2])!)
+    guard let window = (attribute(app, kAXWindowsAttribute) as? [AXUIElement])?.first,
+          let button = attribute(window, kAXCloseButtonAttribute), let point = centre(button as! AXUIElement) else {
+        print("none"); exit(1)
+    }
+    print(Int(point.x), Int(point.y))
+case "dockquit":
+    let pid = Int32(args[2])!
+    guard let name = NSRunningApplication(processIdentifier: pid)?.localizedName,
+          let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else {
+        print("no Dock or application"); exit(1)
+    }
+    // The Dock titles its items in the user's language, from its own strings table.
+    let bundle = Bundle(url: dock.bundleURL!)!
+    let language = Bundle.preferredLocalizations(from: bundle.localizations, forPreferences: Locale.preferredLanguages)
+    let table = bundle.path(forResource: "DockMenus", ofType: "strings", inDirectory: nil, forLocalization: language.first)
+    let quit = table.flatMap { NSDictionary(contentsOfFile: $0)?["QUIT"] as? String } ?? "Quit"
+    let tiles = children(AXUIElementCreateApplication(dock.processIdentifier)).flatMap(children)
+    guard let tile = tiles.first(where: { title($0) == name }) else { print("no Dock item \(name)"); exit(1) }
+    AXUIElementPerformAction(tile, kAXShowMenuAction as CFString)
+    usleep(500_000)
+    guard let item = menuItem(tile, { $0 == quit }) else {
+        AXUIElementPerformAction(tile, kAXCancelAction as CFString)
+        print("no Quit in the Dock menu"); exit(1)
+    }
+    exit(AXUIElementPerformAction(item, kAXPressAction as CFString) == .success ? 0 : 1)
 default:
     exit(2)
 }

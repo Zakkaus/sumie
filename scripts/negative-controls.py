@@ -476,6 +476,28 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("wait for the first settings without a deadline", "macos-loading", "src/macos/driver.rs",
               replace_once("None if Instant::now() >= *first_by =>", "None if false && Instant::now() >= *first_by =>"),
               "loading: no present within")
+        probe("keep the window visible until the reap", "macos-close", "src/macos/driver.rs",
+              replace_once("        open.window\n            .platform()\n            .order_out(context, move || done.set(true));\n",
+                           "        std::mem::forget(open.window.platform().window_owner());\n"
+                           "        let _ = context;\n"
+                           "        done.set(true);\n"),
+              "close: the window was still on screen when the child was reaped")
+        probe("no SIGKILL at the grace period", "macos-close", "src/app/lifetime.rs",
+              replace_once("if watches.take_exit_ready(*id) || pty.close_deadline().is_some_and(|at| at <= now) {",
+                           "if watches.take_exit_ready(*id) {"),
+              "close: no SIGKILL at the 3 s grace period")
+        probe("answer Cancel to a system quit", "macos-system", "crates/sumie-macos/src/lib.rs",
+              replace_once("                context.finish_quit();\n",
+                           "                context.run_after_handler(|| {\n"
+                           "                    objc2_app_kit::NSApplication::sharedApplication(\n"
+                           "                        objc2::MainThreadMarker::new().unwrap(),\n"
+                           "                    )\n"
+                           "                    .replyToApplicationShouldTerminate(false);\n"
+                           "                });\n"),
+              "system: the watchdog ended the process")
+        probe("no watchdog", "macos-stuck", "crates/sumie-macos/src/termination.rs",
+              replace_once(".spawn(move || watch(&watched))?", ".spawn(move || drop(watched))?"),
+              "stuck: still running 10.5 s after the quit")
         # Its marker is a rate, which hosted runners only record.
         if os.environ.get("SUMIE_TIMING") != "record":
             probe("an 8-byte PTY read buffer", "macos-throughput", "crates/sumie-pty/src/reader.rs",

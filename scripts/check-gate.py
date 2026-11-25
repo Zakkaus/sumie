@@ -43,6 +43,13 @@ FRAME_GATES = {"macos-resize": "resize", "macos-idle": "idle", "macos-flood": "f
                "macos-timeout": "timeout", "macos-throughput": "throughput",
                "macos-loading": "loading"}
 FRAME_TIMEOUT = 300
+# The close and Quit contract; scripts/macos/lifetime.py runs each case in a fresh process.
+# macos-cycles is not in check-all: hosted CI records it, the owner's Mac measures it.
+LIFETIME_GATES = {"macos-close": ("close",), "macos-repeat": ("repeat",),
+                  "macos-fatal": ("fatal", "fatal-quit"), "macos-system": ("system", "system-fatal"),
+                  "macos-stuck": ("stuck", "stuck-system"), "macos-exit": ("exit",),
+                  "macos-cycles": ("cycles",)}
+LIFETIME_TIMEOUT = 120
 # The test gate builds first, so this bounds only the test binaries: a hung test fails the
 # gate in minutes instead of running until the CI job limit.
 TEST_TIMEOUT = 600
@@ -501,6 +508,22 @@ def check_macos_keys():
         return 1
 
 
+def check_macos_lifetime(cases):
+    """Close and Quit cases on the terminal driver; see scripts/macos/lifetime.py."""
+    if sys.platform != "darwin":
+        raise CannotCheck("the close and Quit checks need the macOS window server")
+    binary = runner_binary()
+    codes = []
+    for case in cases:
+        try:
+            codes.append(subprocess.run([sys.executable, ROOT / "scripts/macos/lifetime.py", case, binary],
+                                        timeout=LIFETIME_TIMEOUT).returncode)
+        except subprocess.TimeoutExpired:
+            print(f"macos-{case}: the case timed out", file=sys.stderr)
+            codes.append(1)
+    return 2 if 2 in codes else int(any(codes))
+
+
 def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
@@ -512,7 +535,7 @@ def main():
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
-                                         "macos-keys", *FRAME_GATES, *commands))
+                                         "macos-keys", *FRAME_GATES, *LIFETIME_GATES, *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -536,6 +559,8 @@ def main():
             return check_macos_keys()
         if gate in FRAME_GATES:
             return check_macos_frames(FRAME_GATES[gate])
+        if gate in LIFETIME_GATES:
+            return check_macos_lifetime(LIFETIME_GATES[gate])
         if gate == "structure":
             return check_structure()
         if gate == "terminfo":
