@@ -488,6 +488,19 @@ def check_macos_frames(case):
         return 1
 
 
+def check_macos_keys():
+    """Keys and focus through the terminal driver to a recorder; see scripts/macos/keys.py."""
+    if sys.platform != "darwin":
+        raise CannotCheck("the keyboard check needs the macOS window server")
+    binary = runner_binary()
+    try:
+        return subprocess.run([sys.executable, ROOT / "scripts/macos/keys.py", binary],
+                              timeout=FRAME_TIMEOUT).returncode
+    except subprocess.TimeoutExpired:
+        print("macos-keys: the check timed out", file=sys.stderr)
+        return 1
+
+
 def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
@@ -499,7 +512,7 @@ def main():
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
-                                         *FRAME_GATES, *commands))
+                                         "macos-keys", *FRAME_GATES, *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -519,6 +532,8 @@ def main():
             raise CannotCheck("the macos-ci feature builds only on macOS")
         if gate == "macos-wake":
             return check_macos_wake()
+        if gate == "macos-keys":
+            return check_macos_keys()
         if gate in FRAME_GATES:
             return check_macos_frames(FRAME_GATES[gate])
         if gate == "structure":

@@ -1,7 +1,10 @@
 //! Native operations for the opt-in runner probe. No permission requests or general pasteboard access.
 
 use std::{
-    io, process, thread,
+    cell::RefCell,
+    io, process,
+    sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -10,17 +13,18 @@ use objc2_app_kit::{
     NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSPasteboard, NSWindow,
 };
 use objc2_core_graphics::{
-    CGEvent, CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
-    CGWindowListCopyWindowInfo, CGWindowListOption,
+    CGEvent, CGEventField, CGEventFlags, CGEventType, CGPreflightPostEventAccess,
+    CGPreflightScreenCaptureAccess, CGWindowListCopyWindowInfo, CGWindowListOption,
 };
 use objc2_foundation::{NSDate, NSPoint, NSRunLoop, NSString, ns_string};
 use winit::{
     application::ApplicationHandler,
+    dpi::{LogicalPosition, LogicalSize},
     event::{KeyEvent, WindowEvent},
     event_loop::{EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
     platform::macos::ActiveEventLoopExtMacOS as _,
-    window::{Fullscreen, WindowId},
+    window::{Fullscreen, Window, WindowId},
 };
 
 use super::{Bridge, Callback, Event, Handler, Platform, Result, WindowContext, waker};
@@ -28,6 +32,15 @@ use super::{Bridge, Callback, Event, Handler, Platform, Result, WindowContext, w
 const TITLE: &str = "sumie / CI runner probe";
 const F13: u16 = 0x69;
 const F14: u16 = 0x6b;
+/// `kVK_Shift`, `kVK_Control`, `kVK_Option`, `kVK_Command` and their right-hand twins: their
+/// events are flag changes, not key downs.
+const MODIFIER_KEYS: [u16; 8] = [0x38, 0x3b, 0x3a, 0x37, 0x3c, 0x3e, 0x3d, 0x36];
+
+thread_local! {
+    /// A second window that takes key status from the probe window for `blur`; its events
+    /// never reach the callback.
+    static DECOY: RefCell<Option<Arc<Window>>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -40,6 +53,8 @@ pub enum Command {
     Inspect,
     AppKitKeys,
     CgKeys,
+    /// One `CGEvent` key, posted to this process while the probe window is key.
+    Key(PostedKey),
     Close,
     /// Window steps for the idle mode; see `scripts/macos-spike/animations.py`.
     Step(Step),
@@ -55,6 +70,54 @@ pub enum Step {
     Restore,
     Fullscreen,
     Windowed,
+    /// Another window of this application becomes key, as after Cmd+Tab.
+    Blur,
+    /// The probe window becomes key again.
+    Focus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyPhase {
+    Down,
+    Up,
+    Repeat,
+}
+
+/// `key <virtual key code> <down|up|repeat> <modifiers>`, the modifiers as `shift+control`,
+/// `option` or `command`, or `-` for none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PostedKey {
+    code: u16,
+    phase: KeyPhase,
+    flags: u64,
+}
+
+impl PostedKey {
+    fn parse(fields: &str) -> Option<Self> {
+        let mut fields = fields.split(' ');
+        let code = fields.next()?.parse().ok()?;
+        let phase = match fields.next()? {
+            "down" => KeyPhase::Down,
+            "up" => KeyPhase::Up,
+            "repeat" => KeyPhase::Repeat,
+            _ => return None,
+        };
+        let mut flags = CGEventFlags::empty();
+        for name in fields.next()?.split('+').filter(|name| *name != "-") {
+            flags |= match name {
+                "shift" => CGEventFlags::MaskShift,
+                "control" => CGEventFlags::MaskControl,
+                "option" => CGEventFlags::MaskAlternate,
+                "command" => CGEventFlags::MaskCommand,
+                _ => return None,
+            };
+        }
+        fields.next().is_none().then_some(Self {
+            code,
+            phase,
+            flags: flags.bits(),
+        })
+    }
 }
 
 impl Command {
@@ -70,10 +133,15 @@ impl Command {
             "restore" => Self::Step(Step::Restore),
             "fullscreen" => Self::Step(Step::Fullscreen),
             "windowed" => Self::Step(Step::Windowed),
+            "blur" => Self::Step(Step::Blur),
+            "focus" => Self::Step(Step::Focus),
             "report" => Self::Report,
             line => {
                 if let Some(text) = line.strip_prefix("type ") {
                     return Self::Type(format!("{text}\r"));
+                }
+                if let Some(key) = line.strip_prefix("key ") {
+                    return PostedKey::parse(key).map_or(Self::Invalid, Self::Key);
                 }
                 line.strip_prefix("ping ")
                     .and_then(|number| number.parse().ok())
@@ -169,6 +237,9 @@ impl<F: Callback> ApplicationHandler<Command> for RunnerHandler<F> {
     }
 
     fn window_event(&mut self, context: &WindowContext, id: WindowId, event: WindowEvent) {
+        if DECOY.with_borrow(|decoy| decoy.as_ref().is_some_and(|decoy| decoy.id() == id)) {
+            return;
+        }
         self.0.window_event(context, id, event);
     }
 
@@ -182,7 +253,15 @@ pub fn name_window(window: &Platform) {
 }
 
 /// Apply a measurement step to the window, either now or once no winit handler runs.
-pub fn step(context: &WindowContext, window: &Platform, step: Step) {
+///
+/// # Errors
+/// Returns the window server's error if the decoy window for `blur` cannot be created.
+pub fn step(context: &WindowContext, window: &Platform, step: Step) -> Result<()> {
+    let decoy = match step {
+        Step::Blur => Some(decoy(context)?),
+        Step::Focus => DECOY.with_borrow(Clone::clone),
+        _ => None,
+    };
     let window = window.window_owner();
     let apply = move || match step {
         Step::MinimizeAfterHandler | Step::MinimizeInHandler => window.set_minimized(true),
@@ -192,12 +271,40 @@ pub fn step(context: &WindowContext, window: &Platform, step: Step) {
         }
         Step::Fullscreen => window.set_fullscreen(Some(Fullscreen::Borderless(None))),
         Step::Windowed => window.set_fullscreen(None),
+        Step::Blur => {
+            if let Some(decoy) = decoy {
+                decoy.set_visible(true);
+                decoy.focus_window();
+            }
+        }
+        Step::Focus => {
+            if let Some(decoy) = decoy {
+                decoy.set_visible(false);
+            }
+            window.focus_window();
+        }
     };
     if step == Step::MinimizeInHandler {
         apply();
     } else {
         context.run_after_handler(apply);
     }
+    Ok(())
+}
+
+/// The hidden decoy window, created on first use in the screen's corner, clear of the probe.
+fn decoy(context: &WindowContext) -> Result<Arc<Window>> {
+    if let Some(decoy) = DECOY.with_borrow(Clone::clone) {
+        return Ok(decoy);
+    }
+    let attributes = Window::default_attributes()
+        .with_title("sumie / CI runner decoy")
+        .with_visible(false)
+        .with_position(LogicalPosition::new(0, 0))
+        .with_inner_size(LogicalSize::new(160, 60));
+    let decoy = Arc::new(context.create_window(attributes)?);
+    DECOY.set(Some(Arc::clone(&decoy)));
+    Ok(decoy)
 }
 
 /// The `AppKit` run-loop modes that the wake scenario enters.
@@ -392,6 +499,35 @@ pub fn post_cg_keys() -> bool {
     };
     CGEvent::post_to_pid(pid, Some(&down));
     CGEvent::post_to_pid(pid, Some(&up));
+    true
+}
+
+/// With existing permission, post one key event to this PID while the probe window is key.
+#[must_use]
+pub fn post_key(key: PostedKey) -> bool {
+    if !CGPreflightPostEventAccess() {
+        return false;
+    }
+    let Some(app) = app() else {
+        return false;
+    };
+    if window(&app).is_none_or(|window| input_state(&app, &window) != (true, true)) {
+        return false;
+    }
+    let (Ok(pid), Some(event)) = (
+        i32::try_from(process::id()),
+        CGEvent::new_keyboard_event(None, key.code, key.phase != KeyPhase::Up),
+    ) else {
+        return false;
+    };
+    if MODIFIER_KEYS.contains(&key.code) {
+        CGEvent::set_type(Some(&event), CGEventType::FlagsChanged);
+    }
+    CGEvent::set_flags(Some(&event), CGEventFlags::from_bits_retain(key.flags));
+    if key.phase == KeyPhase::Repeat {
+        CGEvent::set_integer_value_field(Some(&event), CGEventField::KeyboardEventAutorepeat, 1);
+    }
+    CGEvent::post_to_pid(pid, Some(&event));
     true
 }
 

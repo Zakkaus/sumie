@@ -154,7 +154,7 @@ impl Driver {
             (Mode::Idle, Command::Step(step)) => {
                 let window = &self.state.as_ref().ok_or("no window for the step")?.window;
                 println!("runner step {step:?} {}", self.started.elapsed().as_nanos());
-                native::step(context, window, step);
+                native::step(context, window, step)?;
             }
             (Mode::Capabilities, Command::Inspect) => report_capabilities(),
             (Mode::Capabilities, Command::AppKitKeys) => {

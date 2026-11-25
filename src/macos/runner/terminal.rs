@@ -87,7 +87,8 @@ fn command(
                         report.get_or_insert_with(|| Instant::now() + REPORT_WAIT);
                     }
                 }
-                Command::Step(step) => native::step(context, open.window.platform(), step),
+                Command::Step(step) => native::step(context, open.window.platform(), step)?,
+                Command::Key(key) => println!("runner posted key {}", native::post_key(key)),
                 _ => return Err("unexpected runner controller command".into()),
             }
         }

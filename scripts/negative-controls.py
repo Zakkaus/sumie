@@ -445,6 +445,16 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("Bash 3.2 DEBUG trap not reinstalled", "test", "shell-integration/bash/sumie.bash",
               replace_once('|| eval "${_sumie_trap-}"', "|| :"),
               login + "bash::bash_3_2_reinstalls_its_trap_after_one_set_at_the_prompt ... FAILED")
+        probe("stop forwarding keys", "macos-keys", "src/macos/window.rs",
+              replace_once("            Native::Key(key) => self.key(key),\n", "            Native::Key(_) => (),\n"),
+              "keys: plain: recorded nothing instead of")
+        probe("report focus on ModifiersChanged", "macos-keys", "src/app/pane_input.rs",
+              replace_once("            pane.pane.pointer_modifiers_changed(modifiers);\n",
+                           "            pane.pane.pointer_modifiers_changed(modifiers);\n"
+                           "            if modifiers == KeyModifiers::default() {\n"
+                           "                input::report_focus(&mut pane.pane, false)?;\n"
+                           "            }\n"),
+              "keys: focus: 2 focus-out reports for one focus loss")
         probe("configure on Resized", "macos-resize", "src/app/window_events.rs",
               replace_once("session.view.request_resize(scale, logical, device);\n",
                            "session.view.request_resize(scale, logical, device);\n"
