@@ -14,6 +14,7 @@ pub use grid::{
     ChromeLayer, Cursor, CursorShape, DrawList, Fill, FrameDraw, GlyphQuad, ImageViewer, PaneDraw,
     PixelRect, Rgba, Scroll, ThumbnailChrome,
 };
+pub use images::ImageExpansion;
 pub use renderer::{OffscreenTarget, Renderer};
 pub use surface::{SurfaceError, SurfaceFrame, SurfaceRenderer};
 pub use wgpu;

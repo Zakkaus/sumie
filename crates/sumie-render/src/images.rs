@@ -1,6 +1,6 @@
 use std::{collections::HashSet, num::NonZeroU64, ops::Range};
 
-use sumie_core::graphics::{ImageSource, Placement, texture_bytes};
+use sumie_core::graphics::{ImageSource, PixelFormat, Placement, texture_bytes};
 use sumie_core::splits::Rect;
 use wgpu::util::StagingBelt;
 
@@ -11,10 +11,11 @@ mod expand;
 mod quad;
 mod upload;
 
+pub use expand::ImageExpansion;
 use quad::Quad;
 pub(crate) use upload::Upload;
 
-/// Image textures hold sRGB bytes; the image shader decodes them after loading.
+/// Holds sRGB bytes; the image shader decodes them after loading.
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const BELOW_BACKGROUND: i32 = -(1 << 30);
 pub(crate) const QUAD_SIZE: usize = size_of::<Quad>();
@@ -30,7 +31,7 @@ pub(crate) struct Images {
     cache: cache::Cache<BoundTexture>,
     draws: Vec<Draw>,
     covered: HashSet<Footprint>,
-    expander: Option<expand::Expander>,
+    expander: expand::Expander,
 }
 
 pub(crate) struct Layers {
@@ -85,7 +86,7 @@ impl Images {
             cache: cache::Cache::new(budget),
             draws: Vec::new(),
             covered: HashSet::new(),
-            expander: None,
+            expander: expand::Expander::default(),
         }
     }
 
@@ -155,7 +156,12 @@ impl Images {
         })
     }
 
+    pub(crate) fn expansion(&self) -> ImageExpansion {
+        self.expander.stats()
+    }
+
     pub(crate) fn begin_frame(&mut self) -> bool {
+        self.expander.begin_frame();
         if self.draws.is_empty() {
             return false;
         }
@@ -199,11 +205,15 @@ impl Images {
                 (pixels.len() == bytes / 4 * image.format.channels()).then_some(pixels)
             },
             |pixels, recycled| {
+                let packed = image.format != PixelFormat::Rgba;
+                // A recycled RGBA texture cannot take a packed image's expansion pass.
+                let usage = expand::texture_usage(packed);
+                let recycled = recycled.filter(|bound| bound.texture.usage().contains(usage));
                 let reused = recycled.is_some();
                 let bound = recycled.unwrap_or_else(|| {
                     self.pipeline
                         .get_or_insert_with(|| BoundPipeline::new(upload.device, self.format))
-                        .bind_texture(upload.device, image.size)
+                        .bind_texture(upload.device, image.size, packed)
                 });
                 upload.write(&bound.texture, image, pixels, reused, &mut self.expander);
                 bound
@@ -487,7 +497,7 @@ impl BoundPipeline {
         }
     }
 
-    fn bind_texture(&self, device: &wgpu::Device, size: [u32; 2]) -> BoundTexture {
+    fn bind_texture(&self, device: &wgpu::Device, size: [u32; 2], packed: bool) -> BoundTexture {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("sumie terminal image"),
             size: atlas::extent(size),
@@ -495,9 +505,7 @@ impl BoundPipeline {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: TEXTURE_FORMAT,
-            usage: wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: expand::texture_usage(packed),
             view_formats: &[],
         });
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {

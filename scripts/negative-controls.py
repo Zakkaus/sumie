@@ -319,7 +319,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "test grid_tests::grid_on_selected_backend ... FAILED")
         probe("RGB frames expanded on the CPU", "test", "crates/sumie-render/src/images/upload.rs",
               replace_once("        if image.format != PixelFormat::Rgba {\n", CPU_EXPANSION),
-              "test grid_tests::images::a_4k_kitty_frame_stays_within_the_stall_budget ... FAILED")
+              "test grid_tests::images::a_4k_kitty_frame_expands_on_the_gpu ... FAILED")
         probe("terminal grid starts at the pane edge", "test", "src/view.rs",
               replace_once("pane.glyphs.offset = [grid.x.cast_signed(), grid.y.cast_signed()];",
                            "pane.glyphs.offset = [rect.x.cast_signed(), rect.y.cast_signed()];"),

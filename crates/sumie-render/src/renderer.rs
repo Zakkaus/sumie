@@ -5,7 +5,7 @@ use sumie_core::splits::Rect;
 use wgpu::util::StagingBelt;
 
 use crate::grid::{GridLayers, Instance, write_fills};
-use crate::images::{Candidates, Images, Layers, QUAD_SIZE};
+use crate::images::{Candidates, ImageExpansion, Images, Layers, QUAD_SIZE};
 use crate::{
     AtlasUpload, ChromeLayer, DrawList, Fill, FrameDraw, PaneDraw, PixelRect, Rgba, atlas,
 };
@@ -142,6 +142,12 @@ impl Renderer {
     #[must_use]
     pub fn image_texture_count(&self) -> usize {
         self.images.texture_count()
+    }
+
+    /// Packed image uploads expanded on the GPU so far.
+    #[must_use]
+    pub fn image_expansion(&self) -> ImageExpansion {
+        self.images.expansion()
     }
 
     pub(crate) fn set_surface_alpha(&mut self, mode: Option<wgpu::CompositeAlphaMode>) {

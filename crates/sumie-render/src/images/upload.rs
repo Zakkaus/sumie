@@ -44,10 +44,9 @@ impl<'a> Upload<'a> {
         image: &Image,
         pixels: &[u8],
         recycled: bool,
-        expander: &mut Option<Expander>,
+        expander: &mut Expander,
     ) {
         if image.format != PixelFormat::Rgba {
-            let expander = expander.get_or_insert_with(|| Expander::new(self.device));
             let base = expander.stage(self.device, self.queue, &mut self.scratch_row, pixels);
             expander.draw(self.device, self.encoder, texture, image, base);
             return;

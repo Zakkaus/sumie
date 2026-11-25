@@ -6,9 +6,6 @@ use sumie_vt::Terminal;
 
 use super::{CELL, TestImages, assert_pixel, gpu_device, readback};
 
-/// The design book's main-thread stall bound.
-const STALL_BUDGET: Duration = Duration::from_millis(100);
-
 fn draw_list<'a>(
     images: &'a [Placement],
     source: &'a dyn sumie_core::graphics::ImageSource,
@@ -125,8 +122,10 @@ fn kitty_4k_frame() -> Vec<u8> {
     out
 }
 
+/// The main thread hands a 4K RGB frame to the GPU unchanged; it never converts pixels.
 #[test]
-fn a_4k_kitty_frame_stays_within_the_stall_budget() {
+fn a_4k_kitty_frame_expands_on_the_gpu() {
+    const BYTES: u64 = 3840 * 2160 * 3;
     let Some((device, queue)) = gpu_device(sumie_render::backends()) else {
         return;
     };
@@ -150,16 +149,155 @@ fn a_4k_kitty_frame_stays_within_the_stall_budget() {
         placement.size = [32, 18];
         images.drain(..images.len() - 1);
         renderer.draw(&draw_list(&images, &vt), &target);
-        let elapsed = start.elapsed();
         if frame_number > 0 {
-            worst = worst.max(elapsed);
+            worst = worst.max(start.elapsed());
         }
+        assert_eq!(renderer.image_expansion().bytes, BYTES * (frame_number + 1));
         let pixels = readback(&device, &queue, target.texture());
         assert_ne!(pixels[..4], [0; 4], "the 4K frame was not drawn");
     }
+    // Recorded for comparison only; wall time depends on the host.
     eprintln!("4K RGB frame on the main thread: worst {worst:?}");
-    assert!(
-        worst < STALL_BUDGET,
-        "a 4K RGB frame took {worst:?} on the main thread"
-    );
+    assert_eq!(renderer.image_expansion().scratch_allocations, 1);
+}
+
+#[test]
+fn packed_images_share_and_regrow_the_scratch() {
+    assert_scratch_growth(sumie_render::backends());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn packed_images_share_and_regrow_the_scratch_on_gl() {
+    assert_scratch_growth(wgpu::Backends::GL);
+}
+
+fn pattern(len: usize, seed: usize) -> Vec<u8> {
+    (0..len)
+        .map(|i| u8::try_from((i * 7 + seed) % 251).unwrap())
+        .collect()
+}
+
+fn expected_rgba(format: PixelFormat, source: &[u8]) -> Vec<[u8; 4]> {
+    source
+        .chunks_exact(format.channels())
+        .map(|pixel| match *pixel {
+            [gray] => [gray, gray, gray, 255],
+            [gray, alpha] => [gray, gray, gray, alpha],
+            [r, g, b] => [r, g, b, 255],
+            _ => unreachable!(),
+        })
+        .collect()
+}
+
+/// Several packed images in one frame, a multi-row source with a partial tail row, and a
+/// scratch texture that must be replaced mid-frame while an earlier image still reads the old one.
+fn assert_scratch_growth(backends: wgpu::Backends) {
+    let Some((device, queue)) = gpu_device(backends) else {
+        return;
+    };
+    let words_per_row = device.limits().max_texture_dimension_2d as usize;
+    // 100 scratch rows plus a tail; the first frame's scratch has far fewer rows.
+    let width = 1024;
+    let height = (100 * words_per_row * 4 + 1000).div_ceil(width as usize * 3);
+    let height = u32::try_from(height).unwrap();
+    let size = [width, height + CELL[1]];
+    let mut renderer = Renderer::new(&device, &queue);
+    let target = renderer.create_offscreen(size);
+    let grid = [size[0] / CELL[0], size[1].div_ceil(CELL[1])];
+    let backgrounds = vec![[0; 4]; (grid[0] * grid[1]) as usize];
+    let small = pattern(3, 1);
+    let rgb = pattern(5 * 3 * 3, 2);
+    // Opaque except the last texel, so blending leaves the expanded bytes unchanged.
+    let mut gray_alpha = pattern(3 * 2 * 2, 3);
+    for (i, alpha) in gray_alpha.iter_mut().skip(1).step_by(2).enumerate() {
+        *alpha = if i == 5 { 0 } else { 255 };
+    }
+    let large = pattern((width * height * 3) as usize, 4);
+    // Higher z uploads first, so the small images take the old scratch before the large one.
+    let frames: [&[Placement]; 2] = [
+        &[native(1, [3, 1], PixelFormat::Gray, [0, 0], 1)],
+        &[
+            native(2, [5, 3], PixelFormat::Rgb, [0, 0], 2),
+            native(3, [3, 2], PixelFormat::GrayAlpha, [1, 0], 1),
+            native(4, [width, height], PixelFormat::Rgb, [0, 1], 0),
+        ],
+    ];
+    let source = TestImages(&[(1, &small), (2, &rgb), (3, &gray_alpha), (4, &large)]);
+    for (allocations, images) in [1, 2].into_iter().zip(frames) {
+        renderer.draw(
+            &DrawList {
+                grid_size: grid,
+                origin: [0, 0],
+                scroll: Scroll::default(),
+                cell_size: CELL,
+                backgrounds: &backgrounds,
+                default_background: [0; 4],
+                default_backgrounds: &[],
+                images,
+                image_source: Some(&source),
+                image_exclusions: [None; 2],
+                glyphs: &[],
+                cursor: None,
+                chrome: None,
+            },
+            &target,
+        );
+        assert_eq!(renderer.image_expansion().scratch_allocations, allocations);
+    }
+    let pixels = readback(&device, &queue, target.texture());
+    for (origin, image_size, format, source) in [
+        ([0, 0], [5, 3], PixelFormat::Rgb, &rgb),
+        ([CELL[0], 0], [3, 2], PixelFormat::GrayAlpha, &gray_alpha),
+        ([0, CELL[1]], [width, height], PixelFormat::Rgb, &large),
+    ] {
+        assert_expanded(&pixels, size[0], origin, image_size[0], format, source);
+    }
+}
+
+fn native(
+    generation: u64,
+    size: [u32; 2],
+    format: PixelFormat,
+    cell: [i32; 2],
+    z: i32,
+) -> Placement {
+    Placement {
+        image: Image {
+            generation,
+            size,
+            format,
+        },
+        image_id: u32::try_from(generation).unwrap(),
+        placement_id: 1,
+        storage_key: [0; 3],
+        z,
+        cell,
+        offset: [0, 0],
+        size,
+        source: [0, 0, size[0], size[1]],
+        thumbnail: false,
+    }
+}
+
+fn assert_expanded(
+    pixels: &[u8],
+    stride: u32,
+    origin: [u32; 2],
+    width: u32,
+    format: PixelFormat,
+    source: &[u8],
+) {
+    for (i, expected) in expected_rgba(format, source).into_iter().enumerate() {
+        let i = u32::try_from(i).unwrap();
+        let [x, y] = [i % width, i / width];
+        let at = (((origin[1] + y) * stride + origin[0] + x) * 4) as usize;
+        let actual = &pixels[at..at + 4];
+        // Transparent texels stay as the cleared background.
+        let expected = if expected[3] == 0 { [0; 4] } else { expected };
+        assert!(
+            actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1),
+            "{format:?} pixel ({x}, {y}): expected {expected:?} ±1, got {actual:?}"
+        );
+    }
 }
