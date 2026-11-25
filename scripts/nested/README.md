@@ -18,6 +18,10 @@ for Enter and a literal tab for Tab. Choose a delay long enough for the client
 window to take focus. Omit `--type` to run without injection. `SECONDS` limits the
 client's runtime; a timeout exits with status 124 (137 if forced to kill it).
 
+`--input` builds the injector without typing and exports its path as
+`SUMIE_NESTED_INPUT`, so a client can drive the window itself. `type --chord ctrl+shift+e`
+presses the named modifiers around one US-keymap letter or digit (`ctrl`, `shift`, `alt`, `super`).
+
 For a screenshot, pass `--exit-after-frames N --screenshot /path/to/output.png`
 to sumie. Choose a frame count reached after the output you want to capture.
 Use changing terminal output or an enabled cursor blink to reach later frames.

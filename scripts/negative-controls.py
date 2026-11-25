@@ -2,6 +2,7 @@ from contextlib import ExitStack
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -369,6 +370,20 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "            return pane.search_pointer(event);\n"
                            "        }"),
               "test tests::search_pointer_only_scrolls_history ... FAILED")
+    if sys.platform == "linux" and shutil.which("kwin_wayland"):
+        close_pane = ("    fn close_pane(&mut self, index: usize, id: u64, window: &mut impl WindowOps) -> "
+                      "Result<()> {\n")
+        for name, leak, marker in (
+            ("closing a pane leaks a descriptor", 'std::mem::forget(std::fs::File::open("/dev/null")?);',
+             "fd count above baseline"),
+            ("closing a pane leaks a thread",
+             "std::thread::spawn(|| loop { std::thread::park(); });", "thread count above baseline"),
+        ):
+            probe(name, "linux-panes", "src/app/tabs.rs",
+                  replace_once(close_pane, f"{close_pane}        {leak}\n"), marker)
+        probe("SIGKILL escalation removed", "linux-panes", "crates/sumie-pty/src/child.rs",
+              replace_once("            signal_group(self.pid, Signal::KILL)?;\n", ""),
+              "the shell was not reaped within 6 s of the close")
     if sys.platform == "darwin":
         probe("pedantic lint in macos-ci code", "clippy-macos-ci", "crates/sumie-macos/src/runner.rs",
               append("#[must_use]\npub fn narrow_probe(value: u16) -> u8 {\n    value as u8\n}\n"),

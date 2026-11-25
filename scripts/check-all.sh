@@ -17,10 +17,18 @@ if [ "$(uname -s)" = Darwin ]; then
     macos_window='macos-wake macos-keys macos-resize macos-idle macos-flood macos-timeout macos-throughput macos-loading
         macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit'
 fi
+# The pane cycle gate drives a private KWin, so only a Linux host with KWin can run it.
+linux_panes=
+if [ "$(uname -s)" = Linux ] && command -v kwin_wayland >/dev/null; then
+    linux_panes=linux-panes
+fi
 for gate in structure terminfo shell fmt clippy $macos_ci test $macos_window; do
     python3 "$scripts/check-gate.py" "$gate" || exit "$?"
 done
 
 if [ "$fast" = false ]; then
+    for gate in $linux_panes; do
+        python3 "$scripts/check-gate.py" "$gate" || exit "$?"
+    done
     exec "$scripts/negative-controls.sh"
 fi

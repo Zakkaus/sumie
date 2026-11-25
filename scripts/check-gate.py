@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -55,6 +56,8 @@ LIFETIME_TIMEOUT = 120
 TEST_TIMEOUT = 600
 # A probe that breaks sumie-font runs only its tests, so dependants cannot hang the gate.
 TEST_GATES = ("test", "font-test")
+PANES_TIMEOUT = 700
+PANES_TOOLS = ("kwin_wayland", "kscreen-doctor", "wayland-scanner", "cc", "pkg-config")
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -428,8 +431,8 @@ def check_shell():
     return 0
 
 
-def runner_binary():
-    result = run("cargo", "build", "--locked", "--features", "macos-ci", "--message-format=json")
+def built_binary(*features):
+    result = run("cargo", "build", "--locked", *features, "--message-format=json")
     if result.returncode:
         print(result.stderr.decode(errors="replace"), end="", file=sys.stderr)
         raise CannotCheck(f"cargo build exited {result.returncode}")
@@ -439,6 +442,10 @@ def runner_binary():
                 and record["target"]["name"] == "sumie"):
             return record["executable"]
     raise CannotCheck("cargo build did not report the sumie executable")
+
+
+def runner_binary():
+    return built_binary("--features", "macos-ci")
 
 
 def check_macos_wake():
@@ -524,6 +531,33 @@ def check_macos_lifetime(cases):
     return 2 if 2 in codes else int(any(codes))
 
 
+def check_linux_panes():
+    """200 pane and 200 tab open/close cycles in a private KWin leave no handle, thread or
+    zombie above the baseline, and a pane that ignores SIGHUP closes without stalling drawing."""
+    if sys.platform != "linux":
+        raise CannotCheck("the pane cycle gate needs Linux and KWin")
+    missing = [tool for tool in PANES_TOOLS if shutil.which(tool) is None]
+    if missing:
+        raise CannotCheck(f"the pane cycle gate needs {', '.join(missing)}")
+    # Only a debug build writes the presentation log that the no-stall check reads.
+    binary = built_binary()
+    with tempfile.TemporaryDirectory(prefix="sumie-panes.") as artifacts:
+        try:
+            result = subprocess.run(["sh", ROOT / "scripts/perf/panes.sh", artifacts],
+                                    env={**os.environ, "SUMIE_BIN": binary}, stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=PANES_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            print("linux-panes: the scenario timed out", file=sys.stderr)
+            return 1
+    print(result.stdout, end="")
+    if result.returncode == 0:
+        return 0
+    print(result.stderr[-4000:], end="", file=sys.stderr)
+    if result.returncode == 1 and "FAIL: " in result.stdout:
+        return 1
+    raise CannotCheck(f"the scenario exited {result.returncode} without a verdict")
+
+
 def main():
     commands = {
         "fmt": ("fmt", "--all", "--check"),
@@ -535,7 +569,8 @@ def main():
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
-                                         "macos-keys", *FRAME_GATES, *LIFETIME_GATES, *commands))
+                                         "macos-keys", "linux-panes", *FRAME_GATES, *LIFETIME_GATES,
+                                         *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -561,6 +596,8 @@ def main():
             return check_macos_frames(FRAME_GATES[gate])
         if gate in LIFETIME_GATES:
             return check_macos_lifetime(LIFETIME_GATES[gate])
+        if gate == "linux-panes":
+            return check_linux_panes()
         if gate == "structure":
             return check_structure()
         if gate == "terminfo":

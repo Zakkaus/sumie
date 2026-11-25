@@ -134,3 +134,21 @@ On 2026-11-23, virtual KWin 6.8.3 at 60 Hz and scale 1.25 reported 3,586
 load average at launch was 31.54. The original watchdog failed because it counted
 the 194.098 ms startup against the stall limit. The maximum after the first
 `presented` was 52.826 ms, within the stall limit. This was not the four-hour gate.
+
+## Pane open/close leak gate
+
+`scripts/perf/panes.sh /absolute/path/to/artifacts` (the `linux-panes` gate)
+launches one debug sumie window in the private KWin at scale 1.25 with a
+private `HOME`, so no user rc file or configuration is read. It opens and
+closes a split pane 200 times, then a tab 200 times, and samples
+`/proc/<pid>` at every 50 cycles after waiting up to 6 s for quiescence. It
+then closes a pane whose shell runs `trap '' HUP; sleep 1000` while a sibling
+pane draws and checks the escalation: the shell must be reaped within 6 s (the
+default grace is 3 s) and the longest gap between `presented` entries in the
+close window must stay within 100 ms.
+
+The gate fails when a count exceeds the baseline taken after a warm-up of five
+pane and three tab cycles, or when RSS grows more than 12 MiB over it. DRM
+client memory is compared only where the driver exposes `drm-resident-*` or
+`drm-memory-*` in fdinfo. NVIDIA's proprietary driver on the development host
+does not, so that column reads `n/a` there.

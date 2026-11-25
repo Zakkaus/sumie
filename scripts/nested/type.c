@@ -1,5 +1,6 @@
 #include <linux/input-event-codes.h>
 #include <locale.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <uchar.h>
@@ -82,12 +83,67 @@ static int send_text(struct org_kde_kwin_fake_input *input, struct xkb_keymap *k
     return 0;
 }
 
+// Physical keys only: modifiers are held across one US-keymap key, so "ctrl+shift+e" is
+// the chord a person types, whichever layout the session uses.
+static int send_chord(struct org_kde_kwin_fake_input *input, struct xkb_keymap *keymap,
+                      const char *chord)
+{
+    static const struct { const char *name; uint32_t key; } modifiers[] = {
+        {"ctrl", KEY_LEFTCTRL}, {"shift", KEY_LEFTSHIFT}, {"alt", KEY_LEFTALT},
+        {"super", KEY_LEFTMETA},
+    };
+    uint32_t held[4];
+    size_t count = 0;
+    for (;;) {
+        const char *plus = strchr(chord, '+');
+        if (!plus)
+            break;
+        size_t length = (size_t)(plus - chord);
+        size_t found = 0;
+        while (found < 4 && (strlen(modifiers[found].name) != length ||
+                             strncmp(modifiers[found].name, chord, length) != 0))
+            ++found;
+        if (found == 4 || count == 4) {
+            fputs("nested input: expected modifiers ctrl, shift, alt or super\n", stderr);
+            return 1;
+        }
+        held[count++] = modifiers[found].key;
+        chord = plus + 1;
+    }
+    xkb_keycode_t code = XKB_KEYCODE_INVALID;
+    if (strlen(chord) == 1 && ((chord[0] >= 'a' && chord[0] <= 'z') ||
+                               (chord[0] >= '0' && chord[0] <= '9'))) {
+        for (xkb_keycode_t key = xkb_keymap_min_keycode(keymap);
+             key <= xkb_keymap_max_keycode(keymap); ++key) {
+            const xkb_keysym_t *syms;
+            if (xkb_keymap_key_get_syms_by_level(keymap, key, 0, 0, &syms) == 1 &&
+                syms[0] == xkb_utf32_to_keysym((uint32_t)chord[0])) {
+                code = key;
+                break;
+            }
+        }
+    }
+    if (code == XKB_KEYCODE_INVALID) {
+        fputs("nested input: the chord must end in one lowercase letter or digit\n", stderr);
+        return 1;
+    }
+    for (size_t i = 0; i < count; ++i)
+        org_kde_kwin_fake_input_keyboard_key(input, held[i], WL_KEYBOARD_KEY_STATE_PRESSED);
+    // XKB's evdev keymap adds 8 to Linux input keycodes.
+    org_kde_kwin_fake_input_keyboard_key(input, code - 8, WL_KEYBOARD_KEY_STATE_PRESSED);
+    org_kde_kwin_fake_input_keyboard_key(input, code - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
+    for (size_t i = count; i-- > 0;)
+        org_kde_kwin_fake_input_keyboard_key(input, held[i], WL_KEYBOARD_KEY_STATE_RELEASED);
+    return 0;
+}
+
+// A NULL text sends the chord. A chord always needs the keymap, because it names keys.
 static int type_text(struct wl_display *display, struct org_kde_kwin_fake_input *input,
-                     const char *text)
+                     const char *text, const char *chord)
 {
     struct xkb_keymap *keymap = NULL;
 #ifdef ORG_KDE_KWIN_FAKE_INPUT_KEYBOARD_KEYSYM_SINCE_VERSION
-    if (org_kde_kwin_fake_input_get_version(input) < ORG_KDE_KWIN_FAKE_INPUT_KEYBOARD_KEYSYM_SINCE_VERSION)
+    if (!text || org_kde_kwin_fake_input_get_version(input) < ORG_KDE_KWIN_FAKE_INPUT_KEYBOARD_KEYSYM_SINCE_VERSION)
 #endif
     {
         const struct xkb_rule_names names = {"evdev", "pc105", "us", "", ""};
@@ -101,7 +157,7 @@ static int type_text(struct wl_display *display, struct org_kde_kwin_fake_input 
             return 1;
         }
     }
-    int status = send_text(input, keymap, text);
+    int status = text ? send_text(input, keymap, text) : send_chord(input, keymap, chord);
     xkb_keymap_unref(keymap);
     if (status == 0 && wl_display_roundtrip(display) < 0) {
         perror("nested input: send keys");
@@ -112,8 +168,9 @@ static int type_text(struct wl_display *display, struct org_kde_kwin_fake_input 
 
 int main(int argc, char **argv)
 {
-    if (argc != 2 || !setlocale(LC_CTYPE, "C.UTF-8")) {
-        fputs("nested input: expected one text argument and a C.UTF-8 locale\n", stderr);
+    bool chord = argc == 3 && strcmp(argv[1], "--chord") == 0;
+    if ((argc != 2 && !chord) || !setlocale(LC_CTYPE, "C.UTF-8")) {
+        fputs("nested input: expected TEXT or --chord CHORD, and a C.UTF-8 locale\n", stderr);
         return 2;
     }
     struct wl_display *display = wl_display_connect("wl-sumie");
@@ -132,7 +189,8 @@ int main(int argc, char **argv)
     } else {
         org_kde_kwin_fake_input_authenticate(input, "sumie nested test",
                                             "Type into the focused test client");
-        status = type_text(display, input, argv[1]);
+        status = chord ? type_text(display, input, NULL, argv[2])
+                       : type_text(display, input, argv[1], NULL);
         org_kde_kwin_fake_input_destroy(input);
     }
     wl_registry_destroy(registry);

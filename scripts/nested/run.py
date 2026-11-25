@@ -15,11 +15,13 @@ SOCKET = "wl-sumie"
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        usage="run.sh SCALE SECONDS [--type TEXT [--after-ms MS]] -- CLIENT [ARGS ...]",
+        usage="run.sh SCALE SECONDS [--input] [--type TEXT [--after-ms MS]] -- CLIENT [ARGS ...]",
     )
     parser.add_argument("scale", type=float)
     parser.add_argument("seconds", type=float)
     parser.add_argument("--type", dest="text", help="UTF-8 text; a newline presses Enter")
+    parser.add_argument("--input", action="store_true",
+                        help="build the injector and export its path as SUMIE_NESTED_INPUT")
     parser.add_argument("--after-ms", type=int, help="delay from client launch (default: 1500)")
     args = sys.argv[1:]
     split = args.index("--") if "--" in args else len(args)
@@ -67,7 +69,7 @@ def run_client(options, command, injector):
     client = subprocess.Popen(["timeout", "--kill-after=2s", str(options.seconds), *command])
     deadline = time.monotonic() + options.seconds
     try:
-        if injector is not None:
+        if options.text is not None:
             try:
                 status = client.wait(timeout=options.after_ms / 1000)
             except subprocess.TimeoutExpired:
@@ -91,7 +93,9 @@ def main():
             or "DISPLAY" in os.environ or "WAYLAND_SOCKET" in os.environ):
         raise RuntimeError("start with run.sh to create a private runtime and D-Bus session")
 
-    injector = build_injector(runtime) if options.text is not None else None
+    injector = build_injector(runtime) if options.text is not None or options.input else None
+    if options.input:
+        os.environ["SUMIE_NESTED_INPUT"] = str(injector)
     env = os.environ.copy()
     if injector is not None:
         env.update(KWIN_WAYLAND_NO_PERMISSION_CHECKS="1", KWIN_XKB_DEFAULT_KEYMAP="1",
