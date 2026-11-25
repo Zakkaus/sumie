@@ -77,10 +77,12 @@ impl Gpu {
         window: &mut impl FrameWindow,
         list: &FrameDraw<'a, impl Clone + Iterator<Item = PaneDraw<'a>>>,
         capture: bool,
+        submitted: impl FnOnce(),
     ) -> Result<(SurfaceFrame, Option<Result<Readback>>), SurfaceError> {
         let mut readback = None;
         let premultiplied = capture && self.target.is_premultiplied();
         let result = self.target.draw_frame_with(list, |frame| {
+            submitted();
             if capture {
                 readback = Some(Readback::copy(
                     &self.device,

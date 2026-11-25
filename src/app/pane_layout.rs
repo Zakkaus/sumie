@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use sumie_core::{PaneAction, splits::Axis};
 
-use super::{Layout, PaneState, PaneTab, Rect, Result, Session, SplitTree, View};
+use super::{Layout, PaneState, PaneTab, Rect, Result, Session, SplitTree, View, frame_log::Stage};
 use crate::platform::{PaneWatches, WindowOps};
 
 impl PaneTab {
@@ -69,6 +69,7 @@ impl Session {
         now: Option<u64>,
         window: &mut impl WindowOps,
     ) -> Result<Option<u64>> {
+        self.frame_log.mark(Stage::Start);
         let tab = self.tabs.active_mut().expect("live window");
         let focused = tab.tree.focused();
         let mut next = None;
@@ -107,6 +108,7 @@ impl Session {
                 next = Some(next.map_or(at, |earliest: u64| earliest.min(at)));
             }
         }
+        self.frame_log.mark(Stage::Snapshots);
         Ok(next)
     }
 

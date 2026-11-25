@@ -1,6 +1,7 @@
 mod animation;
 pub(crate) use animation::Wake;
 mod directory;
+mod frame_log;
 mod frame_steps;
 pub(crate) use frame_steps::App;
 #[cfg(target_os = "macos")]
@@ -57,6 +58,7 @@ pub(crate) struct Session {
     clock: scroll::FrameClock,
     smooth_scroll: bool,
     notices: Gate,
+    frame_log: frame_log::FrameLog,
 }
 
 struct PaneTab {
@@ -131,6 +133,7 @@ impl Session {
             clock: scroll::FrameClock::new(),
             smooth_scroll: config.scroll.smooth(),
             notices: Gate::default(),
+            frame_log: frame_log::FrameLog::from_env(),
         })
     }
 
@@ -294,6 +297,9 @@ impl Session {
             self.rebuild(gpu, banner, focused)?;
         }
         let tab = self.tabs.active_mut().unwrap();
+        let panes = tab.layout.panes.iter();
+        self.frame_log
+            .painted(|| panes.filter(|&&(id, _)| tab.get(id).frame_dirty).count());
         let active = tab.focused();
         let final_frame = options
             .frames
@@ -301,7 +307,13 @@ impl Session {
         let capture = final_frame && options.screenshot.is_some();
         let sources =
             |id| Some(&tab.get(id).pane.terminal as &dyn sumie_core::graphics::ImageSource);
-        let frame = gpu.draw(window, &self.view.frame(cursor_hidden, sources), capture);
+        let submitted = || self.frame_log.mark(frame_log::Stage::Submitted);
+        let frame = gpu.draw(
+            window,
+            &self.view.frame(cursor_hidden, sources),
+            capture,
+            submitted,
+        );
         if dirty
             && let Some(rect) = self.view.ime_rectangle(
                 active.snapshot.as_ref().unwrap().cursor,
@@ -316,6 +328,8 @@ impl Session {
                 self.view.frame_presented();
                 self.view.images_presented(gpu.presented_images());
                 self.pane_pointer.present_layout(tab);
+                self.frame_log
+                    .presented(self.view.repainted_panes().filter(|_| dirty));
                 self.panes_presented(gpu, window)?;
                 self.cursor_hidden = cursor_hidden;
                 gpu.log_present();

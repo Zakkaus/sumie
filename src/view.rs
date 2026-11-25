@@ -73,6 +73,8 @@ pub(crate) struct View {
     presented_images: PresentedImages,
     panes: Vec<PanePaint>,
     pane_count: usize,
+    /// Counts `begin_frame` calls; a pane repainted in this frame records the current value.
+    frame_serial: u64,
     active_pane: Option<usize>,
     fills: Vec<Fill>,
     frame_background: Rgba,
@@ -150,6 +152,7 @@ impl View {
             presented_images: PresentedImages::default(),
             panes: Vec::new(),
             pane_count: 0,
+            frame_serial: 0,
             active_pane: None,
             fills: Vec::new(),
             frame_background: [0, 0, 0, 255],
@@ -274,6 +277,7 @@ impl View {
         background: Rgb,
     ) {
         self.pane_count = 0;
+        self.frame_serial += 1;
         self.active_pane = None;
         self.fills.clear();
         self.frame_background = rgba(background);
@@ -329,6 +333,7 @@ impl View {
         }
         let grid = self.pane_grid(rect);
         let pane = &mut self.panes[index];
+        pane.painted = self.frame_serial;
         pane.id = Some(focus.id);
         pane.rect = rect;
         pane.grid = grid_size(grid, self.cell);

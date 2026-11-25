@@ -11,7 +11,7 @@ use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 
 use super::attributes::{Decorations, Ink, LinkHighlight};
 use super::overlays::{Glyphs, SearchBox};
-use super::{FontErrors, Line, ViewerPaint, rgba};
+use super::{FontErrors, Line, View, ViewerPaint, rgba};
 
 #[derive(Clone, Copy)]
 pub(crate) struct PaneFocus<'a> {
@@ -26,6 +26,8 @@ pub(crate) struct PaneFocus<'a> {
 
 pub(super) struct PanePaint {
     pub(super) id: Option<u64>,
+    /// The view's frame serial when this paint was last rebuilt rather than reused.
+    pub(super) painted: u64,
     pub(super) active: bool,
     pub(super) rect: Rect,
     pub(super) grid: [u32; 2],
@@ -42,10 +44,21 @@ pub(super) struct PanePaint {
     pub(super) search_box: Option<SearchBox>,
 }
 
+impl View {
+    /// IDs of the panes the last built frame repainted instead of reusing their paint.
+    pub(crate) fn repainted_panes(&self) -> impl Iterator<Item = u64> + '_ {
+        self.panes[..self.pane_count]
+            .iter()
+            .filter(|pane| pane.painted == self.frame_serial)
+            .filter_map(|pane| pane.id)
+    }
+}
+
 impl PanePaint {
     pub(super) fn new(rect: Rect) -> Self {
         Self {
             id: None,
+            painted: 0,
             active: false,
             rect,
             grid: [0; 2],

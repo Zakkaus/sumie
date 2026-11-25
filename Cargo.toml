@@ -60,6 +60,7 @@ sumie-config = { path = "crates/sumie-config" }
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 png.workspace = true
 pollster.workspace = true
+rustix = { workspace = true, features = ["time"] }
 sumie-core = { path = "crates/sumie-core" }
 sumie-font = { path = "crates/sumie-font" }
 sumie-pty = { path = "crates/sumie-pty" }
@@ -75,9 +76,6 @@ calloop = "0.14.5"
 nix = { workspace = true, features = ["dir", "process"] }
 xkeysym = "0.2.1"
 sumie-wayland.workspace = true
-
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
-rustix.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { workspace = true, features = ["fs", "hostname", "user"] }

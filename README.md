@@ -100,6 +100,8 @@ Run `sumie config show --defaults` for all options. To enable editor completion,
 run `sumie config schema > sumie.schema.json` from the config directory.
 For font comparisons, `SUMIE_FONT`, `SUMIE_FONT_PX` (logical pixels),
 `SUMIE_FONT_WEIGHT`, and `SUMIE_FONT_HINTING` override the file.
+`SUMIE_FRAME_LOG=PATH` writes per-frame stage timestamps and repainted pane
+IDs, with no terminal content, for the multi-pane frame budget harness.
 
 ## License
 
