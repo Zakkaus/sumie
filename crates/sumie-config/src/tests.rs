@@ -1,5 +1,10 @@
 use super::*;
 
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
+
 struct Scratch(PathBuf);
 
 impl Drop for Scratch {
