@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """U8 frame-slot checks on the terminal driver, run by check-gate.py.
 
-usage: frames.py {resize,idle,flood,timeout,throughput} BINARY [EVIDENCE_DIR]
+usage: frames.py {resize,idle,flood,timeout,throughput,loading} BINARY [EVIDENCE_DIR]
 
 Each case starts `SUMIE_MACOS_CI_RUNNER=terminal` with frame-hook.dylib injected, a throwaway
 HOME, cursor blink off and /bin/sh as the login shell, and pings the main thread every 10 ms
@@ -15,6 +15,9 @@ enforced.
            per refresh, median acquire <= 2 ms.
   timeout  Two nil drawables: no acquire for 1 s, then 2 s; pings stay <= 100 ms.
   throughput  `head -c 64M /dev/zero | base64` through the pane reaches 20 MB/s.
+  loading  The settings include a FIFO with no writer: the window presents the defaults under
+           a loading banner within 1 s (the driver waits 500 ms). Once a file replaces the
+           FIFO and a writer releases the child, the settings apply and the banner clears.
 """
 import json
 import os
@@ -35,6 +38,12 @@ THROUGHPUT_INPUT = 64 * 1024 * 1024
 THROUGHPUT_FLOOR_MB = 20.0
 THROUGHPUT_RECORD_SECONDS = 120.0
 CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n'
+# The include blocks the configuration child until the check replaces it; its larger font
+# shows when the real settings replace the defaults.
+LOADING_CONFIG = 'include = ["slow.toml"]\n'
+LOADING_INCLUDE = CONFIG.replace('"Menlo"\n', '"Menlo"\nsize = 24\n')
+LOADING_BLANK_MS = 1000.0
+LOADING_WAIT = 5.0
 RECORD_TIMING = os.environ.get("SUMIE_TIMING") == "record"
 
 
@@ -56,11 +65,14 @@ def build_tools(scratch, cg):
 
 
 class Runner:
-    def __init__(self, binary, hook, home):
+    def __init__(self, binary, hook, home, loading=False):
         self.home = Path(home)
         config = Path(home) / "config"
         (config / "sumie").mkdir(parents=True)
-        (config / "sumie/sumie.toml").write_text(CONFIG)
+        self.slow = config / "sumie/slow.toml"
+        if loading:
+            os.mkfifo(self.slow)
+        (config / "sumie/sumie.toml").write_text(LOADING_CONFIG if loading else CONFIG)
         control, self.hook = os.pipe()
         env = {**os.environ, "SUMIE_MACOS_CI_RUNNER": "terminal", "HOME": home, "XDG_CONFIG_HOME": str(config),
                "SHELL": "/bin/sh", "DYLD_INSERT_LIBRARIES": str(hook), "SUMIE_FRAME_HOOK_FD": str(control)}
@@ -139,7 +151,7 @@ class Runner:
         self.send("report")
         _, fields = self.wait_for("runner", "report", since=asked)
         names = ("presents", "configures", "busy_configures", "deferred_configures", "timeouts", "columns",
-                 "rows")
+                 "rows", "banner")
         return dict(zip(names, map(int, fields[2:])))
 
     def close(self):
@@ -341,8 +353,46 @@ def case_throughput(runner, _cg, result):
     return []
 
 
+def case_loading(runner, _cg, result):
+    window = int(runner.wait_for("runner", "window", timeout=30)[1][2]) / 1e6
+    if not runner.first.wait(LOADING_WAIT):
+        return [f"loading: no present within {LOADING_WAIT:.0f} s while an include blocks the settings"]
+    blank = int(runner.wait_for("runner", "first")[1][2]) / 1e6 - window
+    loading = runner.report()
+    # The child opens the include to watch it and again to read it, so a file takes the FIFO's
+    # path before a writer, through a second link, releases the first open.
+    fifo = runner.slow.with_name("fifo")
+    os.link(runner.slow, fifo)
+    written = runner.slow.with_name("written.toml")
+    written.write_text(LOADING_INCLUDE)
+    written.replace(runner.slow)
+    try:
+        # The child is blocked opening the FIFO, so a non-blocking open for writing succeeds.
+        os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+    except OSError as error:
+        raise CannotCheck(f"the configuration child is not opening the include: {error}") from error
+    end = time.monotonic() + LOADING_WAIT
+    loaded = runner.report()
+    while loaded["banner"] and time.monotonic() < end:
+        time.sleep(0.05)
+        loaded = runner.report()
+    result.update(blank_ms=blank, loading=loading, loaded=loaded)
+    print(f"loading: blank for {blank:.0f} ms, then {loading['columns']} columns under the banner; "
+          f"{loaded['columns']} columns once the include was written")
+    errors = timing([f"loading: the window stayed blank for {blank:.0f} ms (limit {LOADING_BLANK_MS:.0f} ms)"]
+                    if blank > LOADING_BLANK_MS else [])
+    if not loading["banner"]:
+        errors.append("loading: the defaults presented without the loading banner")
+    if loaded["banner"]:
+        errors.append(f"loading: the banner stayed {LOADING_WAIT:.0f} s after the include was written")
+    elif loaded["columns"] >= loading["columns"]:
+        errors.append(f"loading: the written settings did not apply ({loaded['columns']} columns, "
+                      f"{loading['columns']} under the defaults)")
+    return errors
+
+
 CASES = {"resize": case_resize, "idle": case_idle, "flood": case_flood, "timeout": case_timeout,
-         "throughput": case_throughput}
+         "throughput": case_throughput, "loading": case_loading}
 
 
 def main():
@@ -355,7 +405,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="sumie-frames.") as scratch:
         try:
             hook, tool = build_tools(Path(scratch), name == "resize")
-            runner = Runner(binary, hook, str(Path(scratch) / "home"))
+            runner = Runner(binary, hook, str(Path(scratch) / "home"), loading=name == "loading")
         except (OSError, subprocess.CalledProcessError) as error:
             print(f"frames: could not start: {error}", file=sys.stderr)
             return 2
@@ -368,7 +418,8 @@ def main():
                 raise CannotCheck("the runner window is not on screen")
             return out
         try:
-            if not runner.first.wait(30):
+            # The loading case times the first frame itself.
+            if name != "loading" and not runner.first.wait(30):
                 raise CannotCheck("no first frame")
             errors = CASES[name](runner, cg, result)
         except CannotCheck as error:

@@ -4,7 +4,8 @@
 //! a frame at a free slot.
 //!
 //! Settings come from the configuration child (`macos::reload`). The session starts from its
-//! first result, under the banner if that is a diagnostic; later results apply through
+//! first result, under the banner if that is a diagnostic, or from the defaults under a
+//! loading banner if none arrived by [`FIRST_RESULT`]; later results apply through
 //! `App::apply_config`. Closing stops the child, and the driver exits once it and every
 //! closing pane child are reaped.
 
@@ -15,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use sumie_config::Config;
+use sumie_config::{Config, user_config_path};
 use sumie_macos::{
     Event, Platform, WindowContext,
     readiness::{Interest, Key, Readiness},
@@ -36,6 +37,11 @@ use crate::{
 
 /// The session's own deadlines: retries, closing children, search.
 const DEADLINE: Key = Key::new(u64::MAX - 1, Interest::Timer);
+/// How long the window stays blank for the configuration child's first result. A normal start
+/// presents its settings 80-100 ms after the window opens (debug build), so it never flashes
+/// the defaults; a FIFO or stalled include never answers, and half a second of blank window is
+/// still short of looking hung.
+const FIRST_RESULT: Duration = Duration::from_millis(500);
 /// The window's first size in points.
 const SIZE: [u32; 2] = [800, 500];
 /// How long teardown waits for submitted GPU work before dropping the surface anyway. The
@@ -55,8 +61,10 @@ pub(super) enum State {
 /// Fields drop in order: the GPU (renderer, then surface) before the window owner, also when
 /// Quit ends the loop with the window open.
 pub(super) struct Open {
-    /// Built from the configuration child's first result; nothing presents before it.
+    /// Built from the configuration child's first result or at `first_by`; nothing presents
+    /// before it.
     pub(super) app: Option<App>,
+    first_by: Instant,
     pub(super) window: MacWindow,
     reload: Reload,
     animation: Wake<Timers>,
@@ -93,14 +101,18 @@ impl Driver {
         }
     }
 
-    /// Show the window and start the configuration child; the session waits for its result.
+    /// Show the window and start the configuration child; the session waits for its result
+    /// until [`FIRST_RESULT`].
     pub(super) fn open(&mut self, readiness: &Readiness, platform: Platform) -> Result<()> {
         let mut window = MacWindow::new(platform, readiness.clone());
         tracing::debug!(refresh = ?window.refresh(), "paced the frame slot to the screen");
         let reload = Reload::spawn(reload::command()?, &mut window.watches)?;
         let animation = Wake::new(window.watches.animation_timer());
+        let first_by = Instant::now() + FIRST_RESULT;
+        wake_at(readiness, Some(first_by))?;
         self.state = State::Open(Box::new(Open {
             app: None,
+            first_by,
             window,
             reload,
             animation,
@@ -222,6 +234,7 @@ impl Open {
     ) -> Result<bool> {
         let Self {
             app,
+            first_by,
             window,
             reload,
             animation,
@@ -237,8 +250,10 @@ impl Open {
         let app = if let Some(app) = app {
             app
         } else {
-            let Some(first) = results.next() else {
-                return Ok(false);
+            let first = match results.next() {
+                Some(first) => first,
+                None if Instant::now() >= *first_by => Err(still_loading()),
+                None => return Ok(false),
             };
             let capture = capture.take().ok_or("the session started twice")?;
             app.insert(start(window, capture, first)?)
@@ -277,6 +292,14 @@ fn start(
         config.minimum_contrast(),
     )?;
     Ok(App::new(gpu, capture, config, banner))
+}
+
+/// The banner while the first result is late; the result replaces it when it arrives.
+fn still_loading() -> String {
+    user_config_path().map_or_else(
+        || "settings still loading".to_owned(),
+        |path| format!("settings still loading: {}", path.display()),
+    )
 }
 
 /// Wake the loop at the session's next deadline, replacing the previous one.

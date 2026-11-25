@@ -455,6 +455,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "                open.window.watches.dispatch()?;\n"
                            "                crate::platform::WindowOps::recover_frame_slot(&mut open.window);\n"),
               "flood: more than one present per refresh")
+        probe("wait for the first settings without a deadline", "macos-loading", "src/macos/driver.rs",
+              replace_once("None if Instant::now() >= *first_by =>", "None if false && Instant::now() >= *first_by =>"),
+              "loading: no present within")
         # Its marker is a rate, which hosted runners only record.
         if os.environ.get("SUMIE_TIMING") != "record":
             probe("an 8-byte PTY read buffer", "macos-throughput", "crates/sumie-pty/src/reader.rs",

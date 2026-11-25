@@ -231,6 +231,12 @@ impl App {
         ])
     }
 
+    /// The settings banner, if one shows.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) fn banner(&self) -> Option<&str> {
+        self.banner.as_deref()
+    }
+
     /// Drop the GPU, so the window can drop next, and keep the session to reap children.
     pub(crate) fn into_session(self) -> Option<Session> {
         self.session

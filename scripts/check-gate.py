@@ -39,7 +39,8 @@ WAKE_LIMIT_NS = 100_000_000
 WAKE_TIMEOUT = 120
 # The terminal driver's frame-slot checks; scripts/macos/frames.py runs one case per gate.
 FRAME_GATES = {"macos-resize": "resize", "macos-idle": "idle", "macos-flood": "flood",
-               "macos-timeout": "timeout", "macos-throughput": "throughput"}
+               "macos-timeout": "timeout", "macos-throughput": "throughput",
+               "macos-loading": "loading"}
 FRAME_TIMEOUT = 300
 
 RUST_TOKEN = re.compile(
