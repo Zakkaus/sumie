@@ -7,12 +7,15 @@ use wgpu::util::StagingBelt;
 use crate::{DrawList, PaneDraw, PixelRect, atlas, grid::Instance};
 
 mod cache;
+mod expand;
 mod quad;
 mod upload;
 
 use quad::Quad;
 pub(crate) use upload::Upload;
 
+/// Image textures hold sRGB bytes; the image shader decodes them after loading.
+const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const BELOW_BACKGROUND: i32 = -(1 << 30);
 pub(crate) const QUAD_SIZE: usize = size_of::<Quad>();
 const FILL_SIZE: u64 = size_of::<Instance>() as u64;
@@ -27,7 +30,7 @@ pub(crate) struct Images {
     cache: cache::Cache<BoundTexture>,
     draws: Vec<Draw>,
     covered: HashSet<Footprint>,
-    rgba: Vec<u8>,
+    expander: Option<expand::Expander>,
 }
 
 pub(crate) struct Layers {
@@ -82,7 +85,7 @@ impl Images {
             cache: cache::Cache::new(budget),
             draws: Vec::new(),
             covered: HashSet::new(),
-            rgba: Vec::new(),
+            expander: None,
         }
     }
 
@@ -202,7 +205,7 @@ impl Images {
                         .get_or_insert_with(|| BoundPipeline::new(upload.device, self.format))
                         .bind_texture(upload.device, image.size)
                 });
-                upload.write(&bound.texture, image, pixels, reused, &mut self.rgba);
+                upload.write(&bound.texture, image, pixels, reused, &mut self.expander);
                 bound
             },
         )
@@ -491,8 +494,10 @@ impl BoundPipeline {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            format: TEXTURE_FORMAT,
+            usage: wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {

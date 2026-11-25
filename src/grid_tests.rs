@@ -10,6 +10,8 @@ use sumie_render::{
 #[cfg(target_os = "linux")]
 mod attributes;
 #[cfg(target_os = "linux")]
+mod images;
+#[cfg(target_os = "linux")]
 mod splits;
 #[cfg(target_os = "linux")]
 mod tabs;
@@ -150,6 +152,8 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
     assert_padded_grid(&mut renderer, &device, &queue);
     #[cfg(target_os = "linux")]
     assert_image_sampling(&mut renderer, &device, &queue, &target);
+    #[cfg(target_os = "linux")]
+    images::assert_packed_formats(&mut renderer, &device, &queue, &target);
     #[cfg(target_os = "linux")]
     tabs::assert_tab_bar(&mut renderer, &device, &queue);
     assert_cursor_shapes(&mut renderer, &device, &queue, &target);

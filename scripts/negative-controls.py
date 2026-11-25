@@ -52,6 +52,24 @@ objc2::define_class!(
     }
 );
 """
+# Converts packed pixels on the main thread and uploads RGBA, skipping the GPU expansion.
+CPU_EXPANSION = """        let rgba: Vec<u8>;
+        let pixels = if image.format == PixelFormat::Rgba {
+            pixels
+        } else {
+            rgba = pixels
+                .chunks_exact(image.format.channels())
+                .flat_map(|pixel| match *pixel {
+                    [gray] => [gray, gray, gray, 255],
+                    [gray, alpha] => [gray, gray, gray, alpha],
+                    [r, g, b] => [r, g, b, 255],
+                    _ => unreachable!(),
+                })
+                .collect();
+            &rgba
+        };
+        if pixels.len() != image.size[0] as usize * image.size[1] as usize * 4 {
+"""
 UNSAFE_READ = ("#[must_use]\npub fn read_probe() -> u8 {\n"
                "    let bytes = [0_u8; 1];\n"
                "    unsafe { std::ptr::read(bytes.as_ptr()) }\n}\n")
@@ -299,6 +317,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("self.pane.images = (!snapshot.images.is_empty()).then(|| Arc::clone(&snapshot.images));",
                            "self.pane.images = None;"),
               "test grid_tests::grid_on_selected_backend ... FAILED")
+        probe("RGB frames expanded on the CPU", "test", "crates/sumie-render/src/images/upload.rs",
+              replace_once("        if image.format != PixelFormat::Rgba {\n", CPU_EXPANSION),
+              "test grid_tests::images::a_4k_kitty_frame_stays_within_the_stall_budget ... FAILED")
         probe("terminal grid starts at the pane edge", "test", "src/view.rs",
               replace_once("pane.glyphs.offset = [grid.x.cast_signed(), grid.y.cast_signed()];",
                            "pane.glyphs.offset = [rect.x.cast_signed(), rect.y.cast_signed()];"),

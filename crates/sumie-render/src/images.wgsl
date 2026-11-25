@@ -49,9 +49,8 @@ fn covered(pixel: vec2<f32>, rect: vec4<f32>) -> bool {
 }
 
 fn premultiplied_texel(pos: vec2<i32>) -> vec4<f32> {
-    // The sRGB texture load decodes RGB to linear before premultiplication.
-    let color = textureLoad(image, pos, 0);
-    return vec4<f32>(color.rgb * color.a, color.a);
+    // The texture holds sRGB bytes; decode RGB to linear before premultiplication.
+    return linear_premultiplied(textureLoad(image, pos, 0));
 }
 
 fn filtered_row(pos: vec2<i32>, weight: f32) -> vec4<f32> {
