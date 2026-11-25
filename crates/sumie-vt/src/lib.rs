@@ -219,10 +219,58 @@ impl Terminal {
         if text.is_empty() {
             return Ok(Vec::new());
         }
-        let mut mode = ffi::TerminalModeConfig {
-            mode: ffi::MODE_BRACKETED_PASTE,
-            value: false,
+        let bracketed = self.mode(ffi::MODE_BRACKETED_PASTE)?;
+        if bracketed && text.contains(END) {
+            text = text.replace(END, "");
+        }
+        text.retain(|ch| matches!(ch, '\t' | '\n' | '\r') || !ch.is_control());
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut data = text.into_bytes();
+        let mut out = Vec::with_capacity(data.len() + if bracketed { 2 * END.len() } else { 0 });
+        let mut written = 0;
+        // SAFETY: The input is writable, and out has room for the payload and both
+        // markers. On success the encoder initialized exactly `written` bytes.
+        unsafe {
+            check(ffi::ghostty_paste_encode(
+                data.as_mut_ptr(),
+                data.len(),
+                bracketed,
+                out.as_mut_ptr(),
+                out.capacity(),
+                &raw mut written,
+            ))?;
+            out.set_len(written);
+        }
+        Ok(out)
+    }
+
+    /// The focus report for a window focus change, empty unless mode 1004 is set.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot query mode 1004 or encode the report.
+    pub fn encode_focus(&self, focused: bool) -> Result<Vec<u8>, Error> {
+        if !self.mode(ffi::MODE_FOCUS_EVENT)? {
+            return Ok(Vec::new());
+        }
+        let mut out = [0; 8];
+        let mut written = 0;
+        let event = if focused {
+            ffi::FOCUS_GAINED
+        } else {
+            ffi::FOCUS_LOST
         };
+        // SAFETY: out is writable for its full length; on success Ghostty initialized
+        // `written` bytes of it.
+        check(unsafe {
+            ffi::ghostty_focus_encode(event, out.as_mut_ptr(), out.len(), &raw mut written)
+        })?;
+        Ok(out[..written].to_vec())
+    }
+
+    fn mode(&self, mode: u16) -> Result<bool, Error> {
+        let mut mode = ffi::TerminalModeConfig { mode, value: false };
         // SAFETY: DATA_MODE reads and updates this initialized TerminalModeConfig.
         check(unsafe {
             ffi::ghostty_terminal_get(
@@ -231,30 +279,7 @@ impl Terminal {
                 from_mut(&mut mode).cast(),
             )
         })?;
-        if mode.value && text.contains(END) {
-            text = text.replace(END, "");
-        }
-        text.retain(|ch| matches!(ch, '\t' | '\n' | '\r') || !ch.is_control());
-        if text.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut data = text.into_bytes();
-        let mut out = Vec::with_capacity(data.len() + if mode.value { 2 * END.len() } else { 0 });
-        let mut written = 0;
-        // SAFETY: The input is writable, and out has room for the payload and both
-        // markers. On success the encoder initialized exactly `written` bytes.
-        unsafe {
-            check(ffi::ghostty_paste_encode(
-                data.as_mut_ptr(),
-                data.len(),
-                mode.value,
-                out.as_mut_ptr(),
-                out.capacity(),
-                &raw mut written,
-            ))?;
-            out.set_len(written);
-        }
-        Ok(out)
+        Ok(mode.value)
     }
 
     /// Set default colors and ANSI palette entries; `None` clears the cursor default.

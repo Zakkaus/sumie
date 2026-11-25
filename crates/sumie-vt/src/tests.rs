@@ -71,6 +71,20 @@ fn paste_filters_controls_in_both_modes() {
 }
 
 #[test]
+fn focus_reports_only_in_mode_1004() {
+    let mut terminal = Terminal::new(5, 2).unwrap();
+    for (mode, focused, expected) in [
+        ("", true, &b""[..]),
+        ("\x1b[?1004h", true, b"\x1b[I"),
+        ("", false, b"\x1b[O"),
+        ("\x1b[?1004l", false, b""),
+    ] {
+        terminal.write(mode.as_bytes());
+        assert_eq!(terminal.encode_focus(focused).unwrap(), expected);
+    }
+}
+
+#[test]
 fn snapshot_keeps_wide_cells_whole() {
     use super::Underline::{None, Single};
 

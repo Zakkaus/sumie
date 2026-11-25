@@ -173,6 +173,12 @@ impl Pane for LocalPane {
                 }
             }
             PaneCommand::Mouse(event) => return self.pointer(event),
+            PaneCommand::Focus(focused) => {
+                let report = self.terminal.encode_focus(focused)?;
+                if !report.is_empty() {
+                    self.pty.enqueue_input(&report)?;
+                }
+            }
             PaneCommand::Text(bytes) if !bytes.is_empty() => {
                 self.pty.enqueue_input(bytes)?;
                 return self.follow_input();

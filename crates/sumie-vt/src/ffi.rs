@@ -252,7 +252,10 @@ pub const CLIPBOARD_WRITE_SUCCESS: c_int = 0;
 pub const CLIPBOARD_WRITE_DENIED: c_int = 1;
 pub const CLIPBOARD_WRITE_UNSUPPORTED: c_int = 2;
 pub const CLIPBOARD_READ_DENIED: c_int = 1;
+pub const MODE_FOCUS_EVENT: u16 = 1004;
 pub const MODE_BRACKETED_PASTE: u16 = 2004;
+pub const FOCUS_GAINED: c_int = 0;
+pub const FOCUS_LOST: c_int = 1;
 pub const STYLE_COLOR_NONE: u8 = 0;
 pub const STYLE_COLOR_PALETTE: u8 = 1;
 pub const STYLE_COLOR_RGB: u8 = 2;
@@ -377,6 +380,12 @@ unsafe extern "C" {
         data: *mut u8,
         data_len: usize,
         bracketed: bool,
+        out: *mut u8,
+        cap: usize,
+        written: *mut usize,
+    ) -> c_int;
+    pub fn ghostty_focus_encode(
+        event: c_int,
         out: *mut u8,
         cap: usize,
         written: *mut usize,

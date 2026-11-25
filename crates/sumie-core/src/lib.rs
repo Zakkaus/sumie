@@ -220,6 +220,8 @@ pub enum PaneCommand<'a> {
         unshifted: Option<char>,
     },
     Mouse(mouse::MouseEvent),
+    /// The window gained or lost the keyboard. Reaches the PTY only in mode 1004.
+    Focus(bool),
     Text(&'a [u8]),
     Paste(String),
     Copy(CellRange),
