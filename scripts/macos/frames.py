@@ -10,7 +10,8 @@ With SUMIE_TIMING=record (hosted runners), ping and acquire-time limits are repo
   resize   A wgpu submission is held on an MTLSharedEvent while the window is dragged: no
            configure runs on a non-empty queue, a configure waits for it, pings stay <= 100 ms.
   idle     60 s with nothing changing: no present.
-  flood    `seq` output: at most one present per refresh, median acquire <= 2 ms.
+  flood    `seq` output, continuous and then in short bursts from idle: at most one present
+           per refresh, median acquire <= 2 ms.
   timeout  Two nil drawables: no acquire for 1 s, then 2 s; pings stay <= 100 ms.
 """
 import json
@@ -209,40 +210,66 @@ def case_idle(runner, _cg, result):
     return []
 
 
+BURSTS = "i=0; while [ $i -lt 15 ]; do seq 1 5000; sleep 0.2; i=$((i+1)); done"
+
+
+def flood_phase(runner, command, seconds):
+    """Type `command` and return the window it ran in; Ctrl-C ends it."""
+    start = time.monotonic()
+    runner.send(f"type {command}")
+    time.sleep(seconds + 0.1)
+    runner.send("type \x03")
+    time.sleep(0.5)
+    return start, start + seconds
+
+
+def presents_in(runner, window):
+    return [int(fields[3]) / 1e6 for at, fields in runner.matching("runner", "present")
+            if window[0] <= at <= window[1]]
+
+
+def spans(presents):
+    """Gaps, and spans of two gaps. The slot keeps its cadence, so a present after a late one
+    can come sooner, but two presents apart still span more than a refresh."""
+    return ([b - a for a, b in zip(presents, presents[1:])],
+            [b - a for a, b in zip(presents, presents[2:])])
+
+
 def case_flood(runner, _cg, result):
     refresh_ms = int(runner.wait_for("runner", "window")[1][3]) / 1e6
     time.sleep(1.0)
     runner.start_pings()
-    start = time.monotonic()
-    runner.send("type seq 1 999999999")
-    window = (start + 0.5, start + 3.0)
-    time.sleep(window[1] - start + 0.1)
-    presents = [int(fields[3]) / 1e6 for at, fields in runner.matching("runner", "present")
-                if window[0] <= at <= window[1]]
+    # Once drawables are in flight, the display throttles any slot (a composited layer releases
+    # them once per refresh), so a slot that runs ahead shows as acquire time. A burst from idle
+    # finds free drawables, and there a slot freed early presents back to back.
+    continuous = flood_phase(runner, "seq 1 999999999", 3.0)
+    bursts = flood_phase(runner, BURSTS, 3.5)
+    presents = presents_in(runner, continuous)
+    burst_presents = presents_in(runner, bursts)
+    steady = (continuous[0] + 0.5, continuous[1])
     waits = [int(fields[3]) / 1000 for at, fields in runner.matching("hook", "acquire")
-             if window[0] <= at <= window[1] and fields[4] == "drawable"]
-    runner.send("type \x03")
-    if len(presents) < 10 or not waits:
-        raise CannotCheck(f"the flood drew only {len(presents)} frames")
-    gaps = [b - a for a, b in zip(presents, presents[1:])]
-    # The slot keeps its cadence, so a present after a late one can come sooner; two presents
-    # apart still span more than a refresh. Turn-end timestamps add up to a few ms of jitter.
-    pairs = [b - a for a, b in zip(presents, presents[2:])]
+             if steady[0] <= at <= steady[1] and fields[4] == "drawable"]
+    if len(presents) < 10 or len(burst_presents) < 10 or not waits:
+        raise CannotCheck(f"the flood drew only {len(presents)} and {len(burst_presents)} frames")
+    gaps, pairs = spans(presents)
+    _, burst_pairs = spans(burst_presents)
+    # Turn-end timestamps add up to a few ms of jitter.
+    shortest = min(pairs + burst_pairs)
     seconds = (presents[-1] - presents[0]) / 1000
     per_refresh = (len(presents) - 1) * refresh_ms / (presents[-1] - presents[0])
     median = statistics.median(waits)
-    result.update(presents=len(presents), seconds=seconds, refresh_ms=refresh_ms, min_gap_ms=min(gaps),
-                  min_pair_ms=min(pairs),
-                  median_gap_ms=statistics.median(gaps), acquires=len(waits), median_acquire_ms=median,
-                  max_acquire_ms=max(waits))
+    result.update(presents=len(presents), burst_presents=len(burst_presents), seconds=seconds,
+                  refresh_ms=refresh_ms, min_gap_ms=min(gaps), min_pair_ms=min(pairs),
+                  min_burst_pair_ms=min(burst_pairs), median_gap_ms=statistics.median(gaps),
+                  acquires=len(waits), median_acquire_ms=median, max_acquire_ms=max(waits))
     print(f"flood: {len(presents)} presents in {seconds:.2f} s ({per_refresh:.2f} per {refresh_ms:.2f} ms "
           f"refresh), gaps min {min(gaps):.2f} median {statistics.median(gaps):.2f} ms, two apart min "
-          f"{min(pairs):.2f} ms; acquire median "
-          f"{median:.2f} max {max(waits):.2f} ms over {len(waits)}")
-    errors = ping_errors(runner, *window, "flood")
-    if per_refresh > 1.02 or min(pairs) < 0.85 * refresh_ms:
+          f"{min(pairs):.2f} ms, in bursts {min(burst_pairs):.2f} ms over {len(burst_presents)}; "
+          f"acquire median {median:.2f} max {max(waits):.2f} ms over {len(waits)}")
+    errors = ping_errors(runner, continuous[0], bursts[1], "flood")
+    if per_refresh > 1.02 or shortest < 0.85 * refresh_ms:
         errors.append(f"flood: more than one present per refresh ({per_refresh:.2f} per refresh, "
-                      f"shortest span of two gaps {min(pairs):.2f} ms)")
+                      f"shortest span of two gaps {shortest:.2f} ms)")
     if median > 2.0:
         errors += timing([f"flood: median acquire {median:.2f} ms exceeds 2 ms"])
     return errors

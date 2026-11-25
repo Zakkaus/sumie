@@ -47,7 +47,9 @@ pub(super) struct MacWindow {
     size: ([u32; 2], u32),
     title: Option<String>,
     text_cursor: Option<bool>,
-    /// The runner probe names its window for the controller; terminal titles do not apply.
+    /// Set by the runner, which names its window for the controller: terminal titles do not
+    /// apply.
+    #[cfg(feature = "macos-ci")]
     pub(super) fixed_title: bool,
     pub(super) stats: Stats,
 }
@@ -66,6 +68,7 @@ impl MacWindow {
             size: ([0; 2], 0),
             title: None,
             text_cursor: None,
+            #[cfg(feature = "macos-ci")]
             fixed_title: false,
             stats: Stats::default(),
             platform,
@@ -286,7 +289,11 @@ impl WindowOps for MacWindow {
     fn write_terminal_clipboard(&mut self, _: Option<Vec<u8>>) {}
 
     fn queue_title(&mut self, title: String) {
-        if !self.fixed_title && self.title.as_ref() != Some(&title) {
+        #[cfg(feature = "macos-ci")]
+        if self.fixed_title {
+            return;
+        }
+        if self.title.as_ref() != Some(&title) {
             self.platform.set_title(&title);
             self.title = Some(title);
         }

@@ -446,18 +446,15 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("    fn background_commit_needed(&self) -> bool {\n        false",
                            "    fn background_commit_needed(&self) -> bool {\n        true"),
               "presents within")
-        probe("retry 50 ms after a drawable timeout", "macos-timeout", "src/macos/window.rs",
-              replace_once("    fn hold_after_timeout(&mut self) -> bool {\n",
-                           "    fn hold_after_timeout(&mut self) -> bool {\n        if self.fixed_title {\n"
-                           "            return false;\n        }\n"),
+        probe("retry 50 ms after a drawable timeout", "macos-timeout", "src/macos/surface.rs",
+              replace_once("        self.hold(now + wait)\n",
+                           "        self.hold(now + wait.min(Duration::from_millis(50)))\n"),
               "timeout: acquired again")
-        # Its marker is an acquire time, which hosted runners only record.
-        if os.environ.get("SUMIE_TIMING") != "record":
-            probe("free the frame slot on every wake", "macos-flood", "src/macos/driver.rs",
-                  replace_once("                open.window.watches.dispatch()?;\n",
-                               "                open.window.watches.dispatch()?;\n"
-                               "                crate::platform::WindowOps::recover_frame_slot(&mut open.window);\n"),
-                  "flood: median acquire")
+        probe("free the frame slot on every wake", "macos-flood", "src/macos/driver.rs",
+              replace_once("                open.window.watches.dispatch()?;\n",
+                           "                open.window.watches.dispatch()?;\n"
+                           "                crate::platform::WindowOps::recover_frame_slot(&mut open.window);\n"),
+              "flood: more than one present per refresh")
 
 
 def interrupted(_signum, _frame):
