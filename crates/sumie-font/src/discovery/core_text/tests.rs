@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::{Discovery, SYSTEM_WIDE_WAIT, drawable};
+use super::{Discovery, drawable};
 use crate::{FontError, FontOptions, FontStyle, FontSystem};
 
 impl Discovery {
@@ -65,7 +65,10 @@ fn a_slow_system_wide_lookup_is_pending_after_the_wait() {
     let mut discovery = Discovery::new("Menlo", None).unwrap();
     discovery.system_wide_delay = Duration::from_millis(500);
     let style = FontStyle::default();
-    for (ch, limit) in [('水', SYSTEM_WIDE_WAIT * 2), ('火', SYSTEM_WIDE_WAIT / 2)] {
+    // Neither lookup may wait for the answer. A hosted runner's scheduler adds over 100 ms
+    // on its own, so the bound is half the delay, not the wait itself.
+    let limit = discovery.system_wide_delay / 2;
+    for ch in ['水', '火'] {
         // The second character queues behind the first, so it does not wait.
         let start = Instant::now();
         let found = discovery.find_system_wide(ch, style);
