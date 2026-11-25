@@ -76,6 +76,7 @@ struct PaneState {
     title: String,
     snapshot: Option<Snapshot>,
     snapshot_dirty: bool,
+    snapshot_pace: tabs::SnapshotPace,
     frame_dirty: bool,
     activity_after: Option<Instant>,
     hover: links::Hover,

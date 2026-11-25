@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use sumie_core::{PaneAction, splits::Axis};
 
 use super::{Layout, PaneState, PaneTab, Rect, Result, Session, SplitTree, View};
@@ -72,7 +74,7 @@ impl Session {
         let mut next = None;
         for i in 0..tab.layout.panes.len() {
             let pane = tab.get_mut(tab.layout.panes[i].0);
-            pane.update_snapshot()?;
+            pane.rebuild_snapshot()?;
             let Some(now) = now else { continue };
             let images = &pane
                 .snapshot
@@ -106,6 +108,16 @@ impl Session {
             }
         }
         Ok(next)
+    }
+
+    /// When held output in a visible pane may be shown.
+    pub(super) fn snapshot_deadline(&self) -> Option<Instant> {
+        let tab = self.tabs.active()?;
+        tab.layout
+            .panes
+            .iter()
+            .filter_map(|&(id, _)| tab.get(id).snapshot_due())
+            .min()
     }
 
     pub(super) fn all_panes_mut(&mut self) -> impl Iterator<Item = &mut PaneState> {

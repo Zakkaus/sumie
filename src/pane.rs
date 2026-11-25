@@ -71,10 +71,11 @@ impl LocalPane {
         })
     }
 
-    /// Returns whether the snapshot needs refreshing and whether output reached EOF.
-    pub(crate) fn drain_output(&mut self) -> Result<(bool, bool)> {
+    /// Returns the bytes written to the terminal (non-zero means the snapshot needs refreshing)
+    /// and whether output reached EOF.
+    pub(crate) fn drain_output(&mut self) -> Result<(usize, bool)> {
         self.pty.clear_output_wake()?;
-        let mut dirty = false;
+        let mut drained = 0;
         let mut eof = false;
         // Any chunks beyond the queue's initial capacity were sent after clear_output_wake
         // and come with a fresh wake. Yield to other panes even if this writer never stops.
@@ -83,7 +84,7 @@ impl LocalPane {
                 Ok(chunk) => {
                     if !chunk.is_empty() {
                         self.terminal.write(&chunk);
-                        dirty = true;
+                        drained += chunk.len();
                     }
                 }
                 Err(end) => {
@@ -92,11 +93,11 @@ impl LocalPane {
                 }
             }
         }
-        if dirty {
+        if drained > 0 {
             self.mouse.sync(&self.terminal)?;
         }
         self.drain_replies();
-        Ok((dirty, eof))
+        Ok((drained, eof))
     }
 
     fn drain_replies(&mut self) {

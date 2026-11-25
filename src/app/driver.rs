@@ -60,7 +60,32 @@ struct App {
     suspended: bool,
 }
 
+/// Whether the window may rebuild snapshots and draw a frame. The loop offers a paced
+/// snapshot deadline only under this condition, so a hidden or retrying window does not
+/// wake for output it cannot show.
+fn frame_ready(
+    suspended: bool,
+    slot_available: bool,
+    retry: Option<Instant>,
+    now: Instant,
+) -> bool {
+    !suspended && slot_available && retry.is_none_or(|at| now >= at)
+}
+
 impl App {
+    /// When held output may be shown, if the window can show it.
+    fn paced_deadline(&self, window: &LinuxWindow) -> Option<Instant> {
+        let session = self.session.as_ref()?;
+        frame_ready(
+            self.suspended,
+            window.frame_slot_available(),
+            session.frame_retry,
+            Instant::now(),
+        )
+        .then(|| session.snapshot_deadline())
+        .flatten()
+    }
+
     fn drive(&mut self, window: &mut LinuxWindow) -> Result<()> {
         let mut animation = super::animation::Wake::new(window.watches.animation_timer());
         loop {
@@ -68,8 +93,10 @@ impl App {
                 .session
                 .as_ref()
                 .and_then(|session| session.frame_retry);
+            let paced = self.paced_deadline(window);
             let timeout = retry
                 .into_iter()
+                .chain(paced)
                 .chain(self.reload.deadline)
                 .chain(self.session.as_ref().and_then(Session::closing_deadline))
                 .chain(
@@ -105,9 +132,12 @@ impl App {
                 if !self.suspended && session.pane_pointer.take_frame_recovery() {
                     window.recover_frame_slot();
                 }
-                let ready = !self.suspended
-                    && window.frame_slot_available()
-                    && session.frame_retry.is_none_or(|at| Instant::now() >= at);
+                let ready = frame_ready(
+                    self.suspended,
+                    window.frame_slot_available(),
+                    session.frame_retry,
+                    Instant::now(),
+                );
                 let next = if ready {
                     if session.view.apply_pending_resize()? {
                         session.resize_grid()?;
@@ -299,4 +329,28 @@ fn set_background(
     let changed =
         window.set_background_effects(transparent, transparent && settings.background_blur());
     (if transparent { alpha } else { u8::MAX }, changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn a_hidden_or_retrying_window_is_not_ready() {
+        let now = Instant::now();
+        let later = Some(now + Duration::from_millis(1));
+        // (suspended, slot available, retry, ready)
+        let cases = [
+            (false, true, None, true),
+            (false, true, Some(now), true),
+            (false, true, later, false),
+            (false, false, None, false),
+            (true, true, None, false),
+        ];
+        for (suspended, slot, retry, expected) in cases {
+            assert_eq!(frame_ready(suspended, slot, retry, now), expected);
+        }
+    }
 }

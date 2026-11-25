@@ -1,4 +1,7 @@
 mod activity;
+mod pace;
+
+pub(super) use pace::SnapshotPace;
 
 use std::ops::ControlFlow::{self, Break, Continue};
 use std::path::Path;
@@ -141,6 +144,7 @@ impl PaneHost {
             title: String::new(),
             snapshot: None,
             snapshot_dirty: true,
+            snapshot_pace: SnapshotPace::default(),
             frame_dirty: true,
             activity_after: None,
             hover: super::links::Hover::default(),
@@ -187,9 +191,22 @@ impl PaneState {
         Ok(())
     }
 
+    /// When held output may be shown.
+    pub(super) fn snapshot_due(&self) -> Option<Instant> {
+        self.snapshot_pace.due()
+    }
+
+    /// Rebuild now, including output that is still waiting on the pace.
     pub(super) fn update_snapshot(&mut self) -> Result<()> {
+        self.snapshot_dirty |= self.snapshot_pace.held();
+        self.rebuild_snapshot()
+    }
+
+    /// Rebuild unless only paced output is pending.
+    pub(super) fn rebuild_snapshot(&mut self) -> Result<()> {
         if self.snapshot_dirty {
             self.snapshot_dirty = false;
+            self.snapshot_pace.rebuilt(Instant::now());
             self.hover.before_snapshot(&self.pane.terminal);
             let next = self.pane.snapshot()?;
             if let Some(range) = self.selection.range()
@@ -212,11 +229,13 @@ impl PaneState {
     fn service(
         &mut self,
         window: &mut impl WindowOps,
+        now: Instant,
         active: bool,
         host: &[u8],
         watch_at: Option<Instant>,
         labels_changed: &mut bool,
     ) -> Result<(bool, bool)> {
+        self.snapshot_dirty |= self.snapshot_pace.released(now);
         let ready = window.take_ready(self.id);
         if ready.exit {
             self.pane.pty.service_child()?;
@@ -228,9 +247,10 @@ impl PaneState {
         if ready.output {
             let batch =
                 activity::Batch::begin(&mut self.pane.terminal, watch_at, self.activity_after)?;
-            let (dirty, eof) = self.pane.drain_output()?;
-            self.snapshot_dirty |= dirty;
+            let (drained, eof) = self.pane.drain_output()?;
+            let dirty = drained > 0;
             if dirty {
+                self.snapshot_dirty |= self.snapshot_pace.output(now, self.snapshot_dirty, drained);
                 self.follow_output()?;
                 activity = batch.changed(&mut self.pane.terminal)?;
                 window.reset_blink(self.id);
@@ -486,6 +506,7 @@ impl Session {
                 let watch_at = (index != active_index && !tab.activity).then_some(now);
                 let (pane_exited, activity) = pane.service(
                     window,
+                    now,
                     pane.id == active,
                     self.host.as_bytes(),
                     watch_at,
