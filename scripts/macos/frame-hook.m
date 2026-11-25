@@ -13,6 +13,7 @@
 #import <dispatch/dispatch.h>
 #import <objc/runtime.h>
 
+#include <fcntl.h>
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -109,6 +110,12 @@ static void releaseHold(void) {
 __attribute__((constructor)) static void install(void) {
     const char *fd = getenv("SUMIE_FRAME_HOOK_FD");
     if (fd == NULL) return;
+    int control = atoi(fd);
+    // Only the runner is hooked: its configuration child must neither load this library nor
+    // read the commands.
+    require(fcntl(control, F_SETFD, FD_CLOEXEC) == 0, "control descriptor");
+    unsetenv("SUMIE_FRAME_HOOK_FD");
+    unsetenv("DYLD_INSERT_LIBRARIES");
     originalAcquire = (id<CAMetalDrawable> (*)(CAMetalLayer *, SEL))
         replace(CAMetalLayer.class, @selector(nextDrawable), (IMP)acquire);
     @autoreleasepool {
@@ -119,7 +126,6 @@ __attribute__((constructor)) static void install(void) {
         originalLabel = (void (*)(id<MTLCommandBuffer>, SEL, NSString *))
             replace(object_getClass(sample), @selector(setLabel:), (IMP)setLabel);
     }
-    int control = atoi(fd);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         char command;
         while (read(control, &command, 1) == 1) {

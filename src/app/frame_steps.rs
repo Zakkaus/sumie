@@ -9,7 +9,6 @@ use crate::{
     Result, capture,
     gpu::Gpu,
     platform::{PaneWatches, TimerSource, WindowOps},
-    reload::Reload,
 };
 
 /// The window's session and the state that outlives it on one event-loop thread.
@@ -17,7 +16,8 @@ pub(crate) struct App {
     pub(super) gpu: Gpu,
     pub(super) capture: capture::Options,
     pub(super) config: sumie_config::Config,
-    pub(super) reload: Reload,
+    /// The settings diagnostic over the active pane's first row.
+    pub(super) banner: Option<String>,
     pub(super) session: Option<Session>,
     pub(super) focused: bool,
     pub(super) suspended: bool,
@@ -89,21 +89,26 @@ fn frame_ready(
 }
 
 impl App {
+    /// Start from the first settings, under the banner if that result was a diagnostic.
     pub(crate) fn new(
         gpu: Gpu,
         capture: capture::Options,
         config: sumie_config::Config,
-        reload: Reload,
+        banner: Option<String>,
     ) -> Self {
-        Self {
+        let mut app = Self {
             gpu,
             capture,
             config,
-            reload,
+            banner: None,
             session: None,
             focused: false,
             suspended: false,
+        };
+        if let Some(message) = banner {
+            super::window_events::show_error(&mut app.banner, message);
         }
+        app
     }
 
     /// The earliest time dispatch must return even without native events.
@@ -124,7 +129,6 @@ impl App {
         retry
             .into_iter()
             .chain(paced)
-            .chain(self.reload.deadline)
             .chain(session.and_then(Session::closing_deadline))
             .chain(session.and_then(Session::progress_deadline))
             .chain(
@@ -183,7 +187,7 @@ impl App {
         } else {
             None
         };
-        let banner = self.reload.banner.as_deref();
+        let banner = self.banner.as_deref();
         session.update_link_hover(window, banner.is_some(), self.focused)?;
         session.watch_blink(window, self.focused && !self.suspended, banner)?;
         if ready && session.draw(gpu, window, &self.capture, banner, self.focused)? {

@@ -8,7 +8,6 @@
 //! The app reaps it on exit readiness with `try_wait`; it never waits or joins.
 
 use std::{
-    fmt,
     io::{self, ErrorKind, Read as _, Write as _},
     os::{
         fd::{AsFd as _, OwnedFd},
@@ -26,7 +25,10 @@ use super::sources::{Timers, Watches};
 use crate::{
     Result,
     platform::TimerSource as _,
-    reload::frame::{self, Decoder, Frame, Kind},
+    reload::{
+        self,
+        frame::{self, Decoder, Frame, Kind},
+    },
 };
 
 /// Selects the child mode on the command line.
@@ -258,7 +260,7 @@ pub(crate) fn watch_child() -> Result<()> {
 fn send(mut socket: &UnixStream, result: Result<Config, Error>) -> io::Result<()> {
     let (kind, body) = match result {
         Ok(config) => (Kind::Settings, config.to_json()),
-        Err(error) => (Kind::Invalid, diagnostic(&error)),
+        Err(error) => (Kind::Invalid, reload::diagnostic(&error)),
     };
     let (kind, body) = if body.len() > frame::MAX_BODY {
         let limit = frame::MAX_BODY;
@@ -268,23 +270,6 @@ fn send(mut socket: &UnixStream, result: Result<Config, Error>) -> io::Result<()
         (kind, body)
     };
     socket.write_all(&frame::encode(kind, body.as_bytes()))
-}
-
-fn diagnostic(error: &Error) -> String {
-    let (path, line, column, message): (_, _, _, &dyn fmt::Display) = match error {
-        Error::Read { path, source } => (path, 1, 1, source),
-        Error::Invalid {
-            path,
-            line,
-            column,
-            message,
-        } => (path, *line, *column, message),
-    };
-    let file = path
-        .file_name()
-        .unwrap_or(path.as_os_str())
-        .to_string_lossy();
-    format!("{file}:{line}:{column}: {message}")
 }
 
 #[cfg(test)]

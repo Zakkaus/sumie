@@ -1,5 +1,7 @@
 //! Apply window events and reloaded settings to the session, GPU and window.
 
+use sumie_config::Config;
+
 use super::{App, Session, tabs};
 use crate::{
     Result,
@@ -9,15 +11,17 @@ use crate::{
 };
 
 impl App {
-    /// Apply a debounced config reload; `ready` reports a change notification.
-    pub(crate) fn reload_config(&mut self, ready: bool, window: &mut impl WindowOps) -> Result<()> {
-        let Some(next) = self.reload.pending(ready)? else {
-            return Ok(());
-        };
+    /// Apply a settings result. A diagnostic shows in the banner and keeps the active settings;
+    /// any settings, even identical ones, remove the banner.
+    pub(crate) fn apply_config(
+        &mut self,
+        next: Result<Config, String>,
+        window: &mut impl WindowOps,
+    ) -> Result<()> {
         let next = match next {
             Ok(next) => next,
-            Err(error) => {
-                if self.reload.load_error(&error)
+            Err(message) => {
+                if show_error(&mut self.banner, message)
                     && let Some(session) = &mut self.session
                 {
                     session.active_mut().frame_dirty = true;
@@ -33,7 +37,7 @@ impl App {
                     Ok(resized) => resize_grid |= resized,
                     Err(error) => {
                         session.active_mut().frame_dirty |=
-                            self.reload.show_error(format!("sumie.toml:1:1: {error}"));
+                            show_error(&mut self.banner, format!("sumie.toml:1:1: {error}"));
                         return Ok(());
                     }
                 }
@@ -78,14 +82,13 @@ impl App {
                 let opacity_changed = session.view.set_background_alpha(alpha);
                 session.active_mut().frame_dirty |= opacity_changed || effects_changed;
             }
-            session.active_mut().frame_dirty |= changes.selection_colors
-                || changes.minimum_contrast
-                || self.reload.banner.is_some();
+            session.active_mut().frame_dirty |=
+                changes.selection_colors || changes.minimum_contrast || self.banner.is_some();
         }
         if changes.minimum_contrast {
             self.gpu.set_minimum_contrast(next.minimum_contrast());
         }
-        self.reload.banner = None;
+        self.banner = None;
         self.config = next;
         Ok(())
     }
@@ -160,8 +163,7 @@ impl App {
             }
             event => {
                 if let Some(session) = &mut self.session
-                    && let Some(action) =
-                        session.input(event, window, self.reload.banner.is_some())?
+                    && let Some(action) = session.input(event, window, self.banner.is_some())?
                 {
                     session.apply(action, window, &self.config)?;
                     return Ok(session.tabs.active().is_none());
@@ -170,6 +172,16 @@ impl App {
         }
         Ok(false)
     }
+}
+
+/// Show a settings diagnostic. Returns whether the banner changed.
+pub(super) fn show_error(banner: &mut Option<String>, message: String) -> bool {
+    if banner.as_ref() == Some(&message) {
+        return false;
+    }
+    tracing::warn!(error = %message, "invalid configuration");
+    *banner = Some(message);
+    true
 }
 
 fn set_background(

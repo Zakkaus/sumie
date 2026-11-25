@@ -2,6 +2,11 @@
 //! `about_to_wait`, which fires before the run loop sleeps in every mode (live resize, menu
 //! tracking, modal panels), runs one turn: the batch (ready PTYs, effects, retirement), then
 //! a frame at a free slot.
+//!
+//! Settings come from the configuration child (`macos::reload`). The session starts from its
+//! first result, under the banner if that is a diagnostic; later results apply through
+//! `App::apply_config`. Closing stops the child, and the driver exits once it and every
+//! closing pane child are reaped.
 
 use std::{
     cell::Cell,
@@ -10,12 +15,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use sumie_config::Config;
 use sumie_macos::{
     Event, Platform, WindowContext,
     readiness::{Interest, Key, Readiness},
 };
 
 use super::{
+    reload::{self, Reload, Update},
     sources::{Timers, Watches},
     surface,
     window::MacWindow,
@@ -25,10 +32,9 @@ use crate::{
     app::{App, Session, Wake},
     capture,
     frame_window::FrameWindow as _,
-    reload::Reload,
 };
 
-/// The session's own deadlines: reload, retries, closing children, search.
+/// The session's own deadlines: retries, closing children, search.
 const DEADLINE: Key = Key::new(u64::MAX - 1, Interest::Timer);
 /// The window's first size in points.
 const SIZE: [u32; 2] = [800, 500];
@@ -41,16 +47,25 @@ pub(super) enum State {
     Open(Box<Open>),
     /// `orderOut:` is queued; the GPU and the window drop once it ran.
     Hiding(Box<Open>, Rc<Cell<bool>>),
-    /// The window is gone; children that are still closing keep their exit watches.
-    Reaping(Box<(Option<Session>, Watches)>),
+    /// The window is gone; the configuration child and closing pane children keep their exit
+    /// watches until they are reaped.
+    Reaping(Box<Reaping>),
 }
 
 /// Fields drop in order: the GPU (renderer, then surface) before the window owner, also when
 /// Quit ends the loop with the window open.
 pub(super) struct Open {
-    pub(super) app: App,
+    /// Built from the configuration child's first result; nothing presents before it.
+    pub(super) app: Option<App>,
     pub(super) window: MacWindow,
+    reload: Reload,
     animation: Wake<Timers>,
+}
+
+pub(super) struct Reaping {
+    session: Option<Session>,
+    reload: Reload,
+    watches: Watches,
 }
 
 pub(super) struct Driver {
@@ -78,24 +93,16 @@ impl Driver {
         }
     }
 
+    /// Show the window and start the configuration child; the session waits for its result.
     pub(super) fn open(&mut self, readiness: &Readiness, platform: Platform) -> Result<()> {
-        let capture = self.capture.take().ok_or("the window opened twice")?;
-        let mut reload = Reload::new()?;
-        let config = reload.load()?.unwrap_or_else(|error| {
-            reload.load_error(&error);
-            sumie_config::Config::default()
-        });
-        let gpu = surface::create_gpu(
-            &platform,
-            capture.screenshot.is_some(),
-            config.minimum_contrast(),
-        )?;
-        let window = MacWindow::new(platform, readiness.clone());
+        let mut window = MacWindow::new(platform, readiness.clone());
         tracing::debug!(refresh = ?window.refresh(), "paced the frame slot to the screen");
+        let reload = Reload::spawn(reload::command()?, &mut window.watches)?;
         let animation = Wake::new(window.watches.animation_timer());
         self.state = State::Open(Box::new(Open {
-            app: App::new(gpu, capture, config, reload),
+            app: None,
             window,
+            reload,
             animation,
         }));
         Ok(())
@@ -110,12 +117,16 @@ impl Driver {
     ) -> Result<ControlFlow<()>> {
         match (&mut self.state, event) {
             (State::Open(open), Event::AboutToWait) => {
-                if open.turn(readiness)? {
+                if open.turn(readiness, &mut self.capture)? {
                     self.hide(context)?;
                 }
             }
             (State::Open(open) | State::Hiding(open, _), Event::Ready) => {
                 open.window.watches.dispatch()?;
+            }
+            // Without a session the queued close would wait for the first settings.
+            (State::Open(open), Event::CloseRequested) if open.app.is_none() => {
+                self.hide(context)?;
             }
             (State::Open(open), event) => open.window.queue(event),
             (State::Hiding(_, hidden), Event::AboutToWait) if hidden.get() => {
@@ -127,19 +138,24 @@ impl Driver {
         Ok(ControlFlow::Continue(()))
     }
 
-    /// Retire every pane, then take the window off screen outside the handler.
+    /// Retire every pane and stop the configuration child, then take the window off screen
+    /// outside the handler.
     fn hide(&mut self, context: &WindowContext) -> Result<()> {
         let State::Open(mut open) = std::mem::replace(&mut self.state, State::Starting) else {
             unreachable!("only an open window hides");
         };
-        let close = open.app.close_all(&mut open.window);
+        let close = match &mut open.app {
+            Some(app) => app.close_all(&mut open.window),
+            None => Ok(()),
+        };
+        let stop = open.reload.close(&mut open.window.watches);
         let hidden = Rc::new(Cell::new(false));
         let done = Rc::clone(&hidden);
         open.window
             .platform()
             .order_out(context, move || done.set(true));
         self.state = State::Hiding(open, hidden);
-        close
+        close.and(stop)
     }
 
     /// After `orderOut:`: wait for an empty GPU queue, then drop the renderer and the surface,
@@ -148,12 +164,22 @@ impl Driver {
         let State::Hiding(open, _) = std::mem::replace(&mut self.state, State::Starting) else {
             unreachable!("only a hidden window drops");
         };
-        let Open { app, window, .. } = *open;
-        if !app.gpu().wait_idle(DRAIN) {
+        let Open {
+            app,
+            window,
+            reload,
+            ..
+        } = *open;
+        if let Some(app) = &app
+            && !app.gpu().wait_idle(DRAIN)
+        {
             tracing::warn!("GPU work was still pending when the surface dropped");
         }
-        let session = app.into_session();
-        self.state = State::Reaping(Box::new((session, window.into_watches())));
+        self.state = State::Reaping(Box::new(Reaping {
+            session: app.and_then(App::into_session),
+            reload,
+            watches: window.into_watches(),
+        }));
         self.reap(readiness)
     }
 
@@ -161,8 +187,14 @@ impl Driver {
         let State::Reaping(reaping) = &mut self.state else {
             unreachable!("only a closed window reaps");
         };
-        let (session, watches) = &mut **reaping;
+        let Reaping {
+            session,
+            reload,
+            watches,
+        } = &mut **reaping;
         watches.dispatch()?;
+        // Results that arrive after the close no longer apply.
+        reload.service(watches)?;
         if let Some(session) = session {
             session.service_closing(Instant::now(), watches)?;
             if session.has_closing() {
@@ -171,31 +203,80 @@ impl Driver {
             }
         }
         readiness.remove(DEADLINE);
-        Ok(ControlFlow::Break(()))
+        // The child's exit watch and its kill timer report through `Event::Ready`.
+        Ok(if reload.reaped() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        })
     }
 }
 
 impl Open {
-    /// One batch, then a frame. Returns whether the window closes.
-    pub(super) fn turn(&mut self, readiness: &Readiness) -> Result<bool> {
+    /// Take the configuration child's results, then one batch, then a frame. Returns whether
+    /// the window closes.
+    pub(super) fn turn(
+        &mut self,
+        readiness: &Readiness,
+        capture: &mut Option<capture::Options>,
+    ) -> Result<bool> {
         let Self {
             app,
             window,
+            reload,
             animation,
         } = self;
+        let mut results =
+            reload
+                .service(&mut window.watches)?
+                .into_iter()
+                .map(|update| match update {
+                    Update::Settings(config) => Ok(config),
+                    Update::Diagnostic(message) => Err(message),
+                });
+        let app = if let Some(app) = app {
+            app
+        } else {
+            let Some(first) = results.next() else {
+                return Ok(false);
+            };
+            let capture = capture.take().ok_or("the session started twice")?;
+            app.insert(start(window, capture, first)?)
+        };
         let closed = app.service_batch(window, |app, window| {
             window.deliver_events(|event, window| app.handle_event(event, window))
         })?;
         if closed {
             return Ok(true);
         }
-        app.reload_config(false, window)?;
+        for next in results {
+            app.apply_config(next, window)?;
+        }
         if app.frame(window, animation)? {
             return Ok(true);
         }
         wake_at(readiness, app.wake_deadline(window.frame_slot_available()))?;
         Ok(false)
     }
+}
+
+/// Build the GPU and the app from the first settings result: a diagnostic starts from the
+/// defaults under the banner.
+fn start(
+    window: &MacWindow,
+    capture: capture::Options,
+    first: Result<Config, String>,
+) -> Result<App> {
+    let (config, banner) = match first {
+        Ok(config) => (config, None),
+        Err(message) => (Config::default(), Some(message)),
+    };
+    let gpu = surface::create_gpu(
+        window.platform(),
+        capture.screenshot.is_some(),
+        config.minimum_contrast(),
+    )?;
+    Ok(App::new(gpu, capture, config, banner))
 }
 
 /// Wake the loop at the session's next deadline, replacing the previous one.

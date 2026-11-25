@@ -69,9 +69,10 @@ fn command(driver: &mut Driver, context: &WindowContext, command: Command) -> Re
             match command {
                 Command::Type(text) => open.window.commit_text(text),
                 Command::Report => {
-                    let gpu = open.app.gpu();
+                    let app = open.app.as_ref().ok_or("the settings have not arrived")?;
+                    let gpu = app.gpu();
                     let stats = open.window.stats;
-                    let [columns, rows] = open.app.snapshot_grid().unwrap_or_default();
+                    let [columns, rows] = app.snapshot_grid().unwrap_or_default();
                     println!(
                         "runner report {} {} {} {} {} {columns} {rows}",
                         gpu.present_count(),
@@ -93,7 +94,10 @@ fn report_presents(driver: &Driver, started: Instant, presented: &mut u64) {
     let State::Open(open) = &driver.state else {
         return;
     };
-    let count = open.app.gpu().present_count();
+    let Some(app) = &open.app else {
+        return;
+    };
+    let count = app.gpu().present_count();
     if count != *presented {
         *presented = count;
         let at = started.elapsed().as_nanos();
