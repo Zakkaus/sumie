@@ -198,6 +198,9 @@ impl PaneWatches for Watches {
         Ok(())
     }
 
+    // Re-arming at take means a descriptor the caller has not drained yet reports once more,
+    // which costs one extra wake per batch. The terminal driver (U8) drains fully, so this
+    // stays bounded; a reader that caps its reads must move the re-arm after its drain.
     fn take_ready(&mut self, id: u64) -> Ready {
         let ready = std::mem::take(&mut self.pane(id).ready);
         for (taken, interest) in [
