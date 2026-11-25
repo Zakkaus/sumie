@@ -59,8 +59,6 @@ pub(crate) fn run(options: capture::Options) -> Result<()> {
 }
 
 fn smoke(options: &capture::Options) -> Result<()> {
-    // The terminal driver starts panes with this login; the test page only proves it.
-    let _login = login::prepare()?;
     let mut state = None;
     sumie_macos::run(|context, readiness, event| {
         match (&mut state, event) {

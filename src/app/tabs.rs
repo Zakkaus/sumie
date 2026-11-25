@@ -16,6 +16,7 @@ use sumie_ui::TabHit;
 
 use super::notices::{Alerts, Serviced};
 use super::{LocalPane, PaneState, PaneTab, Result, Session, View, directory};
+use crate::login::Environment;
 use crate::platform::{PaneWatches, WindowOps};
 
 #[derive(Clone, Copy)]
@@ -98,13 +99,19 @@ impl BarPointer {
 }
 
 pub(super) struct PaneHost {
+    environment: Environment,
     click_interval: Option<u32>,
     image_dimension_limit: u32,
 }
 
 impl PaneHost {
-    pub(super) const fn new(image_dimension_limit: u32, click_interval: Option<u32>) -> Self {
+    pub(super) const fn new(
+        environment: Environment,
+        image_dimension_limit: u32,
+        click_interval: Option<u32>,
+    ) -> Self {
         Self {
+            environment,
             click_interval,
             image_dimension_limit,
         }
@@ -120,7 +127,7 @@ impl PaneHost {
         watches: &mut impl PaneWatches,
     ) -> Result<PaneState> {
         let size = view.pane_size(rect);
-        let mut pane = LocalPane::login(size, view.cell, config, cwd)?;
+        let mut pane = LocalPane::login(&self.environment, size, view.cell, config, cwd)?;
         pane.terminal
             .set_image_dimension_limit(self.image_dimension_limit);
         if let Some(millis) = self.click_interval {

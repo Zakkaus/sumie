@@ -141,12 +141,17 @@ impl App {
                     tab.layout_revision = tab.layout_revision.wrapping_add(1);
                 } else {
                     let gpu = &mut self.gpu;
+                    let environment = self.environment.take().ok_or("the session started twice")?;
                     let mut session = Session::new(
                         scale,
                         logical,
                         device,
                         window,
-                        tabs::PaneHost::new(gpu.image_dimension_limit(), W::click_interval()),
+                        tabs::PaneHost::new(
+                            environment,
+                            gpu.image_dimension_limit(),
+                            W::click_interval(),
+                        ),
                         W::hostname()?,
                         &self.config,
                     )?;

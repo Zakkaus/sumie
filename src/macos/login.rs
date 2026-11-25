@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use nix::unistd::{AccessFlags, User, access, getuid};
 
-use crate::{Result, login::Login};
+use crate::{Result, login::Environment};
 
 /// Darwin's locale database; `setlocale` reads `<name>/LC_CTYPE` below it.
 const LOCALES: &str = "/usr/share/locale";
@@ -25,9 +25,9 @@ const UTF8_LOCALES: [&str; 2] = ["en_US.UTF-8", "UTF-8"];
 ///
 /// # Errors
 /// Returns an error when no usable login shell exists.
-pub(crate) fn prepare() -> Result<Login> {
+pub(crate) fn prepare() -> Result<Environment> {
     crate::login::install();
-    Login::new(std::env::vars_os(), true)
+    Environment::new(std::env::vars_os())
 }
 
 /// Name the login shell and, if needed, a character locale in a child environment.

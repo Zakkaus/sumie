@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use sumie_pty::{Pty, Size, SpawnOptions};
 
-use crate::login::Login;
+use crate::login::Environment;
 
 const SCENARIO: &str = "SUMIE_LOGIN_SCENARIO";
 const WAIT: Duration = Duration::from_secs(10);
@@ -112,7 +112,7 @@ pub(super) struct Session {
 
 impl Session {
     pub(super) fn login(home: &Home) -> Self {
-        let login = Login::new(std::env::vars_os(), true).unwrap();
+        let login = Environment::new(std::env::vars_os()).unwrap().login(true);
         let mut options = SpawnOptions::new(login.command(), &login.env, SIZE);
         options.cwd = Some(&home.path);
         Self {

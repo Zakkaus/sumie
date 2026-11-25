@@ -1,8 +1,9 @@
 //! Builds the login shell a new pane starts: its environment and its command line.
 //!
 //! The environment is the requester's plus the terminal identity. On macOS it also names the
-//! resolved login shell and, when the requester's is not UTF-8, a character locale. Shell
-//! integration then adjusts it for supported shells; nothing here edits a profile.
+//! resolved login shell and, when the requester's is not UTF-8, a character locale. That
+//! [`Environment`] is resolved once; each pane's [`Login`] is a copy that shell integration
+//! adjusts for supported shells. Nothing here edits a profile.
 
 #[path = "shell_integration.rs"]
 mod shell_integration;
@@ -18,15 +19,12 @@ use crate::Result;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// A login shell's complete environment and arguments.
-pub(crate) struct Login {
-    pub(crate) env: BTreeMap<OsString, OsString>,
-    args: Option<[OsString; 3]>,
-}
+/// The environment every pane's login shell starts from, resolved once per process.
+pub(crate) struct Environment(BTreeMap<OsString, OsString>);
 
-impl Login {
+impl Environment {
     /// Resolve the login shell for `requester`'s environment. The first call can block on
-    /// the bundled terminfo and shell integration installs (file locks, filesystem, `tic`).
+    /// the bundled terminfo install (file lock, filesystem, `tic`).
     ///
     /// # Errors
     /// On macOS, returns an error when neither `SHELL` nor the account names a usable shell.
@@ -37,24 +35,33 @@ impl Login {
             reason = "only macOS shell resolution can fail"
         )
     )]
-    pub(crate) fn new(
-        requester: impl IntoIterator<Item = (OsString, OsString)>,
-        integration: bool,
-    ) -> Result<Self> {
+    pub(crate) fn new(requester: impl IntoIterator<Item = (OsString, OsString)>) -> Result<Self> {
         let env = terminal_environment(requester.into_iter().collect());
         #[cfg(target_os = "macos")]
         let env = crate::macos::login::apply(env)?;
-        let mut login = Self { env, args: None };
-        if integration {
-            login.args = shell_integration::inject(&mut login.env);
-        }
-        Ok(login)
+        Ok(Self(env))
     }
 
-    #[cfg_attr(
-        all(target_os = "macos", not(test)),
-        expect(dead_code, reason = "the terminal driver spawns macOS panes")
-    )]
+    /// The login a new pane starts, with shell integration when `integration` is set. The
+    /// first integrated login can block on the shell integration install.
+    pub(crate) fn login(&self, integration: bool) -> Login {
+        let mut env = self.0.clone();
+        let args = if integration {
+            shell_integration::inject(&mut env)
+        } else {
+            None
+        };
+        Login { env, args }
+    }
+}
+
+/// A login shell's complete environment and arguments.
+pub(crate) struct Login {
+    pub(crate) env: BTreeMap<OsString, OsString>,
+    args: Option<[OsString; 3]>,
+}
+
+impl Login {
     pub(crate) fn command(&self) -> Command<'_> {
         self.args
             .as_ref()

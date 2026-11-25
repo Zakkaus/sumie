@@ -7,7 +7,7 @@ use sumie_pty::{Pty, Size, SpawnOptions};
 use sumie_vt::{KeyEncoder, KeyEvent, Snapshot, Terminal};
 
 use crate::Result;
-use crate::login::Login;
+use crate::login::Environment;
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) use crate::login::request_environment;
 
@@ -22,12 +22,13 @@ pub(crate) struct LocalPane {
 
 impl LocalPane {
     pub(crate) fn login(
+        environment: &Environment,
         size: Size,
         cell: [u32; 2],
         config: &sumie_config::Config,
         cwd: &std::path::Path,
     ) -> Result<Self> {
-        let login = Login::new(std::env::vars_os(), config.shell.integration())?;
+        let login = environment.login(config.shell.integration());
         let mut options = SpawnOptions::new(login.command(), &login.env, size);
         options.cwd = Some(cwd);
         Self::spawn(options, cell, config)

@@ -8,10 +8,12 @@ use crate::{
     app::{App, Wake},
     capture,
     frame_window::FrameWindow as _,
+    login::Environment,
     reload::Reload,
 };
 
 pub(crate) fn run(capture: capture::Options) -> Result<()> {
+    let environment = Environment::new(std::env::vars_os())?;
     let mut reload = Reload::new()?;
     let (config, banner) = match reload.load()? {
         Ok(config) => (config, None),
@@ -20,7 +22,7 @@ pub(crate) fn run(capture: capture::Options) -> Result<()> {
     let mut window = LinuxWindow::open("sumie")?;
     let gpu = window.create_gpu(capture.screenshot.is_some(), config.minimum_contrast())?;
     window.watches.register_config(reload.watch_fd())?;
-    let mut app = App::new(gpu, capture, config, banner);
+    let mut app = App::new(gpu, capture, config, banner, environment);
     let result = drive(&mut app, &mut reload, &mut window);
     let close = app.close_all(&mut window);
     let reaper = Reaper::new(app.closing_fds());

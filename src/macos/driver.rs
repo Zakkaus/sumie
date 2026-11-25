@@ -3,6 +3,9 @@
 //! tracking, modal panels), runs one turn: the batch (ready PTYs, effects, retirement), then
 //! a frame at a free slot.
 //!
+//! Every pane starts the login shell that `macos::login::prepare` resolved before the window
+//! opened.
+//!
 //! Settings come from the configuration child (`macos::reload`). The session starts from its
 //! first result, under the banner if that is a diagnostic, or from the defaults under a
 //! loading banner if none arrived by [`FIRST_RESULT`]; later results apply through
@@ -23,6 +26,7 @@ use sumie_macos::{
 };
 
 use super::{
+    login,
     reload::{self, Reload, Update},
     sources::{Timers, Watches},
     surface,
@@ -33,6 +37,7 @@ use crate::{
     app::{App, Session, Wake},
     capture,
     frame_window::FrameWindow as _,
+    login::Environment,
 };
 
 /// The session's own deadlines: retries, closing children, search.
@@ -77,13 +82,20 @@ pub(super) struct Reaping {
 }
 
 pub(super) struct Driver {
-    capture: Option<capture::Options>,
+    /// Taken when the session starts.
+    start: Option<Start>,
     pub(super) state: State,
+}
+
+/// What the session starts with besides its first settings.
+pub(super) struct Start {
+    capture: capture::Options,
+    environment: Environment,
 }
 
 /// Run the terminal driver until its window closes and its children are reaped.
 pub(super) fn run(capture: capture::Options) -> Result<()> {
-    let mut driver = Driver::new(capture);
+    let mut driver = Driver::new(capture)?;
     sumie_macos::run(|context, readiness, event| {
         if let (State::Starting, Event::Resumed) = (&driver.state, &event) {
             driver.open(readiness, Platform::create(context, "sumie", SIZE)?)?;
@@ -94,11 +106,16 @@ pub(super) fn run(capture: capture::Options) -> Result<()> {
 }
 
 impl Driver {
-    pub(super) const fn new(capture: capture::Options) -> Self {
-        Self {
-            capture: Some(capture),
+    /// Resolve the login shell; call before the window opens.
+    pub(super) fn new(capture: capture::Options) -> Result<Self> {
+        let environment = login::prepare()?;
+        Ok(Self {
+            start: Some(Start {
+                capture,
+                environment,
+            }),
             state: State::Starting,
-        }
+        })
     }
 
     /// Show the window and start the configuration child; the session waits for its result
@@ -129,7 +146,7 @@ impl Driver {
     ) -> Result<ControlFlow<()>> {
         match (&mut self.state, event) {
             (State::Open(open), Event::AboutToWait) => {
-                if open.turn(readiness, &mut self.capture)? {
+                if open.turn(readiness, &mut self.start)? {
                     self.hide(context)?;
                 }
             }
@@ -230,7 +247,7 @@ impl Open {
     pub(super) fn turn(
         &mut self,
         readiness: &Readiness,
-        capture: &mut Option<capture::Options>,
+        pending: &mut Option<Start>,
     ) -> Result<bool> {
         let Self {
             app,
@@ -255,8 +272,8 @@ impl Open {
                 None if Instant::now() >= *first_by => Err(still_loading()),
                 None => return Ok(false),
             };
-            let capture = capture.take().ok_or("the session started twice")?;
-            app.insert(start(window, capture, first)?)
+            let pending = pending.take().ok_or("the session started twice")?;
+            app.insert(start(window, pending, first)?)
         };
         let closed = app.service_batch(window, |app, window| {
             window.deliver_events(|event, window| app.handle_event(event, window))
@@ -279,7 +296,10 @@ impl Open {
 /// defaults under the banner.
 fn start(
     window: &MacWindow,
-    capture: capture::Options,
+    Start {
+        capture,
+        environment,
+    }: Start,
     first: Result<Config, String>,
 ) -> Result<App> {
     let (config, banner) = match first {
@@ -291,7 +311,7 @@ fn start(
         capture.screenshot.is_some(),
         config.minimum_contrast(),
     )?;
-    Ok(App::new(gpu, capture, config, banner))
+    Ok(App::new(gpu, capture, config, banner, environment))
 }
 
 /// The banner while the first result is late; the result replaces it when it arrives.

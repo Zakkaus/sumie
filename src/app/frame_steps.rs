@@ -8,6 +8,7 @@ use super::{Session, animation::Wake};
 use crate::{
     Result, capture,
     gpu::Gpu,
+    login::Environment,
     platform::{PaneWatches, TimerSource, WindowOps},
 };
 
@@ -18,6 +19,8 @@ pub(crate) struct App {
     pub(super) config: sumie_config::Config,
     /// The settings diagnostic over the active pane's first row.
     pub(super) banner: Option<String>,
+    /// What every pane's login shell starts from; the session takes it when it starts.
+    pub(super) environment: Option<Environment>,
     pub(super) session: Option<Session>,
     pub(super) focused: bool,
     pub(super) suspended: bool,
@@ -95,12 +98,14 @@ impl App {
         capture: capture::Options,
         config: sumie_config::Config,
         banner: Option<String>,
+        environment: Environment,
     ) -> Self {
         let mut app = Self {
             gpu,
             capture,
             config,
             banner: None,
+            environment: Some(environment),
             session: None,
             focused: false,
             suspended: false,
