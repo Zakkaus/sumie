@@ -64,7 +64,9 @@ jobs:
           key: build-${{ matrix.runner }}-${{ hashFiles('Cargo.lock', 'crates/sumie-vt/build.rs') }}
           restore-keys: build-${{ matrix.runner }}-
       - if: runner.os == 'macOS'
-        run: echo 'MACOSX_DEPLOYMENT_TARGET=13.0' >> "$GITHUB_ENV"
+        run: |
+          echo 'MACOSX_DEPLOYMENT_TARGET=13.0' >> "$GITHUB_ENV"
+          echo 'SUMIE_REQUIRE_GPU=1' >> "$GITHUB_ENV"
       - run: scripts/check-all.sh
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
