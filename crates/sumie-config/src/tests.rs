@@ -203,6 +203,7 @@ fn resolved_settings_survive_json() {
     assert!(Config::from_json(br#"{"minimum-contrast":30}"#).is_err());
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn rename_replacement_reloads_and_rearms() {
     use std::{
