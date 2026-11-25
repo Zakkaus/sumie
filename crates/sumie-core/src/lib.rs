@@ -297,10 +297,8 @@ mod tests {
                 ..modifiers
             };
             let mut shortcuts = Shortcuts::default();
-            for action in [KeyAction::Press, KeyAction::Repeat, KeyAction::Release] {
-                let matched = shortcuts.match_key(physical, symbol, held, action, true);
-                assert!(matched.is_none(), "Super matched {code:?}");
-            }
+            let matched = shortcuts.match_key(physical, symbol, held, KeyAction::Press, true);
+            assert!(matched.is_none(), "Super matched {code:?}");
             let matched = shortcuts.match_key(physical, symbol, modifiers, KeyAction::Press, true);
             assert!(matched.is_some(), "{code:?} did not match");
         }

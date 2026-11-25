@@ -32,7 +32,7 @@ CLIPPY_CONFIGS = {"clippy.toml", ".clippy.toml"}
 TEST_SUMMARY = re.compile(r"^test result: (ok|FAILED)\. ([0-9]+) passed;")
 CARGO_RECORDS = ("compiler-artifact", "compiler-message", "build-script-executed", "build-finished")
 FULL_REV = re.compile(r"[0-9a-f]{40}")
-DEBUG_PRINT = re.compile(r"\b(?:e?println|dbg)!")
+DEBUG_PRINT = re.compile(r"\b(?:e?print(?:ln)?|dbg)!")
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -231,7 +231,9 @@ def check_patches():
     except (OSError, UnicodeError, ValueError) as error:
         raise CannotCheck(f"patches: {error}") from error
     packages = locked.get("package", []) + locked.get("patch", {}).get("unused", [])
-    sources = {pkg.get("source", "") for pkg in packages}
+    sources = {}
+    for pkg in packages:
+        sources.setdefault(pkg.get("name"), set()).add(pkg.get("source", ""))
     errors = []
     entries = 0
     for registry, table in patches.items():
@@ -245,8 +247,9 @@ def check_patches():
                 errors.append(f"{entry}: pin a full rev, not a branch or tag")
             elif not FULL_REV.fullmatch(rev):
                 errors.append(f"{entry}: rev must be a full 40-hex commit")
-            elif not any(src.startswith("git+") and src.endswith(f"#{rev}") for src in sources):
-                errors.append(f"{entry}: rev {rev} is not the commit in Cargo.lock")
+            elif not any(src.startswith("git+") and src.endswith(f"#{rev}")
+                         for src in sources.get(spec.get("package", name), ())):
+                errors.append(f"{entry}: Cargo.lock does not take {name} from rev {rev}")
     for path, diff in diffs.items():
         for number, line in enumerate(diff.splitlines(), 1):
             if line.startswith("+") and not line.startswith("+++") and DEBUG_PRINT.search(line):
