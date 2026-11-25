@@ -159,10 +159,11 @@ class Screen:
         return len(out) == 5 and out[4] == "1"
 
     def poll(self):
+        # A query that sees the window gone may have started before it left, so the time it
+        # returned is the earliest the window is known to be off screen.
         while self.polling and self.offscreen is None:
-            at = time.monotonic()
             if not self.state():
-                self.offscreen = at
+                self.offscreen = time.monotonic()
             time.sleep(0.02)
 
 
