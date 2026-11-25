@@ -1,6 +1,8 @@
+mod driver;
 mod events;
 mod notify;
 pub(crate) mod sources;
+pub(crate) use driver::run;
 use sources::Watches;
 
 use std::{collections::VecDeque, time::Duration};
@@ -27,16 +29,6 @@ pub(crate) struct LinuxWindow {
 }
 
 impl LinuxWindow {
-    pub(crate) fn click_interval() -> Option<u32> {
-        sumie_wayland::double_click_interval()
-    }
-
-    pub(crate) fn hostname() -> Result<String> {
-        Ok(std::fs::read_to_string("/proc/sys/kernel/hostname")?
-            .trim_end()
-            .to_owned())
-    }
-
     pub(crate) fn create_gpu(&self, capture: bool, minimum_contrast: f32) -> Result<Gpu> {
         let instance = wgpu::Instance::new(instance_descriptor(
             wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
@@ -71,10 +63,6 @@ impl LinuxWindow {
         }
         Ok(false)
     }
-
-    pub(crate) fn recover_frame_slot(&mut self) {
-        self.platform.recover_frame_slot();
-    }
 }
 
 impl FrameWindow for LinuxWindow {
@@ -101,8 +89,22 @@ impl FrameWindow for LinuxWindow {
 }
 
 impl WindowOps for LinuxWindow {
+    fn click_interval() -> Option<u32> {
+        sumie_wayland::double_click_interval()
+    }
+
+    fn hostname() -> Result<String> {
+        Ok(std::fs::read_to_string("/proc/sys/kernel/hostname")?
+            .trim_end()
+            .to_owned())
+    }
+
     fn logical_rect(bounds: CaretBounds) -> Option<LogicalRect> {
         view::surface_logical_rect(bounds)
+    }
+
+    fn recover_frame_slot(&mut self) {
+        self.platform.recover_frame_slot();
     }
 
     fn set_cursor_rectangle(&mut self, rect: LogicalRect) {

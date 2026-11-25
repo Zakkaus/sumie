@@ -78,14 +78,18 @@ impl Session {
             .filter_map(|(id, pty)| pty.exit_fd().map(|fd| (*id, fd)))
     }
 
-    pub(super) fn closing_deadline(&self) -> Option<Instant> {
+    pub(crate) fn has_closing(&self) -> bool {
+        !self.closing.is_empty()
+    }
+
+    pub(crate) fn closing_deadline(&self) -> Option<Instant> {
         self.closing
             .iter()
             .filter_map(|(_, pty)| pty.close_deadline())
             .min()
     }
 
-    pub(super) fn service_closing(
+    pub(crate) fn service_closing(
         &mut self,
         now: Instant,
         watches: &mut impl ExitWatches,

@@ -1,7 +1,8 @@
 mod animation;
+pub(crate) use animation::Wake;
 mod directory;
-mod driver;
-pub(crate) use driver::run;
+mod frame_steps;
+pub(crate) use frame_steps::App;
 mod highlights;
 mod lifetime;
 mod links;
@@ -12,6 +13,7 @@ mod scroll;
 mod search;
 mod tabs;
 mod viewer;
+mod window_events;
 
 use std::time::{Duration, Instant};
 
@@ -35,7 +37,7 @@ use crate::{
 
 const FRAME_RETRY_DELAY: Duration = Duration::from_millis(50);
 
-struct Session {
+pub(crate) struct Session {
     tabs: WindowTabs<PaneTab>,
     routing: input::Routing,
     view: View,

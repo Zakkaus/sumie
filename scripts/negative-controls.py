@@ -297,6 +297,12 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "                self.window_pixel(Position::SurfaceLogical(points(x), points(y)))\n"
                            "            }"),
               "test view::tests::device_pixel_hits_ignore_the_rounded_point_extent ... FAILED")
+        probe("a batch retires exited panes before its effects", "test", "src/app/frame_steps.rs",
+              replace_once("    if batch.effects()? {\n        return Ok(true);\n    }\n"
+                           "    Ok(exited && batch.retire()?)",
+                           "    if exited && batch.retire()? {\n        return Ok(true);\n    }\n"
+                           "    batch.effects()"),
+              "test app::frame_steps::tests::a_batch_runs_ready_ptys_then_effects_then_retirement ... FAILED")
         probe("IME accepts the prior recipient's serial", "test", "crates/sumie-wayland/src/ime.rs",
               replace_once("self.enabled_at = Some(self.serial.wrapping_add(1));",
                            "self.enabled_at = Some(self.serial);"),

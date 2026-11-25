@@ -167,5 +167,5 @@ fn run_app(args: impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
         .with_max_level(level)
         .init();
 
-    app::run(capture)
+    linux::run(capture)
 }

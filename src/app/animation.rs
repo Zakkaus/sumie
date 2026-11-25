@@ -2,14 +2,14 @@ use std::time::{Duration, Instant};
 
 use crate::{Result, platform::TimerSource};
 
-pub(super) struct Wake<S: TimerSource> {
+pub(crate) struct Wake<S: TimerSource> {
     origin: Instant,
     source: S,
     timer: Option<(u64, S::Token)>,
 }
 
 impl<S: TimerSource> Wake<S> {
-    pub(super) fn new(source: S) -> Self {
+    pub(crate) fn new(source: S) -> Self {
         Self {
             origin: Instant::now(),
             source,

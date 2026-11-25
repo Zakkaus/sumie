@@ -28,7 +28,12 @@ pub(crate) struct LogicalRect {
 /// Main-thread window operations. User copy belongs to the event being delivered;
 /// terminal clipboard requests use keyboard focus independently of input dispatch.
 pub(crate) trait WindowOps: PaneWatches + crate::frame_window::FrameWindow {
+    /// The desktop's double-click interval in milliseconds, if it publishes one.
+    fn click_interval() -> Option<u32>;
+    fn hostname() -> crate::Result<String>;
     fn logical_rect(bounds: CaretBounds) -> Option<LogicalRect>;
+    /// Release a frame slot stalled by a hidden or inactive window.
+    fn recover_frame_slot(&mut self);
     fn set_cursor_rectangle(&mut self, rect: LogicalRect);
     fn set_pointer_icon(&mut self, icon: CursorIcon);
     fn set_input_generation(&mut self, generation: u64);
