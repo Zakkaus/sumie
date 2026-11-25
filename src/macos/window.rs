@@ -3,9 +3,9 @@
 
 use std::{collections::VecDeque, os::fd::BorrowedFd, time::Instant};
 
-use sumie_core::{mouse::MousePhase, notify::Notification};
+use sumie_core::{KeyAction, mouse::MousePhase, notify::Notification};
 use sumie_macos::{
-    Platform, Pointer,
+    Platform, Pointer, Symbol,
     readiness::{Interest, Key, Readiness},
 };
 
@@ -14,8 +14,8 @@ use crate::{
     Result,
     frame_window::FrameWindow,
     platform::{
-        CaretBounds, CursorIcon, Event, ExitWatches, LogicalRect, PaneWatches, PointerEvent,
-        Position, Ready, WindowOps,
+        CaretBounds, CursorIcon, Event, ExitWatches, LogicalKey, LogicalRect, PaneWatches,
+        PointerEvent, Position, Ready, WindowOps,
     },
     view,
 };
@@ -98,7 +98,10 @@ impl MacWindow {
             Native::Resized => self.resized(),
             Native::Moved => self.screen_changed(),
             Native::Focused(focused) => {
-                self.focused = focused;
+                if focused != self.focused {
+                    self.focused = focused;
+                    self.batch.push_back(Event::KeyboardFocus(focused));
+                }
                 self.configured();
             }
             Native::Occluded(occluded) if occluded != self.occluded => {
@@ -110,7 +113,10 @@ impl MacWindow {
                 }
             }
             Native::CloseRequested => self.batch.push_back(Event::CloseRequested),
-            Native::KeyText(text) => self.commit_text(text),
+            Native::Key(key) => self.key(key),
+            Native::ModifiersChanged(modifiers) => {
+                self.batch.push_back(Event::ModifiersChanged(modifiers));
+            }
             Native::PointerEntered(pointer) => self.batch.push_back(Event::PointerEntered {
                 position: device_px(pointer.position),
                 modifiers: pointer.modifiers,
@@ -123,7 +129,9 @@ impl MacWindow {
         }
     }
 
-    /// Text for the focused pane, stamped with the current input generation.
+    /// Text for the focused pane, stamped with the current input generation; the runner's
+    /// `type` until input methods commit text (M1b-2).
+    #[cfg(feature = "macos-ci")]
     pub(super) fn commit_text(&mut self, text: String) {
         self.batch.push_back(Event::ImeCommit {
             text,
@@ -206,6 +214,22 @@ impl MacWindow {
         });
     }
 
+    fn key(&mut self, key: sumie_macos::Key) {
+        // Command keys belong to the menu and, from M1b-2, to the shared shortcut table; until
+        // then none reaches a PTY. A release still goes through, so a key pressed before
+        // Command keeps its release.
+        if key.command() && !matches!(key.action, KeyAction::Release) {
+            return;
+        }
+        self.batch.push_back(Event::Key {
+            physical: key.physical,
+            logical: logical_key(key.symbol),
+            utf8: key.text,
+            modifiers: key.modifiers,
+            action: key.action,
+        });
+    }
+
     fn pointer(&self, pointer: Pointer) -> PointerEvent {
         let phase = match pointer.phase {
             MousePhase::Touch(pixels) => {
@@ -224,6 +248,23 @@ impl MacWindow {
         if let Err(error) = self.readiness.set_deadline(SLOT, until) {
             tracing::error!(%error, "could not arm the frame slot wake");
         }
+    }
+}
+
+const fn logical_key(symbol: Symbol) -> LogicalKey {
+    match symbol {
+        Symbol::Character(ch) => LogicalKey::Character(ch),
+        Symbol::Escape => LogicalKey::Escape,
+        Symbol::Enter => LogicalKey::Enter,
+        Symbol::NumpadEnter => LogicalKey::NumpadEnter,
+        Symbol::Backspace => LogicalKey::Backspace,
+        Symbol::Insert => LogicalKey::Insert,
+        Symbol::Home => LogicalKey::Home,
+        Symbol::End => LogicalKey::End,
+        Symbol::Left => LogicalKey::Left,
+        Symbol::Right => LogicalKey::Right,
+        Symbol::F3 => LogicalKey::F3,
+        Symbol::Other(ch) => LogicalKey::Other(ch),
     }
 }
 

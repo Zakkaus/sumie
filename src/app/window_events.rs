@@ -140,25 +140,12 @@ impl App {
                     let tab = session.tabs.active_mut().unwrap();
                     tab.layout_revision = tab.layout_revision.wrapping_add(1);
                 } else {
-                    let gpu = &mut self.gpu;
-                    let environment = self.environment.take().ok_or("the session started twice")?;
-                    let mut session = Session::new(
-                        scale,
-                        logical,
-                        device,
-                        window,
-                        tabs::PaneHost::new(
-                            environment,
-                            gpu.image_dimension_limit(),
-                            W::click_interval(),
-                        ),
-                        W::hostname()?,
-                        &self.config,
-                    )?;
-                    let (alpha, _) = set_background(gpu, window, &self.config.window);
-                    session.view.set_background_alpha(alpha);
-                    gpu.resize(device);
-                    self.session = Some(session);
+                    self.start_session(scale, logical, device, window)?;
+                }
+            }
+            Event::KeyboardFocus(focused) => {
+                if let Some(session) = &mut self.session {
+                    session.keyboard_focus(focused)?;
                 }
             }
             Event::Presented { at, refresh } => {
@@ -176,6 +163,36 @@ impl App {
             }
         }
         Ok(false)
+    }
+
+    /// Start the session at the window's first size.
+    fn start_session<W: WindowOps>(
+        &mut self,
+        scale: u32,
+        logical: [u32; 2],
+        device: [u32; 2],
+        window: &mut W,
+    ) -> Result<()> {
+        let gpu = &mut self.gpu;
+        let environment = self.environment.take().ok_or("the session started twice")?;
+        let mut session = Session::new(
+            scale,
+            logical,
+            device,
+            window,
+            tabs::PaneHost::new(
+                environment,
+                gpu.image_dimension_limit(),
+                W::click_interval(),
+            ),
+            W::hostname()?,
+            &self.config,
+        )?;
+        let (alpha, _) = set_background(gpu, window, &self.config.window);
+        session.view.set_background_alpha(alpha);
+        gpu.resize(device);
+        self.session = Some(session);
+        Ok(())
     }
 }
 

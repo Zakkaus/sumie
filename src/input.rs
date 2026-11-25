@@ -46,10 +46,10 @@ pub(crate) enum SearchTarget {
     Close,
 }
 
-struct HeldKey {
+pub(crate) struct HeldKey {
     physical: PhysicalKey,
     unshifted: Option<char>,
-    pane: u64,
+    pub(crate) pane: u64,
     generation: u64,
     reported: bool,
 }
@@ -106,19 +106,21 @@ impl Routing {
     ) -> Result<()> {
         for key in self.terminal_presses.extract_if(.., |key| key.pane == id) {
             if key.reported {
-                send(
-                    pane,
-                    PaneCommand::Key {
-                        physical: key.physical,
-                        unshifted: key.unshifted,
-                        action: KeyAction::Release,
-                        modifiers,
-                        text: "",
-                    },
-                )?;
+                release(pane, &key, modifiers)?;
             }
         }
         Ok(())
+    }
+
+    /// The window lost the keyboard, which takes its held keys along: no repeat or release
+    /// from before reaches a PTY. Returns the reported presses; each still owes its own pane a
+    /// release ([`release`]).
+    pub(crate) fn keyboard_left(&mut self) -> Vec<HeldKey> {
+        self.repeating_search_key = None;
+        self.terminal_presses
+            .drain(..)
+            .filter(|key| key.reported)
+            .collect()
     }
 
     fn terminal_key(&mut self, physical: PhysicalKey, id: u64, action: KeyAction) -> bool {
@@ -377,6 +379,30 @@ fn send_pointer(pane: &mut LocalPane, searching: bool, event: MouseEvent) -> Res
     send(pane, PaneCommand::Mouse(event))
 }
 
+/// End a reported press in the pane that received it.
+pub(crate) fn release(
+    pane: &mut impl Pane<Error = Error>,
+    key: &HeldKey,
+    modifiers: KeyModifiers,
+) -> Result<()> {
+    send(
+        pane,
+        PaneCommand::Key {
+            physical: key.physical,
+            unshifted: key.unshifted,
+            action: KeyAction::Release,
+            modifiers,
+            text: "",
+        },
+    )
+    .map(drop)
+}
+
+/// Tell the pane that the window gained or lost the keyboard; only mode 1004 reports it.
+pub(crate) fn report_focus(pane: &mut impl Pane<Error = Error>, focused: bool) -> Result<()> {
+    send(pane, PaneCommand::Focus(focused)).map(drop)
+}
+
 fn send(pane: &mut impl Pane<Error = Error>, command: PaneCommand<'_>) -> Result<PaneEffect> {
     let paste_len = match &command {
         PaneCommand::Paste(text) => Some(text.len()),
@@ -411,5 +437,148 @@ pub(crate) fn mouse_event(
         over_grid,
         modifiers,
         link: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sumie_core::{KeyAction, KeyCode as K, Pane, PaneCommand, PaneEffect, PhysicalKey};
+
+    use super::{Routing, release, route};
+    use crate::{
+        Error, Result,
+        platform::{Event, LogicalKey, Modifiers},
+    };
+
+    /// Records what reaches the PTY; `reports` answers presses like Kitty's event mode.
+    #[derive(Default)]
+    struct Recorder {
+        reports: bool,
+        keys: Vec<(K, &'static str)>,
+        focus: Vec<bool>,
+    }
+
+    impl Pane for Recorder {
+        type Snapshot = ();
+        type Error = Error;
+
+        fn command(&mut self, command: PaneCommand<'_>) -> Result<PaneEffect> {
+            match command {
+                PaneCommand::Key {
+                    physical: PhysicalKey::Code(code),
+                    action,
+                    ..
+                } => {
+                    let (label, press) = match action {
+                        KeyAction::Press => ("press", true),
+                        KeyAction::Repeat => ("repeat", false),
+                        KeyAction::Release => ("release", false),
+                    };
+                    self.keys.push((code, label));
+                    if press && self.reports {
+                        return Ok(PaneEffect::ReportedPress {
+                            viewport_changed: false,
+                        });
+                    }
+                }
+                PaneCommand::Focus(focused) => self.focus.push(focused),
+                _ => (),
+            }
+            Ok(PaneEffect::None)
+        }
+
+        fn snapshot(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn key(code: K, ch: char, action: KeyAction) -> Event {
+        Event::Key {
+            physical: PhysicalKey::Code(code),
+            logical: LogicalKey::Character(ch),
+            utf8: (!matches!(action, KeyAction::Release)).then(|| ch.into()),
+            modifiers: Modifiers::default(),
+            action,
+        }
+    }
+
+    #[test]
+    fn losing_the_keyboard_releases_reported_keys_once_in_their_own_pane() {
+        use KeyAction::{Press, Release, Repeat};
+        let mut reporting = Recorder {
+            reports: true,
+            ..Recorder::default()
+        };
+        let mut legacy = Recorder::default();
+        let mut routing = Routing::default();
+        route(
+            (1, 0),
+            &mut reporting,
+            &mut routing,
+            false,
+            key(K::KeyA, 'a', Press),
+            false,
+        )
+        .unwrap();
+        // Pane focus moves; the press keeps its owner.
+        let generation = routing.change_recipient();
+        let b = |action| key(K::KeyB, 'b', action);
+        route(
+            (2, generation),
+            &mut legacy,
+            &mut routing,
+            false,
+            b(Press),
+            false,
+        )
+        .unwrap();
+
+        let held = routing.keyboard_left();
+        assert_eq!(held.iter().map(|key| key.pane).collect::<Vec<_>>(), [1]);
+        for key in &held {
+            release(&mut reporting, key, Modifiers::default()).unwrap();
+        }
+        assert!(routing.keyboard_left().is_empty());
+
+        // After refocus, AppKit's late repeats and releases belong to no press.
+        for event in [
+            key(K::KeyA, 'a', Repeat),
+            key(K::KeyA, 'a', Release),
+            b(Repeat),
+            b(Release),
+        ] {
+            assert_eq!(routing.release_owner(&event), None);
+            route(
+                (2, generation),
+                &mut legacy,
+                &mut routing,
+                false,
+                event,
+                false,
+            )
+            .unwrap();
+        }
+        assert_eq!(reporting.keys, [(K::KeyA, "press"), (K::KeyA, "release")]);
+        assert_eq!(legacy.keys, [(K::KeyB, "press")]);
+        route(
+            (2, generation),
+            &mut legacy,
+            &mut routing,
+            false,
+            b(Press),
+            false,
+        )
+        .unwrap();
+        assert_eq!(legacy.keys, [(K::KeyB, "press"), (K::KeyB, "press")]);
+        assert!(reporting.focus.is_empty() && legacy.focus.is_empty());
+    }
+
+    #[test]
+    fn a_focus_report_is_one_pane_command() {
+        let mut pane = Recorder::default();
+        for focused in [false, true] {
+            super::report_focus(&mut pane, focused).unwrap();
+        }
+        assert_eq!(pane.focus, [false, true]);
     }
 }

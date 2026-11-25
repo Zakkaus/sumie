@@ -1,6 +1,6 @@
 use std::ops::ControlFlow;
 
-use sumie_core::{KeyAction, splits::Layout};
+use sumie_core::{KeyAction, KeyModifiers, splits::Layout};
 
 use super::{PaneState, PaneTab, Result, Session, View, WindowOps, links, tabs};
 use crate::input::{self, Effect, Routing, SearchAction};
@@ -210,6 +210,26 @@ impl Session {
             )?,
         }
         Ok(None)
+    }
+
+    /// The window gained or lost the keyboard. A loss releases each reported key in the pane
+    /// that received its press, wherever that pane is now, and drops every held key, so a
+    /// repeat or release that arrives after refocus stays out of the PTY. Mode 1004 reports
+    /// the change to the focused pane.
+    pub(super) fn keyboard_focus(&mut self, focused: bool) -> Result<()> {
+        if !focused {
+            for key in self.routing.keyboard_left() {
+                let owner = self
+                    .tabs
+                    .as_mut_slice()
+                    .iter_mut()
+                    .find_map(|tab| tab.panes.iter_mut().find(|pane| pane.id == key.pane));
+                if let Some(owner) = owner {
+                    input::release(&mut owner.pane, &key, KeyModifiers::default())?;
+                }
+            }
+        }
+        input::report_focus(&mut self.active_mut().pane, focused)
     }
 
     fn pointer_input(

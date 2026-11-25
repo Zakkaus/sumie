@@ -179,21 +179,10 @@ impl Input {
             WindowEvent::CloseRequested => Event::CloseRequested,
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = key_modifiers(modifiers.state());
-                return None;
+                Event::ModifiersChanged(self.modifiers)
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                let text = event.text.filter(|_| {
-                    event.state == ElementState::Pressed && !self.modifiers.super_key
-                })?;
-                // AppKit reports arrows and function keys as private-use characters.
-                let text: String = text
-                    .chars()
-                    .filter(|ch| !('\u{f700}'..='\u{f8ff}').contains(ch))
-                    .collect();
-                if text.is_empty() {
-                    return None;
-                }
-                Event::KeyText(text)
+                Event::Key(super::Key::new(&event, self.modifiers))
             }
             WindowEvent::CursorEntered { .. } => {
                 self.entering = true;

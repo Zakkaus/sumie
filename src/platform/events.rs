@@ -7,10 +7,6 @@ pub(crate) use sumie_core::{
 
 /// A layout symbol, independent of both physical position and composed input text.
 #[derive(Clone, Copy)]
-#[cfg_attr(
-    target_os = "macos",
-    expect(dead_code, reason = "macOS does not map keys yet")
-)]
 pub(crate) enum LogicalKey {
     Character(char),
     Escape,
@@ -112,10 +108,6 @@ pub(crate) enum Event {
         text: String,
         generation: u64,
     },
-    #[cfg_attr(
-        target_os = "macos",
-        expect(dead_code, reason = "macOS does not map keys yet")
-    )]
     Key {
         physical: PhysicalKey,
         logical: LogicalKey,
@@ -123,11 +115,14 @@ pub(crate) enum Event {
         modifiers: Modifiers,
         action: KeyAction,
     },
-    #[cfg_attr(
-        target_os = "macos",
-        expect(dead_code, reason = "macOS does not map keys yet")
-    )]
     ModifiersChanged(Modifiers),
+    /// The window gained or lost the keyboard; reported on a change only, never for a
+    /// modifier change. Losing it ends every held key.
+    #[cfg_attr(
+        target_os = "linux",
+        expect(dead_code, reason = "Wayland's keyboard leave is not routed here yet")
+    )]
+    KeyboardFocus(bool),
     PointerEntered {
         position: Position,
         modifiers: Modifiers,
@@ -141,6 +136,10 @@ pub(crate) enum Event {
         text: String,
         generation: u64,
     },
+    #[cfg_attr(
+        all(target_os = "macos", not(feature = "macos-ci")),
+        expect(dead_code, reason = "macOS has no input methods yet")
+    )]
     ImeCommit {
         text: String,
         generation: u64,

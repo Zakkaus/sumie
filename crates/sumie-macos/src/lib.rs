@@ -16,10 +16,12 @@ use winit::{
 
 pub use winit::event_loop::ActiveEventLoop as WindowContext;
 
+pub use keyboard::{Key, Symbol};
 use readiness::{Bridge, Readiness};
 pub use window::{Platform, Pointer, double_click_interval};
 
 pub mod exit;
+mod keyboard;
 pub mod readiness;
 #[cfg(feature = "macos-ci")]
 pub mod runner;
@@ -39,8 +41,10 @@ pub enum Event {
     AboutToWait,
     /// The readiness bridge has reports; take them with [`Readiness::take`].
     Ready,
-    /// The text a key press produced. Physical keys are not reported yet.
-    KeyText(String),
+    Key(Key),
+    /// The keyboard modifiers changed; winit reports empty modifiers when the window loses
+    /// focus with any held.
+    ModifiersChanged(sumie_core::KeyModifiers),
     PointerEntered(Pointer),
     Pointer(Pointer),
     #[cfg(feature = "macos-ci")]
