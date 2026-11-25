@@ -28,6 +28,7 @@ pub(crate) use paint::PaneFocus;
 use paint::{PanePaint, PanePainter};
 
 mod geometry;
+pub(crate) use geometry::surface_logical_rect;
 use geometry::{grid_size, scaled_padding};
 mod images;
 use images::{PresentedImages, ViewerPaint};

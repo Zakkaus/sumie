@@ -8,7 +8,7 @@ use sumie_vt::{Rgb, Snapshot, codepoint_width};
 
 use super::paint::PanePainter;
 use super::{FontStyle, Line, View, rgba};
-use crate::input::SearchTarget;
+use crate::{input::SearchTarget, platform::Position};
 
 /// Cell-aligned bounds; glyph masks and pointer events use the same integer pixel edges.
 #[derive(Clone, Copy)]
@@ -360,7 +360,7 @@ impl View {
         });
     }
 
-    pub(crate) fn search_hit(&self, position: (f64, f64), rect: Rect) -> Option<SearchTarget> {
+    pub(crate) fn search_hit(&self, position: Position, rect: Rect) -> Option<SearchTarget> {
         let frame = self
             .presented_search
             .as_ref()

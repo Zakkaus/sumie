@@ -2,6 +2,7 @@ use sumie_render::{Renderer, Rgba, wgpu};
 use sumie_ui::TabHit;
 use sumie_vt::Terminal;
 
+use crate::platform::Position;
 use crate::view::{FontSettings, View};
 
 /// Read actual chrome pixels at fractional scale, including a hover before and after present.
@@ -69,7 +70,11 @@ pub(super) fn assert_tab_bar(renderer: &mut Renderer, device: &wgpu::Device, que
         assert_eq!(top > 0, count > 1, "only multiple tabs displace the grid");
         let background = [bg[0], bg[1], bg[2], 255];
         assert_eq!(pixel(590, top + 10), background);
-        assert_eq!(view.tab_hit((475.0, 16.0)), None, "empty strip after +");
+        assert_eq!(
+            view.tab_hit(Position::SurfaceLogical(475.0, 16.0)),
+            None,
+            "empty strip after +"
+        );
         if count > 1 {
             let hits = presented_buttons(&view, hover == Some(TabHit::Close(0)));
             close = Some(hits[0]);
@@ -80,8 +85,8 @@ pub(super) fn assert_tab_bar(renderer: &mut Renderer, device: &wgpu::Device, que
     }
 }
 
-fn presented_buttons(view: &View, close_visible: bool) -> [(f64, f64); 2] {
-    let positions = || (0..480).map(|x| (f64::from(x), 16.0));
+fn presented_buttons(view: &View, close_visible: bool) -> [Position; 2] {
+    let positions = || (0..480).map(|x| Position::SurfaceLogical(f64::from(x), 16.0));
     let close = positions()
         .find(|&p| view.tab_hover_hit(p) == Some(TabHit::Close(0)))
         .unwrap();
@@ -105,8 +110,12 @@ fn assert_grid_origin(view: &View, snapshot: &sumie_vt::Snapshot, top: u32) {
     use crate::{linux::LinuxWindow, platform::WindowOps as _};
     let logical_top = f64::from(top) / 1.25;
     assert!(
-        view.pointer_position((0.0, logical_top), view.content_rect(), 0)
-            .1[1]
+        view.pointer_position(
+            Position::SurfaceLogical(0.0, logical_top),
+            view.content_rect(),
+            0
+        )
+        .1[1]
             .abs()
             < f32::EPSILON
     );

@@ -13,14 +13,14 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::{
     FontErrors, Glyphs, View, attributes::glyph_quad, collect_dirty, overlays::Mask, rgba, upload,
 };
-use crate::Result;
+use crate::{Result, platform::Position};
 
 pub(super) struct Tabs {
     count: usize,
     height: u32,
     presented_height: u32,
     paint: Option<TabPaint>,
-    pointer: Option<(f64, f64)>,
+    pointer: Option<Position>,
     presented: Option<TabPlacement>,
 }
 
@@ -140,11 +140,6 @@ impl View {
         self.tabs.height
     }
 
-    /// Viewporter stretches the rounded device buffer to the exact logical size.
-    pub(crate) fn window_pixel(&self, (x, y): (f64, f64)) -> [f64; 2] {
-        std::array::from_fn(|i| [x, y][i] * f64::from(self.device[i]) / f64::from(self.logical[i]))
-    }
-
     /// A layout change must not turn a hit on old chrome into an action on a different tab.
     pub(crate) fn reset_hits(&mut self) {
         self.tabs.presented = None;
@@ -154,15 +149,15 @@ impl View {
         self.presented_search = None;
     }
 
-    pub(crate) fn over_tab_bar(&self, position: (f64, f64)) -> bool {
+    pub(crate) fn over_tab_bar(&self, position: Position) -> bool {
         let [x, y] = self.window_pixel(position);
         let occluded = self.tabs.height.max(self.tabs.presented_height);
         (0.0..f64::from(self.device[0])).contains(&x) && (0.0..f64::from(occluded)).contains(&y)
     }
 
-    /// Remember the logical position even when the pointer is outside the current strip.
+    /// Remember the reported position even when the pointer is outside the current strip.
     /// Returns whether the built frame needs a hover repaint.
-    pub(crate) fn set_tab_pointer(&mut self, position: Option<(f64, f64)>) -> bool {
+    pub(crate) fn set_tab_pointer(&mut self, position: Option<Position>) -> bool {
         self.tabs.pointer = position;
         self.tabs
             .paint
@@ -176,7 +171,7 @@ impl View {
 
     /// Includes the reserved close area, even before the hover frame reveals the button.
     #[cfg(test)]
-    pub(crate) fn tab_hover_hit(&self, position: (f64, f64)) -> Option<TabHit> {
+    pub(crate) fn tab_hover_hit(&self, position: Position) -> Option<TabHit> {
         self.tabs
             .presented
             .as_ref()?
@@ -184,7 +179,7 @@ impl View {
             .hit(self.window_pixel(position))
     }
 
-    pub(crate) fn tab_hit(&self, position: (f64, f64)) -> Option<TabHit> {
+    pub(crate) fn tab_hit(&self, position: Position) -> Option<TabHit> {
         let presented = self.tabs.presented.as_ref()?;
         match presented.layout.hit(self.window_pixel(position))? {
             TabHit::Close(index)

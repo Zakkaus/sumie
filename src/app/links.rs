@@ -5,12 +5,12 @@ use sumie_core::{
 use sumie_vt::Terminal;
 
 use super::{PaneState, Result, Session, WindowOps};
-use crate::platform::{CursorIcon, Event, Modifiers, PointerPhase};
+use crate::platform::{CursorIcon, Event, Modifiers, PointerPhase, Position};
 use crate::view::LinkHighlight;
 
 #[derive(Default)]
 pub(super) struct Pointer {
-    position: Option<(f64, f64)>,
+    position: Option<Position>,
     link_enabled: bool,
     pub(super) modifiers: Modifiers,
 }

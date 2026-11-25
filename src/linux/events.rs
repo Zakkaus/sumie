@@ -5,6 +5,7 @@ use sumie_wayland::{Event as Native, PointerButton, PointerPhase};
 
 use crate::platform::{
     Event, LogicalKey, Modifiers, PointerButton as Button, PointerEvent, PointerPhase as Phase,
+    Position,
 };
 
 /// Translate one event, never a batch. Only the adapter dispatching this event
@@ -57,14 +58,14 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
         }
         Native::ModifiersChanged(mods) => Event::ModifiersChanged(modifiers(mods)),
         Native::PointerEntered {
-            position,
+            position: (x, y),
             modifiers: mods,
         } => Event::PointerEntered {
-            position,
+            position: Position::SurfaceLogical(x, y),
             modifiers: modifiers(mods),
         },
         Native::Pointer {
-            position,
+            position: (x, y),
             phase,
             modifiers: mods,
             serial,
@@ -72,7 +73,7 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
             let (phase, origin) = pointer_phase(phase, serial);
             copy_serial = origin;
             Event::Pointer(PointerEvent {
-                position,
+                position: Position::SurfaceLogical(x, y),
                 phase,
                 modifiers: modifiers(mods),
             })

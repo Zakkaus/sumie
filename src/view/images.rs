@@ -10,6 +10,7 @@ use sumie_render::{ImageViewer, PixelRect, Rgba, ThumbnailChrome};
 use sumie_ui::IMAGE_VIEWER_MARGIN;
 
 use super::{PanePaint, View};
+use crate::platform::Position;
 
 pub(super) struct ViewerPaint {
     placement: Placement,
@@ -173,8 +174,8 @@ impl View {
             })
     }
 
-    /// Find a thumbnail only if it is the foremost image at this logical window position.
-    pub(crate) fn thumbnail_hit(&self, position: (f64, f64), pane_id: u64) -> Option<&Placement> {
+    /// Find a thumbnail only if it is the foremost image at this window position.
+    pub(crate) fn thumbnail_hit(&self, position: Position, pane_id: u64) -> Option<&Placement> {
         let (pane, index) = self
             .presented_images
             .hit(self.window_pixel(position), pane_id)?;
@@ -184,7 +185,7 @@ impl View {
     /// A pointer move only changes the image pass, not the cached terminal paint.
     pub(crate) fn hover_thumbnail(
         &mut self,
-        target: Option<(u64, (f64, f64))>,
+        target: Option<(u64, Position)>,
         eligible: impl FnOnce(u64) -> bool,
     ) -> bool {
         let target = target.map(|(pane, position)| (pane, self.window_pixel(position)));

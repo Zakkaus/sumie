@@ -8,7 +8,9 @@ use std::ops::ControlFlow::{self, Break, Continue};
 use std::path::Path;
 use std::time::Instant;
 
-use crate::platform::{Event, PointerButton as Button, PointerEvent, PointerPhase as Phase};
+use crate::platform::{
+    Event, PointerButton as Button, PointerEvent, PointerPhase as Phase, Position,
+};
 use sumie_core::{Pane, PaneAction, PaneCommand, Selection, TabAction, splits::Rect};
 use sumie_ui::TabHit;
 
@@ -312,7 +314,7 @@ impl Session {
         }
     }
 
-    fn update_tab_hover(&mut self, position: Option<(f64, f64)>) {
+    fn update_tab_hover(&mut self, position: Option<Position>) {
         let pressed = self.pointer.grid.contains(&true) || self.pointer.captured.contains(&true);
         if self.view.set_tab_pointer(position.filter(|_| !pressed)) {
             self.active_mut().frame_dirty = true;

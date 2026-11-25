@@ -4,7 +4,9 @@ use sumie_core::{KeyAction, splits::Layout};
 
 use super::{PaneState, PaneTab, Result, Session, View, WindowOps, links, tabs};
 use crate::input::{self, Effect, Routing, SearchAction};
-use crate::platform::{Event, PointerButton as Button, PointerEvent, PointerPhase as Phase};
+use crate::platform::{
+    Event, PointerButton as Button, PointerEvent, PointerPhase as Phase, Position,
+};
 
 #[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
@@ -292,7 +294,7 @@ impl Session {
         }
     }
 
-    pub(super) fn pane_under_pointer(&self, position: (f64, f64)) -> Option<u64> {
+    pub(super) fn pane_under_pointer(&self, position: Position) -> Option<u64> {
         let tab = self.tabs.active()?;
         if !self.pane_pointer.layout_is_presented(tab) || self.view.over_tab_bar(position) {
             return None;

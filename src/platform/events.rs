@@ -36,11 +36,28 @@ impl LogicalKey {
     }
 }
 
+/// A pointer position in the coordinate space its platform reports. `view::geometry` maps
+/// both spaces to the device pixels of the presented buffer.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Position {
+    /// Device pixels of the buffer, already scaled by the platform (AppKit backing pixels).
+    /// Never convert these through a rounded point extent.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "only the macOS terminal driver reports backing pixels"
+        )
+    )]
+    DevicePx(f64, f64),
+    /// Surface-local logical coordinates; the compositor stretches the buffer over them.
+    SurfaceLogical(f64, f64),
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct PointerEvent {
     pub(crate) phase: PointerPhase,
-    /// Surface-local logical coordinates.
-    pub(crate) position: (f64, f64),
+    pub(crate) position: Position,
     pub(crate) modifiers: Modifiers,
 }
 
@@ -77,7 +94,7 @@ pub(crate) enum Event {
     },
     ModifiersChanged(Modifiers),
     PointerEntered {
-        position: (f64, f64),
+        position: Position,
         modifiers: Modifiers,
     },
     Pointer(PointerEvent),

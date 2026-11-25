@@ -10,21 +10,21 @@ use super::{FontSettings, LinkHighlight, PaneFocus, View};
 use crate::{
     input::{self, SearchTarget},
     linux::LinuxWindow,
-    platform::WindowOps as _,
+    platform::{Position, WindowOps as _},
 };
 
 fn view() -> View {
-    let mut view = sized_view([800, 500], [1000, 625]);
+    let mut view = scaled_view(150, [800, 500], [1000, 625]);
     view.set_tab_count(2).unwrap();
     view
 }
 
-/// A view at 1.25× with the given logical and buffer sizes.
-fn sized_view(logical: [u32; 2], device: [u32; 2]) -> View {
+/// A view at `scale`/120 with the given logical and buffer sizes.
+fn scaled_view(scale: u32, logical: [u32; 2], device: [u32; 2]) -> View {
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
     View::new(
-        150,
+        scale,
         logical,
         device,
         font,
@@ -182,7 +182,8 @@ fn scroll_offset_reveals_the_row_below_and_moves_hits_with_the_content() {
     // Logical rectangles round outward, so allow one pixel.
     assert!((f64::from(carets[0] - carets[1]) - logical(7)).abs() <= 1.5);
     // With the content 7 px up, a point near the bottom of the first row is in the second.
-    let near_first_row_end = (logical(grid.x + 1), logical(grid.y + cell[1] - 2));
+    let near_first_row_end =
+        Position::SurfaceLogical(logical(grid.x + 1), logical(grid.y + cell[1] - 2));
     let row_of = |scroll| {
         view.link_cell(near_first_row_end, rect, false, scroll)
             .unwrap()
@@ -190,7 +191,7 @@ fn scroll_offset_reveals_the_row_below_and_moves_hits_with_the_content() {
     };
     assert_eq!((row_of(0), row_of(7)), (0, 1));
     // The strip of the partly shown row below the grid has no cells to link.
-    let strip = (logical(grid.x + 1), logical(grid.y + rows * cell[1] - 2));
+    let strip = Position::SurfaceLogical(logical(grid.x + 1), logical(grid.y + rows * cell[1] - 2));
     assert!(view.link_cell(strip, rect, false, 7).is_none());
     assert_eq!(view.pointer_position(strip, rect, 7).0.row, size.rows - 1);
 }
@@ -231,7 +232,7 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     let right_draw = draws.next().unwrap().draw;
     let search = right_draw.image_exclusions[1].unwrap();
 
-    let logical = |x, y| (f64::from(x) * 0.8, f64::from(y) * 0.8);
+    let logical = |x, y| Position::SurfaceLogical(f64::from(x) * 0.8, f64::from(y) * 0.8);
     let pos = logical(search.origin[0] + 1, search.origin[1] + 1);
     assert!(matches!(
         view.search_hit(pos, right),
@@ -264,12 +265,10 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
     );
 }
 
-#[test]
-fn odd_fractional_sizes_hit_by_the_per_axis_viewporter_ratio() {
-    // At 1.25×, 801×599 rounds to a 1001×749 buffer, so each axis has its own ratio.
-    let (logical, device) = ([801, 599], [1001, 749]);
-    let view = sized_view(logical, device);
-    let [left, divider, right] = panes(&view);
+/// Device pixels on both sides of each grid edge and the divider of a two-pane split, with
+/// the cell each one hits.
+fn boundary_hits(view: &View) -> [(Rect, [u32; 2], Option<[u16; 2]>); 8] {
+    let [left, divider, right] = panes(view);
     let [left_grid, right_grid] = [left, right].map(|rect| view.pane_grid(rect));
     let cells = |grid: Rect, axis: usize| [grid.width, grid.height][axis] / view.cell[axis];
     let last = |grid: Rect, axis: usize| u16::try_from(cells(grid, axis) - 1).unwrap();
@@ -278,7 +277,7 @@ fn odd_fractional_sizes_hit_by_the_per_axis_viewporter_ratio() {
     let bottom = right_grid.y + cells(right_grid, 1) * view.cell[1];
     let row = left_grid.y + 2 * view.cell[1];
     let corner = [last(right_grid, 0), last(right_grid, 1)];
-    for (rect, pixel, hit) in [
+    [
         (left, [left_grid.x - 1, row], None),
         (left, [left_grid.x, row], Some([0, 2])),
         (left, [left_end - 1, row], Some([last(left_grid, 0), 2])),
@@ -287,22 +286,46 @@ fn odd_fractional_sizes_hit_by_the_per_axis_viewporter_ratio() {
         (right, [right_grid.x, row], Some([0, 2])),
         (right, [right_end - 1, bottom - 1], Some(corner)),
         (right, [right_end - 1, bottom], None),
-    ] {
-        // Points just inside both edges of the device pixel.
+    ]
+}
+
+/// Points just inside both edges of each boundary pixel, mapped by `to_position`.
+fn assert_boundary_hits(view: &View, to_position: impl Fn([f64; 2]) -> Position) {
+    let divider = panes(view)[1];
+    for (rect, pixel, hit) in boundary_hits(view) {
         for inset in [0.02, 0.98] {
-            let at = |axis: usize| {
-                (f64::from(pixel[axis]) + inset) * f64::from(logical[axis])
-                    / f64::from(device[axis])
-            };
-            let position = (at(0), at(1));
+            let position = to_position(pixel.map(|px| f64::from(px) + inset));
             let (cell, _, over_grid) = view.pointer_position(position, rect, 0);
             let found = over_grid.then_some([cell.column, cell.row]);
-            assert_eq!(found, hit, "device pixel {pixel:?} + {inset}");
+            let scale = view.scale;
+            assert_eq!(found, hit, "{scale}/120: device pixel {pixel:?} + {inset}");
             if pixel[0] == divider.x {
                 let edge = f64::from(divider.x);
                 assert!((edge..edge + 1.0).contains(&view.window_pixel(position)[0]));
             }
         }
+    }
+}
+
+#[test]
+fn odd_fractional_sizes_hit_by_the_per_axis_viewporter_ratio() {
+    // At 1.25×, 801×599 rounds to a 1001×749 buffer, so each axis has its own ratio.
+    let (logical, device) = ([801, 599], [1001, 749]);
+    let view = scaled_view(150, logical, device);
+    assert_boundary_hits(&view, |pixel| {
+        let at = |axis: usize| pixel[axis] * f64::from(logical[axis]) / f64::from(device[axis]);
+        Position::SurfaceLogical(at(0), at(1))
+    });
+}
+
+#[test]
+fn device_pixel_hits_ignore_the_rounded_point_extent() {
+    // An odd backing extent at 2× or 1.5× is a fractional point extent (800.5 or 800.67
+    // points), which the view keeps only rounded. Backing-pixel hits must not use it.
+    for (scale, device) in [(240, [1601, 1199]), (180, [1201, 899])] {
+        let points = device.map(|px| (px * 120 + scale / 2) / scale);
+        let view = scaled_view(scale, points, device);
+        assert_boundary_hits(&view, |[x, y]| Position::DevicePx(x, y));
     }
 }
 
@@ -325,7 +348,11 @@ fn padding_breaks_click_counts_but_clamps_an_active_selection() {
         input::mouse_event(
             phase,
             Modifiers::default(),
-            view.pointer_position((logical(x), logical(grid.y + 1)), rect, 0),
+            view.pointer_position(
+                Position::SurfaceLogical(logical(x), logical(grid.y + 1)),
+                rect,
+                0,
+            ),
         )
     };
     let inside = grid.x + 1;
@@ -439,7 +466,7 @@ fn thumbnail_hit_uses_the_presented_row_after_scrolling() {
         ..bounds
     };
     let logical_y = |y| {
-        (
+        Position::SurfaceLogical(
             f64::from(rect.x + w) * 0.8 + 0.4,
             (f64::from(y) + 0.5) * 0.8,
         )

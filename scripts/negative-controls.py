@@ -227,9 +227,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                        "== next.minimum_contrast().to_bits()"),
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
-        probe("IME caret loses the right edge at fractional scale", "test", "src/linux.rs",
+        probe("IME caret loses the right edge at fractional scale", "test", "src/view/geometry.rs",
               replace_once("bounds.end[i] * logical + device - 1", "bounds.end[i] * logical"),
-              "test linux::tests::caret_covers_the_cell_on_a_rounded_fractional_buffer ... FAILED")
+              "test view::geometry::tests::caret_covers_the_cell_on_a_rounded_fractional_buffer ... FAILED")
         probe("unchanged animation deadline rearms the timer", "test", "src/app/animation.rs",
               replace_once("if next == self.timer.map(|(at, _)| at) {", "if next.is_none() && self.timer.is_none() {"),
               "test app::animation::tests::wake_keeps_an_unchanged_deadline_and_cancels_a_stopped_animation ... FAILED")
@@ -282,14 +282,21 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("|| has_preedit {\n            events.push_back(Event::ImePreedit {",
                            "|| has_preedit {\n            events.push_front(Event::ImePreedit {"),
               "test ime::tests::done_applies_text_even_when_serial_defers_outgoing_state ... FAILED")
-        probe("IME caret loses the left edge at fractional scale", "test", "src/linux.rs",
+        probe("IME caret loses the left edge at fractional scale", "test", "src/view/geometry.rs",
               replace_once("let left = i64::from(bounds.start[i]) * logical / device;",
                            "let left = (i64::from(bounds.start[i]) * logical + device - 1) / device;"),
-              "test linux::tests::caret_covers_the_cell_on_a_rounded_fractional_buffer ... FAILED")
-        probe("pointer hits use the nominal scale", "test", "src/view/tabs.rs",
+              "test view::geometry::tests::caret_covers_the_cell_on_a_rounded_fractional_buffer ... FAILED")
+        probe("pointer hits use the nominal scale", "test", "src/view/geometry.rs",
               replace_once("[x, y][i] * f64::from(self.device[i]) / f64::from(self.logical[i])",
                            "[x, y][i] * f64::from(self.scale) / 120.0"),
               "test view::tests::odd_fractional_sizes_hit_by_the_per_axis_viewporter_ratio ... FAILED")
+        probe("device pixels pass through the rounded point extent", "test", "src/view/geometry.rs",
+              replace_once("Position::DevicePx(x, y) => [x, y],",
+                           "Position::DevicePx(x, y) => {\n"
+                           "                let points = |px: f64| px * 120.0 / f64::from(self.scale);\n"
+                           "                self.window_pixel(Position::SurfaceLogical(points(x), points(y)))\n"
+                           "            }"),
+              "test view::tests::device_pixel_hits_ignore_the_rounded_point_extent ... FAILED")
         probe("IME accepts the prior recipient's serial", "test", "crates/sumie-wayland/src/ime.rs",
               replace_once("self.enabled_at = Some(self.serial.wrapping_add(1));",
                            "self.enabled_at = Some(self.serial);"),

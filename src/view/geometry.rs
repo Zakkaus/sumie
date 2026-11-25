@@ -1,11 +1,24 @@
-//! Map window and pane coordinates to the terminal grid.
+//! Map window and pane coordinates to the terminal grid, and between the platform's
+//! coordinate spaces and the buffer's device pixels.
 
 use sumie_core::{CellPosition, splits::Rect};
 use sumie_pty::Size;
 
 use super::View;
+use crate::platform::{CaretBounds, LogicalRect, Position};
 
 impl View {
+    /// Map a pointer to device pixels of the current buffer. The viewporter stretches the
+    /// rounded buffer to the exact logical size, so each logical axis has its own ratio.
+    pub(crate) fn window_pixel(&self, position: Position) -> [f64; 2] {
+        match position {
+            Position::DevicePx(x, y) => [x, y],
+            Position::SurfaceLogical(x, y) => std::array::from_fn(|i| {
+                [x, y][i] * f64::from(self.device[i]) / f64::from(self.logical[i])
+            }),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn size(&self) -> Size {
         self.pane_size(self.content_rect())
@@ -55,7 +68,7 @@ impl View {
     /// that many pixels further down the grid.
     pub(crate) fn pointer_position(
         &self,
-        position: (f64, f64),
+        position: Position,
         rect: Rect,
         scroll: u32,
     ) -> (CellPosition, [f32; 2], bool) {
@@ -76,7 +89,7 @@ impl View {
         (self.pointer_cell(content, grid), pixel, over_grid)
     }
 
-    fn pane_pixel(&self, position: (f64, f64), rect: Rect) -> [f64; 2] {
+    fn pane_pixel(&self, position: Position, rect: Rect) -> [f64; 2] {
         let [x, y] = self.window_pixel(position);
         [x - f64::from(rect.x), y - f64::from(rect.y)]
     }
@@ -97,7 +110,7 @@ impl View {
 
     pub(crate) fn link_cell(
         &self,
-        position: (f64, f64),
+        position: Position,
         rect: Rect,
         banner: bool,
         scroll: u32,
@@ -118,6 +131,29 @@ impl View {
     }
 }
 
+/// Map clipped caret edges in device pixels to surface-local logical coordinates, rounding
+/// outward. The viewporter stretches the rounded buffer, not the nominal scale.
+pub(crate) fn surface_logical_rect(bounds: CaretBounds) -> Option<LogicalRect> {
+    let axis = |i: usize| -> Option<(i32, i32)> {
+        let device = i64::from(bounds.device[i]);
+        let logical = i64::from(bounds.logical[i]);
+        if device == 0 {
+            return None;
+        }
+        let left = i64::from(bounds.start[i]) * logical / device;
+        let right = (bounds.end[i] * logical + device - 1) / device;
+        Some((left.try_into().ok()?, (right - left).try_into().ok()?))
+    };
+    let (x, width) = axis(0)?;
+    let (y, height) = axis(1)?;
+    Some(LogicalRect {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
 fn contains_grid_pixel(pixel: [f64; 2], rect: Rect, grid: [u32; 2], cell: [u32; 2]) -> bool {
     let size = [rect.width, rect.height];
     (0..2).all(|i| {
@@ -132,4 +168,21 @@ pub(super) fn scaled_padding(logical: [u16; 2], scale: u32) -> [u32; 2] {
 
 pub(super) fn grid_size(Rect { width, height, .. }: Rect, cell: [u32; 2]) -> [u32; 2] {
     [(width / cell[0]).max(1), (height / cell[1]).max(1)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caret_covers_the_cell_on_a_rounded_fractional_buffer() {
+        let rect = surface_logical_rect(CaretBounds {
+            start: [100, 100],
+            end: [110, 110],
+            logical: [801, 599],
+            device: [1001, 749],
+        })
+        .unwrap();
+        assert_eq!([rect.x, rect.y, rect.width, rect.height], [80, 79, 9, 9]);
+    }
 }

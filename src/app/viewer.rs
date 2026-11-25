@@ -4,6 +4,7 @@ use super::{Gpu, PaneState, Result, Session, View, WindowOps};
 use crate::input::Routing;
 use crate::platform::{
     Event, LogicalKey, Modifiers, PointerButton as Button, PointerEvent, PointerPhase as Phase,
+    Position,
 };
 
 pub(super) struct Viewer {
@@ -14,12 +15,12 @@ pub(super) struct Viewer {
 
 #[derive(Default)]
 pub(super) struct Click {
-    pressed: Option<((f64, f64), [u64; 3])>,
+    pressed: Option<(Position, [u64; 3])>,
 }
 
 impl Click {
     /// Track the click alongside selection so a drag can select text from a thumbnail.
-    fn clicked(&mut self, phase: Phase, position: (f64, f64), hit: Option<&Placement>) -> bool {
+    fn clicked(&mut self, phase: Phase, position: Position, hit: Option<&Placement>) -> bool {
         let target = hit.map(|p| (position, p.storage_key));
         match phase {
             Phase::Press(Button::Left, _) => self.pressed = target,
@@ -99,7 +100,7 @@ impl PaneState {
     pub(super) fn thumbnail_at<'a>(
         &self,
         view: &'a View,
-        position: (f64, f64),
+        position: Position,
         modifiers: Modifiers,
     ) -> Option<&'a Placement> {
         self.can_hover_thumbnail(modifiers)

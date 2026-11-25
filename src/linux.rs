@@ -15,6 +15,7 @@ use crate::{
     frame_window::FrameWindow,
     gpu::Gpu,
     platform::{CaretBounds, CursorIcon, Event, LogicalRect, WindowOps},
+    view,
 };
 
 pub(crate) struct LinuxWindow {
@@ -101,25 +102,7 @@ impl FrameWindow for LinuxWindow {
 
 impl WindowOps for LinuxWindow {
     fn logical_rect(bounds: CaretBounds) -> Option<LogicalRect> {
-        // The viewporter stretches the rounded buffer, not the nominal scale.
-        let axis = |i: usize| -> Option<(i32, i32)> {
-            let device = i64::from(bounds.device[i]);
-            let logical = i64::from(bounds.logical[i]);
-            if device == 0 {
-                return None;
-            }
-            let left = i64::from(bounds.start[i]) * logical / device;
-            let right = (bounds.end[i] * logical + device - 1) / device;
-            Some((left.try_into().ok()?, (right - left).try_into().ok()?))
-        };
-        let (x, width) = axis(0)?;
-        let (y, height) = axis(1)?;
-        Some(LogicalRect {
-            x,
-            y,
-            width,
-            height,
-        })
+        view::surface_logical_rect(bounds)
     }
 
     fn set_cursor_rectangle(&mut self, rect: LogicalRect) {
@@ -179,22 +162,5 @@ impl WindowOps for LinuxWindow {
 
     fn background_commit_needed(&self) -> bool {
         self.platform.background_commit_needed()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn caret_covers_the_cell_on_a_rounded_fractional_buffer() {
-        let rect = LinuxWindow::logical_rect(CaretBounds {
-            start: [100, 100],
-            end: [110, 110],
-            logical: [801, 599],
-            device: [1001, 749],
-        })
-        .unwrap();
-        assert_eq!([rect.x, rect.y, rect.width, rect.height], [80, 79, 9, 9]);
     }
 }
