@@ -46,6 +46,8 @@ FRAME_TIMEOUT = 300
 # The test gate builds first, so this bounds only the test binaries: a hung test fails the
 # gate in minutes instead of running until the CI job limit.
 TEST_TIMEOUT = 600
+# A probe that breaks sumie-font runs only its tests, so dependants cannot hang the gate.
+TEST_GATES = ("test", "font-test")
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -361,17 +363,17 @@ def check_cargo(gate, args, timeout=None):
                     violation |= diagnostic["level"] == "error"
         else:
             print(line)
-            if gate == "test" and (summary := TEST_SUMMARY.match(line)):
+            if gate in TEST_GATES and (summary := TEST_SUMMARY.match(line)):
                 violation |= summary[1] == "FAILED"
                 passed += int(summary[2])
             elif gate == "fmt":
                 violation |= line.startswith("Diff in ")
     print(stderr.decode(errors="replace"), end="", file=sys.stderr)
     if returncode == 0:
-        if gate == "test" and passed == 0:
+        if gate in TEST_GATES and passed == 0:
             print("test: no passing workspace tests", file=sys.stderr)
             return 1
-        if gate == "test":
+        if gate in TEST_GATES:
             print(f"test: {passed} workspace tests passed")
         return 0
     if violation:
@@ -493,6 +495,7 @@ def main():
         "clippy-macos-ci": ("clippy", "--locked", "--workspace", "--all-targets", "--features", "macos-ci",
                             "--message-format=json", "--", "-D", "warnings"),
         "test": ("test", "--locked", "--workspace", "--message-format=json"),
+        "font-test": ("test", "--locked", "-p", "sumie-font", "--message-format=json"),
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
@@ -524,7 +527,7 @@ def main():
             return check_terminfo()
         if gate == "shell":
             return check_shell()
-        if gate == "test":
+        if gate in TEST_GATES:
             return check_cargo("test-build", (*commands[gate], "--no-run")) or check_cargo(
                 gate, commands[gate], TEST_TIMEOUT)
         return check_cargo(gate, commands[gate])

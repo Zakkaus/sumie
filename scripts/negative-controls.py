@@ -415,7 +415,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("location: u32::from(ch).try_into().ok()?,", "location: 0x378,"),
               "test tests::core_text_system_wide_fallback_covers_cjk ... FAILED")
-        probe("Core Text system-wide fallback runs for undrawable characters", "test",
+        probe("Core Text system-wide fallback runs for undrawable characters", "font-test",
               "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("        if !drawable(ch) {\n", "        if !drawable(ch) && false {\n"),
               "test discovery::core_text::tests::undrawable_misses_skip_the_system_wide_step ... FAILED")
