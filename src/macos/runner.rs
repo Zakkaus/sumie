@@ -91,7 +91,7 @@ impl Driver {
                 native::name_window(&window);
                 println!("runner window {}", self.started.elapsed().as_nanos());
                 window.request_redraw();
-                self.state = Some(Smoke::new(window, false)?);
+                self.state = Some(Smoke::new(window, readiness, false)?);
             }
             Event::Ready => {
                 if let Mode::Wake(Some(wake)) = &mut self.mode
@@ -99,6 +99,10 @@ impl Driver {
                 {
                     self.closed = true;
                     return Ok(ControlFlow::Break(()));
+                }
+                // The runner closes through its controller, never through `Smoke::close`.
+                if let Some(smoke) = &mut self.state {
+                    let _ = smoke.ready()?;
                 }
             }
             Event::NeedsRedraw => {

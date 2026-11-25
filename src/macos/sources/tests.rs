@@ -151,14 +151,29 @@ fn timers_and_config_wake_dispatch() {
     timers.register(Instant::now() + QUIET / 2).unwrap();
     assert!(fixture.dispatch(WAIT), "the timer did not wake dispatch");
 
-    let (reader, mut writer) = pipe().unwrap();
+    let (mut results, mut writer) = pipe().unwrap();
+    let (exit, mut exited) = pipe().unwrap();
     fixture
         .watches
-        .register_config(Some(reader.as_fd()))
+        .register_config(results.as_fd(), exit.as_fd())
         .unwrap();
     assert!(!fixture.watches.take_config_ready().unwrap());
     writer.write_all(b"c").unwrap();
     assert!(fixture.dispatch(WAIT));
+    results.read_exact(&mut [0]).unwrap();
     assert!(fixture.watches.take_config_ready().unwrap());
     assert!(!fixture.watches.take_config_ready().unwrap());
+
+    // A stopped result socket no longer reports; the exit watch still does.
+    fixture.watches.stop_config_results();
+    writer.write_all(b"d").unwrap();
+    assert!(!fixture.dispatch(QUIET), "a stopped result socket reported");
+    exited.write_all(b"x").unwrap();
+    assert!(fixture.dispatch(WAIT));
+    assert!(fixture.watches.take_config_ready().unwrap());
+    fixture.watches.unregister_config();
+    assert!(
+        !fixture.dispatch(QUIET),
+        "an unregistered exit watch reported"
+    );
 }

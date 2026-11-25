@@ -1,8 +1,8 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, de};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 /// Window background and pane padding in logical pixels.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Window {
     /// Left and right padding. Set to 0 to remove it.
@@ -60,7 +60,9 @@ const fn opaque() -> f32 {
 }
 
 fn deserialize_opacity<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f32>, D::Error> {
-    let opacity = f64::deserialize(input)?;
+    let Some(opacity) = Option::<f64>::deserialize(input)? else {
+        return Ok(None);
+    };
     if !(0.0..=1.0).contains(&opacity) {
         return Err(de::Error::custom(
             "background opacity must be between 0.0 and 1.0",

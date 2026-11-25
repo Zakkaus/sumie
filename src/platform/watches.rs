@@ -11,10 +11,6 @@ pub(crate) struct Ready {
 }
 
 /// A one-shot deadline wakes dispatch; only a frame slot permits drawing.
-#[cfg_attr(
-    all(target_os = "macos", not(test)),
-    expect(dead_code, reason = "the macOS terminal driver is not wired yet")
-)]
 pub(crate) trait TimerSource {
     type Token: Copy;
 

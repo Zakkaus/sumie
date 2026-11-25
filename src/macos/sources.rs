@@ -16,8 +16,9 @@ use crate::{
 };
 
 const BLINK_PHASE: Duration = Duration::from_millis(600);
-/// The configuration child's result pipe; pane IDs are separate keys.
-const CONFIG: Key = Key::new(0, Interest::Config);
+/// The configuration child's result socket and exit watch; pane IDs are separate keys.
+const CONFIG_RESULTS: Key = Key::new(0, Interest::Config);
+const CONFIG_EXIT: Key = Key::new(1, Interest::Config);
 
 #[derive(Clone, Copy)]
 struct BlinkPhase {
@@ -37,14 +38,12 @@ struct PaneState {
 pub(crate) struct Watches {
     readiness: Readiness,
     panes: HashMap<u64, PaneState>,
-    config: Option<bool>,
+    /// Registered configuration keys, and whether any reported since the last take.
+    config: Vec<Key>,
+    config_ready: bool,
 }
 
 /// One-shot deadlines that only wake dispatch, like the Linux calloop timer.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the macOS terminal driver is not wired yet")
-)]
 pub(crate) struct Timers(Readiness);
 
 impl TimerSource for Timers {
@@ -64,39 +63,52 @@ impl Watches {
         Self {
             readiness,
             panes: HashMap::new(),
-            config: None,
+            config: Vec::new(),
+            config_ready: false,
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the macOS terminal driver is not wired yet")
-    )]
     pub(crate) fn animation_timer(&self) -> Timers {
         Timers(self.readiness.clone())
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the macOS terminal driver is not wired yet")
-    )]
-    pub(crate) fn register_config(&mut self, fd: Option<BorrowedFd<'_>>) -> Result<()> {
-        if let Some(fd) = fd {
-            assert!(self.config.is_none(), "config already registered");
-            self.readiness.watch(CONFIG, fd)?;
-            self.config = Some(false);
-        }
+    /// Watch the configuration child's result socket and its exit report.
+    pub(crate) fn register_config(
+        &mut self,
+        results: BorrowedFd<'_>,
+        exit: BorrowedFd<'_>,
+    ) -> Result<()> {
+        assert!(self.config.is_empty(), "config already registered");
+        self.readiness.watch(CONFIG_RESULTS, results)?;
+        self.readiness
+            .watch(CONFIG_EXIT, exit)
+            .inspect_err(|_| self.readiness.remove(CONFIG_RESULTS))?;
+        self.config = vec![CONFIG_RESULTS, CONFIG_EXIT];
         Ok(())
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the macOS terminal driver is not wired yet")
-    )]
+    /// Stop watching the result socket after its EOF; the exit watch stays until reaped.
+    pub(crate) fn stop_config_results(&mut self) {
+        if let Some(index) = self.config.iter().position(|key| *key == CONFIG_RESULTS) {
+            self.config.swap_remove(index);
+            self.readiness.remove(CONFIG_RESULTS);
+        }
+    }
+
+    pub(crate) fn unregister_config(&mut self) {
+        for key in self.config.drain(..) {
+            self.readiness.remove(key);
+        }
+        self.config_ready = false;
+    }
+
+    /// Whether the child's socket or exit watch reported; taking re-arms both.
     pub(crate) fn take_config_ready(&mut self) -> Result<bool> {
-        let ready = self.config.as_mut().is_some_and(std::mem::take);
+        let ready = std::mem::take(&mut self.config_ready);
         if ready {
-            self.readiness.rearm(CONFIG)?;
+            for key in &self.config {
+                self.readiness.rearm(*key)?;
+            }
         }
         Ok(ready)
     }
@@ -104,8 +116,8 @@ impl Watches {
     /// Fold the bridge's reports into pane state. Call on `Event::Ready`, before servicing.
     pub(crate) fn dispatch(&mut self) -> Result<()> {
         for key in self.readiness.take() {
-            if key == CONFIG {
-                self.config = self.config.map(|_| true);
+            if key.interest == Interest::Config {
+                self.config_ready |= self.config.contains(&key);
                 continue;
             }
             let Some(pane) = self.panes.get_mut(&key.id) else {
@@ -155,9 +167,7 @@ impl Watches {
 
 impl Drop for Watches {
     fn drop(&mut self) {
-        if self.config.take().is_some() {
-            self.readiness.remove(CONFIG);
-        }
+        self.unregister_config();
         for id in self.panes.keys().copied().collect::<Vec<_>>() {
             self.unregister(id);
         }

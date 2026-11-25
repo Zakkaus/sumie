@@ -43,12 +43,13 @@ const MAX_WEIGHT: u16 = 900;
 const MAX_INCLUDE_DEPTH: usize = 64;
 
 /// Settings for the terminal and its renderer.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
     /// Share settings across machines. Paths are relative to the file that lists them.
     /// Later includes override earlier ones; this file overrides all of them per key.
     #[schemars(with = "Vec<PathBuf>")]
+    #[serde(skip_serializing)]
     include: Vec<Spanned<PathBuf>>,
     /// Font selection and rasterization settings.
     pub font: Font,
@@ -79,6 +80,23 @@ pub struct Config {
 }
 
 impl Config {
+    /// Encode resolved settings for another sumie process. Unset values stay unset.
+    ///
+    /// # Panics
+    /// Panics only if a settings type stops being serializable, which is a bug.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("settings serialize to JSON")
+    }
+
+    /// Decode [`Config::to_json`] output with the same validation as a settings file.
+    ///
+    /// # Errors
+    /// Returns the JSON or validation error.
+    pub fn from_json(json: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(json)
+    }
+
     #[must_use]
     pub fn minimum_contrast(&self) -> f32 {
         #[expect(clippy::cast_possible_truncation, reason = "validated ratio in 1..=21")]
@@ -115,7 +133,9 @@ const fn default_scrollback_limit() -> usize {
 }
 
 fn deserialize_contrast<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f64>, D::Error> {
-    let ratio = f64::deserialize(input)?;
+    let Some(ratio) = Option::<f64>::deserialize(input)? else {
+        return Ok(None);
+    };
     if (1.0..=21.0).contains(&ratio) {
         Ok(Some(ratio))
     } else {
@@ -164,7 +184,7 @@ impl Serialize for Color {
 }
 
 /// Terminal colors in `#rrggbb` notation.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Colors {
     /// Default text color.
@@ -275,7 +295,7 @@ const fn default_palette() -> [Color; 16] {
 }
 
 /// Font selection and rasterization settings.
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Font {
     /// Choose a different installed font family for the terminal grid.
@@ -351,7 +371,9 @@ fn positive_number(schema: &mut Schema) {
 }
 
 fn deserialize_size<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f32>, D::Error> {
-    let size = f32::deserialize(input)?;
+    let Some(size) = Option::<f32>::deserialize(input)? else {
+        return Ok(None);
+    };
     if size > 0.0 && (size * POINT_TO_PX).is_finite() {
         Ok(Some(size))
     } else {
@@ -362,7 +384,9 @@ fn deserialize_size<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f32>, 
 }
 
 fn deserialize_weight<'de, D: Deserializer<'de>>(input: D) -> Result<Option<u16>, D::Error> {
-    let weight = u16::deserialize(input)?;
+    let Some(weight) = Option::<u16>::deserialize(input)? else {
+        return Ok(None);
+    };
     if (MIN_WEIGHT..=MAX_WEIGHT).contains(&weight) {
         Ok(Some(weight))
     } else {

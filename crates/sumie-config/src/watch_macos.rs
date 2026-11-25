@@ -140,11 +140,6 @@ impl Watch {
             }
         }
     }
-
-    /// Queue a notification on the main thread without waiting for it to run.
-    pub fn notify_main(notify: impl FnOnce() + Send + 'static) {
-        dispatch2::DispatchQueue::main().exec_async(notify);
-    }
 }
 
 struct Vnode {

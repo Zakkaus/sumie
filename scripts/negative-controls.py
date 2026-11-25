@@ -384,6 +384,21 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("            self.rewatch()?;\n        }\n        Ok(status",
                            "        }\n        Ok(status"),
               "test child::platform::tests::early_note_exit_is_watched_until_reaped ... FAILED")
+        probe("frame cap checked after allocation", "test", "src/reload/frame.rs",
+              lambda source: replace_once(
+                  "        if size > MAX_BODY {\n            return Err(FrameError::TooLong(length));\n"
+                  "        }\n        Ok((kind, size))", "        Ok((kind, size))")(
+                  replace_once("            self.body = Some((kind, Vec::with_capacity(length), length));\n",
+                               "            self.body = Some((kind, Vec::with_capacity(length), length));\n"
+                               "            if length > MAX_BODY {\n"
+                               "                return Err(FrameError::TooLong(u32::try_from(length).unwrap()));\n"
+                               "            }\n")(source)),
+              "test reload::frame::tests::a_body_over_the_cap_is_rejected_before_allocation ... FAILED")
+        probe("config child waited for in Drop", "test", "src/macos/reload.rs",
+              replace_once("    fn drop(&mut self) {\n        if let Some((_, key)) = self.kill.take() {",
+                           "    fn drop(&mut self) {\n        let _ = self.child.wait();\n"
+                           "        if let Some((_, key)) = self.kill.take() {"),
+              "test macos::reload::tests::dropping_a_blocked_child_does_not_wait ... FAILED")
         probe("Core Text bypasses every fallback step", "test", "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),
               "test tests::core_text_loads_the_named_collection_face_and_cjk_fallback ... FAILED")

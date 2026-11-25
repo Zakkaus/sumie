@@ -174,6 +174,36 @@ fn assert_colors(config: Config) {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn resolved_settings_survive_json() {
+    let scratch = Scratch(env::temp_dir().join(format!("sumie-json-{}", std::process::id())));
+    fs::create_dir(&scratch.0).unwrap();
+    let palette = ["#010203"; 16];
+    let main = scratch.0.join("sumie.toml");
+    fs::write(scratch.0.join("shared.toml"), "[scroll]\nsmooth = false\n").unwrap();
+    fs::write(
+        &main,
+        format!(
+            "include = ['shared.toml']\nminimum-contrast = 4.5\nscrollback-limit = 7\n\
+             [font]\nfamily = 'Iosevka'\nsize = 12.3\nweight = 500\nhinting = 'off'\n\
+             [cursor]\nstyle = 'bar'\nblink = false\n[colors]\nforeground = '#AB12EF'\n\
+             background = '#123456'\ncursor = '#fedcba'\nselection-foreground = '#abcdef'\n\
+             selection-background = '#654321'\npalette = {palette:?}\n\
+             [images]\nthumbnail-rows = 3\n[shell]\nintegration = false\n\
+             [window]\npadding-x = 4\npadding-y = 9\nbackground-opacity = 0.9\n\
+             background-blur = true\n"
+        ),
+    )
+    .unwrap();
+    for config in [load(&main).unwrap(), Config::default()] {
+        let json = config.to_json();
+        let decoded = Config::from_json(json.as_bytes()).unwrap();
+        assert_eq!(format!("{decoded:?}"), format!("{config:?}"), "{json}");
+        assert_eq!(config.changes(&decoded), Changes::default());
+    }
+    assert!(Config::from_json(br#"{"minimum-contrast":30}"#).is_err());
+}
+
+#[test]
 fn rename_replacement_reloads_and_rearms() {
     use std::{
         os::unix::net::UnixStream,

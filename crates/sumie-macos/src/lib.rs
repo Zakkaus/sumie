@@ -19,6 +19,7 @@ pub use winit::event_loop::ActiveEventLoop as WindowContext;
 
 use readiness::{Bridge, Readiness};
 
+pub mod exit;
 pub mod readiness;
 #[cfg(feature = "macos-ci")]
 pub mod runner;

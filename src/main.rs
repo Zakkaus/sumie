@@ -23,11 +23,16 @@ mod pane;
 #[cfg(target_os = "linux")]
 mod platform;
 // Only the readiness traits build on macOS until the terminal driver does.
-#[cfg(all(target_os = "macos", any(test, feature = "macos-ci")))]
+#[cfg(target_os = "macos")]
 #[path = "platform/watches.rs"]
 mod platform;
 #[cfg(target_os = "linux")]
 mod reload;
+// macOS watches settings in a child process that sends framed results.
+#[cfg(target_os = "macos")]
+mod reload {
+    pub(crate) mod frame;
+}
 #[cfg(target_os = "linux")]
 mod view;
 
@@ -66,6 +71,13 @@ fn run() -> Result<()> {
             .filter(|_| args.next().is_none())
             .ok_or("link opener requires one URI")?;
         return run_link_opener(&uri);
+    }
+    #[cfg(target_os = "macos")]
+    if args.next_if(|arg| arg == macos::CONFIG_WATCH_ARG).is_some() {
+        if args.next().is_some() {
+            return Err("the configuration watcher takes no arguments".into());
+        }
+        return macos::run_config_watch();
     }
 
     if args.next_if(|arg| arg == "config").is_some() {
