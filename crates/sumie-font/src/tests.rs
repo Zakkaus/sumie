@@ -172,7 +172,7 @@ mod linux {
             return;
         }
         let run = match fonts.shape("中文測試終端游標", &[2; 8]) {
-            Err(FontError::MissingGlyph(_)) => return,
+            Err(FontError::MissingGlyph { .. }) => return,
             result => result.unwrap(),
         };
         let first = run.glyphs[0].key;
@@ -195,7 +195,7 @@ mod linux {
         // Japanese and Taiwanese faces deliberately position the full stop differently.
         fonts.discovery = crate::Discovery::new("Noto Sans CJK JP", None).unwrap();
         let run = match fonts.shape("Aっつ。A", &[1, 2, 2, 2, 1]) {
-            Err(FontError::MissingGlyph(_)) => return,
+            Err(FontError::MissingGlyph { .. }) => return,
             result => result.unwrap(),
         };
         let [_, small, full, stop, latin] = run.glyphs[..] else {
@@ -297,7 +297,9 @@ mod linux {
         ];
         for (text, widths, expected) in cases {
             let run = match fonts.shape(text, &widths) {
-                Err(FontError::MissingGlyph(0x4e2d)) => {
+                Err(FontError::MissingGlyph {
+                    codepoint: 0x4e2d, ..
+                }) => {
                     eprintln!("skipped: no CJK fallback font covers U+4E2D");
                     continue;
                 }
@@ -481,7 +483,10 @@ fn core_text_loads_the_named_collection_face_and_cjk_fallback() {
         face.localized_strings(StringId::POSTSCRIPT_NAME)
             .any(|name| name.chars().eq("Menlo-Bold".chars()))
     );
-    let run = font.shape("水", &[2]).unwrap();
+    // A missing glyph lists each fallback font that was tried and why it was rejected.
+    let run = font
+        .shape("水", &[2])
+        .unwrap_or_else(|error| panic!("{error}"));
     let key = run.glyphs[0].key;
     assert_ne!(key.face(), font.primary_face());
     let rect = font.rasterize(key).unwrap().rect;
@@ -493,4 +498,30 @@ fn core_text_loads_the_named_collection_face_and_cjk_fallback() {
             .iter()
             .any(|&coverage| coverage != 0)
     }));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn core_text_system_wide_fallback_covers_cjk() {
+    use crate::FontStyle;
+
+    let mut discovery = crate::discovery::Discovery::new("Menlo-Bold", None).unwrap();
+    for style in [
+        FontStyle::default(),
+        FontStyle {
+            bold: true,
+            italic: false,
+        },
+    ] {
+        let matched = discovery
+            .find_system_wide('水', style)
+            .unwrap_or_else(|error| panic!("{style:?}: {error}"));
+        assert_ne!(matched.family, "Menlo", "{style:?}");
+        let (font, ..) = matched.load(&[], None).unwrap();
+        assert!(
+            font.charmap().map_unicode('水').is_some(),
+            "{style:?}: {}",
+            matched.family
+        );
+    }
 }

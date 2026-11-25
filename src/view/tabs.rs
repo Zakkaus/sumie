@@ -403,7 +403,10 @@ impl TabLabel {
                 break;
             };
             errors.warn(&error);
-            let FontError::MissingGlyph(value) = error else {
+            let FontError::MissingGlyph {
+                codepoint: value, ..
+            } = error
+            else {
                 break;
             };
             let Some(ch) = char::from_u32(value).filter(|&ch| ch != '\u{fffd}') else {

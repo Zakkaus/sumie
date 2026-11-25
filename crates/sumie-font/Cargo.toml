@@ -15,8 +15,8 @@ zeno.workspace = true
 fontconfig.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFURL"] }
-objc2-core-text = { version = "0.3.2", default-features = false, features = ["CTFont", "CTFontDescriptor"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCharacterSet", "CFURL"] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["CTFont", "CTFontDescriptor", "CTFontTraits"] }
 
 [dev-dependencies]
 png.workspace = true

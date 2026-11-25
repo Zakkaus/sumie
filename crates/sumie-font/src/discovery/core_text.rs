@@ -3,9 +3,13 @@
 use std::{cell::OnceCell, collections::HashMap, path::PathBuf, ptr};
 
 use objc2_core_foundation::{
-    CFArray, CFDictionary, CFRange, CFRetained, CFString, CFURL, CFURLPathStyle,
+    CFArray, CFCharacterSet, CFDictionary, CFRange, CFRetained, CFString, CFURL, CFURLPathStyle,
+    Type,
 };
-use objc2_core_text::{CTFont, CTFontDescriptor, kCTFontFamilyNameAttribute, kCTFontURLAttribute};
+use objc2_core_text::{
+    CTFont, CTFontDescriptor, CTFontSymbolicTraits, kCTFontCharacterSetAttribute,
+    kCTFontFamilyNameAttribute, kCTFontURLAttribute,
+};
 use skrifa::{
     FontRef, MetadataProvider as _,
     font::Blob,
@@ -14,6 +18,7 @@ use skrifa::{
 };
 
 use super::{Font, FontError, FontStyle, Match, Request, Style};
+use crate::Rejection;
 
 pub(crate) struct Discovery {
     primary: CFRetained<CTFont>,
@@ -74,11 +79,36 @@ impl Discovery {
 
     pub fn find(&mut self, ch: Option<char>, style: FontStyle) -> Result<Match, FontError> {
         let request = Request::new(self.weight, style);
-        let mut candidate =
-            |font: &CTFont| matching_face(font, request, ch, &mut self.files, &mut self.families);
         let Some(ch) = ch else {
-            return candidate(&self.primary);
+            return matching_face(
+                &self.primary,
+                request,
+                None,
+                &mut self.files,
+                &mut self.families,
+            );
         };
+        let mut rejected = Vec::new();
+        self.preferred(ch, request, &mut rejected)
+            .or_else(|| self.cascade(ch, request, &mut rejected))
+            .or_else(|| self.system_wide(ch, request, &mut rejected))
+            .ok_or_else(|| missing_glyph(ch, rejected))
+    }
+
+    /// Starts fallback at the system-wide step, skipping Core Text's preferred font and cascade.
+    #[cfg(test)]
+    pub fn find_system_wide(&mut self, ch: char, style: FontStyle) -> Result<Match, FontError> {
+        let mut rejected = Vec::new();
+        self.system_wide(ch, Request::new(self.weight, style), &mut rejected)
+            .ok_or_else(|| missing_glyph(ch, rejected))
+    }
+
+    fn preferred(
+        &mut self,
+        ch: char,
+        request: Request,
+        rejected: &mut Vec<Rejection>,
+    ) -> Option<Match> {
         let text = CFString::from_str(ch.encode_utf8(&mut [0; 4]));
         let range = CFRange {
             location: 0,
@@ -86,32 +116,115 @@ impl Discovery {
         };
         // SAFETY: the range covers this live CFString in UTF-16 units.
         let preferred = unsafe { self.primary.for_string(&text, range) };
-        if let Ok(matched) = candidate(&preferred) {
-            return Ok(matched);
-        }
+        self.candidate(&preferred, ch, request, rejected)
+    }
 
-        let descriptors = self.cascade.get_or_init(|| {
-            // SAFETY: null selects system language preferences. Core Text returns an
-            // immutable array of CTFontDescriptor objects, not unboxed values.
-            unsafe {
-                self.primary
-                    .default_cascade_list_for_languages(None)
-                    .map(|list| CFRetained::cast_unchecked(list))
-            }
-        });
-        if let Some(descriptors) = descriptors {
-            for descriptor in descriptors.iter() {
-                // SAFETY: the descriptor is retained and null selects the identity transform.
-                let font = unsafe { CTFont::with_font_descriptor(&descriptor, 0.0, ptr::null()) };
-                // SAFETY: font is retained; character_set returns an owned CFCharacterSet.
-                if unsafe { font.character_set() }.is_long_character_member(u32::from(ch))
-                    && let Ok(matched) = candidate(&font)
-                {
-                    return Ok(matched);
+    fn cascade(
+        &mut self,
+        ch: char,
+        request: Request,
+        rejected: &mut Vec<Rejection>,
+    ) -> Option<Match> {
+        let descriptors = self
+            .cascade
+            .get_or_init(|| {
+                // SAFETY: null selects system language preferences. Core Text returns an
+                // immutable array of CTFontDescriptor objects, not unboxed values.
+                unsafe {
+                    self.primary
+                        .default_cascade_list_for_languages(None)
+                        .map(|list| CFRetained::cast_unchecked(list))
                 }
-            }
+            })
+            .clone()?;
+        descriptors.iter().find_map(|descriptor| {
+            // SAFETY: the descriptor is retained and null selects the identity transform.
+            let font = unsafe { CTFont::with_font_descriptor(&descriptor, 0.0, ptr::null()) };
+            // SAFETY: font is retained; character_set returns an owned CFCharacterSet.
+            unsafe { font.character_set() }
+                .is_long_character_member(u32::from(ch))
+                .then(|| self.candidate(&font, ch, request, rejected))
+                .flatten()
+        })
+    }
+
+    /// Asks Core Text for every installed face that claims the character, for fonts that the
+    /// cascade omits or cannot load. Faces nearest the requested style come first, then by name.
+    fn system_wide(
+        &mut self,
+        ch: char,
+        request: Request,
+        rejected: &mut Vec<Rejection>,
+    ) -> Option<Match> {
+        let range = CFRange {
+            location: u32::from(ch).try_into().ok()?,
+            length: 1,
+        };
+        // SAFETY: the default allocator is valid and the range is one Unicode scalar value.
+        let characters = unsafe { CFCharacterSet::with_characters_in_range(None, range) }?;
+        // SAFETY: the dictionary maps the documented character-set key to a CFCharacterSet.
+        let descriptors = unsafe {
+            matching_descriptors(&CFDictionary::<CFString, CFCharacterSet>::from_slices(
+                &[kCTFontCharacterSetAttribute],
+                &[&characters],
+            ))
+        }?;
+        let italic = request.style.italic;
+        let bold = request.weight.unwrap_or(400) >= 600;
+        let mut fonts: Vec<_> = descriptors
+            .iter()
+            .map(|descriptor| {
+                // SAFETY: the descriptor is retained and null selects the identity transform.
+                // The font is retained for the trait and name queries.
+                let (font, traits, name) = unsafe {
+                    let font = CTFont::with_font_descriptor(&descriptor, 0.0, ptr::null());
+                    let traits = font.symbolic_traits();
+                    let name = font.post_script_name().to_string();
+                    (font, traits, name)
+                };
+                let key = (
+                    traits.contains(CTFontSymbolicTraits::TraitItalic) != italic,
+                    traits.contains(CTFontSymbolicTraits::TraitBold) != bold,
+                    name,
+                );
+                (key, font)
+            })
+            .collect();
+        fonts.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+        fonts
+            .iter()
+            .find_map(|(_, font)| self.candidate(font, ch, request, rejected))
+    }
+
+    fn candidate(
+        &mut self,
+        font: &CTFont,
+        ch: char,
+        request: Request,
+        rejected: &mut Vec<Rejection>,
+    ) -> Option<Match> {
+        // SAFETY: font is retained throughout.
+        let name = unsafe { font.post_script_name() }.to_string();
+        // Earlier steps can offer the same face again.
+        if rejected.iter().any(|tried| tried.font == name) {
+            return None;
         }
-        Err(FontError::MissingGlyph(u32::from(ch)))
+        matching_face(font, request, Some(ch), &mut self.files, &mut self.families)
+            .map_err(|error| {
+                rejected.push(Rejection {
+                    path: font_path(font),
+                    font: name,
+                    error: Box::new(error),
+                });
+            })
+            .ok()
+    }
+}
+
+fn missing_glyph(ch: char, rejected: Vec<Rejection>) -> FontError {
+    FontError::MissingGlyph {
+        codepoint: u32::from(ch),
+        rejected,
     }
 }
 
@@ -156,14 +269,23 @@ fn matching_face(
 }
 
 fn family_descriptors(family: &str) -> Descriptors {
-    // SAFETY: The dictionary contains the documented family-name string and is retained
-    // throughout the call. Matching returns an immutable array of CTFontDescriptor objects.
+    let family = CFString::from_str(family);
+    // SAFETY: the dictionary maps the documented family-name key to a string.
     unsafe {
-        let family = CFString::from_str(family);
-        let attributes = CFDictionary::<CFString, CFString>::from_slices(
+        matching_descriptors(&CFDictionary::<CFString, CFString>::from_slices(
             &[kCTFontFamilyNameAttribute],
             &[&family],
-        );
+        ))
+    }
+}
+
+/// # Safety
+///
+/// Each key must be a Core Text descriptor attribute and its value must have that key's type.
+unsafe fn matching_descriptors<V: Type>(attributes: &CFDictionary<CFString, V>) -> Descriptors {
+    // SAFETY: the caller guarantees the attribute types and the dictionary is retained
+    // throughout the call. Matching returns an immutable array of CTFontDescriptor objects.
+    unsafe {
         CTFontDescriptor::with_attributes(attributes.as_opaque())
             .matching_font_descriptors(None)
             .map(|list| CFRetained::cast_unchecked(list))
@@ -187,7 +309,7 @@ fn require_coverage(matched: Match, ch: Option<char>) -> Result<Match, FontError
     if let Some(ch) = ch
         && !covers(&matched, ch)
     {
-        return Err(FontError::MissingGlyph(u32::from(ch)));
+        return Err(missing_glyph(ch, Vec::new()));
     }
     Ok(matched)
 }
@@ -209,19 +331,9 @@ fn file_match(
     files: &mut HashMap<PathBuf, FontFile>,
     request: Request,
 ) -> Result<Match, FontError> {
-    // SAFETY: font is retained throughout; the exported URL key is immutable.
-    let (name, family, url) = unsafe {
-        (
-            font.post_script_name(),
-            font.family_name(),
-            font.attribute(kCTFontURLAttribute),
-        )
-    };
-    let path = url
-        .and_then(|value| value.downcast::<CFURL>().ok())
-        .and_then(|url| url.file_system_path(CFURLPathStyle::CFURLPOSIXPathStyle))
-        .map(|path| PathBuf::from(path.to_string()))
-        .ok_or_else(|| FontError::MissingFontUrl(name.to_string()))?;
+    // SAFETY: font is retained throughout.
+    let (name, family) = unsafe { (font.post_script_name(), font.family_name()) };
+    let path = font_path(font).ok_or_else(|| FontError::MissingFontUrl(name.to_string()))?;
     let file = match files.entry(path.clone()) {
         std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
         std::collections::hash_map::Entry::Vacant(entry) => entry.insert(FontFile::read(&path)?),
@@ -239,4 +351,14 @@ fn file_match(
         request,
         bytes: file.bytes.clone(),
     })
+}
+
+fn font_path(font: &CTFont) -> Option<PathBuf> {
+    // SAFETY: font is retained throughout; the exported URL key is immutable.
+    let url = unsafe { font.attribute(kCTFontURLAttribute) }?;
+    let path = url
+        .downcast::<CFURL>()
+        .ok()?
+        .file_system_path(CFURLPathStyle::CFURLPOSIXPathStyle)?;
+    Some(PathBuf::from(path.to_string()))
 }

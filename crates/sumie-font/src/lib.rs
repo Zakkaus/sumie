@@ -123,8 +123,12 @@ pub enum FontError {
     InvalidFont(PathBuf),
     #[error("primary font has no usable zero advance or horizontal line metrics")]
     MissingMetrics,
-    #[error("no font covers U+{0:04X}")]
-    MissingGlyph(u32),
+    #[error("no usable glyph for U+{codepoint:04X}{}", Rejections(.rejected))]
+    MissingGlyph {
+        codepoint: u32,
+        /// Fonts that fallback tried for this character, in order.
+        rejected: Vec<Rejection>,
+    },
     #[error("expected one width in 0..=2 per Unicode scalar, with a nonzero first width")]
     InvalidWidths,
     #[error("run exceeds the supported column or pixel coordinate range")]
@@ -141,6 +145,35 @@ pub enum FontError {
     HintedOutline(#[from] skrifa::outline::DrawError),
     #[error("not enough space to grow the glyph atlas")]
     AtlasFull,
+}
+
+/// A font that fallback tried for a character and could not use.
+#[derive(Debug)]
+pub struct Rejection {
+    /// PostScript name.
+    pub font: String,
+    pub path: Option<PathBuf>,
+    pub error: Box<FontError>,
+}
+
+impl std::fmt::Display for Rejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.font)?;
+        if let Some(path) = &self.path {
+            write!(f, " ({})", path.display())?;
+        }
+        write!(f, ": {}", self.error)
+    }
+}
+
+struct Rejections<'a>(&'a [Rejection]);
+
+impl std::fmt::Display for Rejections<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0
+            .iter()
+            .try_for_each(|rejection| write!(f, "; rejected {rejection}"))
+    }
 }
 
 /// Loaded faces and their atlas at one logical size and device scale.
@@ -239,7 +272,10 @@ impl FontSystem {
         for (key, digit) in keys.iter_mut().zip('0'..='9') {
             let glyph = charmap
                 .map_unicode(digit)
-                .ok_or(FontError::MissingGlyph(u32::from(digit)))?;
+                .ok_or_else(|| FontError::MissingGlyph {
+                    codepoint: u32::from(digit),
+                    rejected: Vec::new(),
+                })?;
             *key = GlyphKey::new(id, glyph, ppem);
         }
         self.faces.push(Face {
@@ -292,7 +328,10 @@ impl FontSystem {
 
         let matched = self.discovery.find(Some(ch), style)?;
         let regular_weight = self.non_bold_weight(Some(ch), style);
-        let missing = FontError::MissingGlyph(u32::from(ch));
+        let missing = FontError::MissingGlyph {
+            codepoint: u32::from(ch),
+            rejected: Vec::new(),
+        };
         let face = if let Some(index) = self
             .faces
             .iter()

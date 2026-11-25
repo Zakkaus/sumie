@@ -101,7 +101,7 @@ impl FontErrors {
             return;
         }
         // A missing code point comes from terminal output or IME input.
-        let reason: &dyn std::fmt::Display = if matches!(error, FontError::MissingGlyph(_)) {
+        let reason: &dyn std::fmt::Display = if matches!(error, FontError::MissingGlyph { .. }) {
             &"no font covers a character"
         } else {
             error
@@ -514,7 +514,10 @@ impl Line {
                 Ok(()) => break,
                 Err(error) => {
                     errors.warn(&error);
-                    let FontError::MissingGlyph(value) = error else {
+                    let FontError::MissingGlyph {
+                        codepoint: value, ..
+                    } = error
+                    else {
                         return;
                     };
                     let Some(ch) = char::from_u32(value).filter(|&ch| ch != '\u{fffd}') else {

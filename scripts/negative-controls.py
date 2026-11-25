@@ -330,7 +330,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("pedantic lint in macos-ci code", "clippy-macos-ci", "crates/sumie-macos/src/runner.rs",
               append("#[must_use]\npub fn narrow_probe(value: u16) -> u8 {\n    value as u8\n}\n"),
               "clippy::cast_possible_truncation")
-        probe("Core Text bypasses the fallback cascade", "test", "crates/sumie-font/src/discovery/core_text.rs",
+        probe("Core Text bypasses every fallback step", "test", "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),
               "test tests::core_text_loads_the_named_collection_face_and_cjk_fallback ... FAILED")
 
