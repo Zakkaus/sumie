@@ -85,7 +85,8 @@ fn lookup<'a>(table: &'a Table, key: &str) -> Option<&'a Value> {
 ///
 /// `main` is the primary file. The merged settings must load, and the edit may add no problem
 /// and leave none on `key`. A save made since `snapshot` is kept: the edit applies on top of it
-/// when it left `key` alone and is refused otherwise.
+/// when it left `key` alone and is refused otherwise, as is a save that set `key` in a file
+/// that now overrides this one.
 ///
 /// # Errors
 /// Returns why nothing was written.
@@ -104,6 +105,15 @@ pub fn save(
         let before = problems(main, &current, &current.bytes);
         if before.iter().any(suspends) {
             return Err(WriteError::Invalid(before));
+        }
+        // A key another program set since in a file that overrides this one would shadow the
+        // edit, so it counts as a change to the key.
+        let defining = winner(main, key);
+        if !same_file(&defining, &current) {
+            return Err(WriteError::Conflict {
+                path: defining,
+                key: key.to_owned(),
+            });
         }
         if current.bytes != snapshot.bytes
             && parse(&current.bytes)
@@ -139,9 +149,7 @@ pub fn save(
 /// Problems of the merged settings with `text` in place of `current`'s file.
 fn problems(main: &Path, current: &Snapshot, text: &[u8]) -> Vec<Error> {
     let mut read = |path: &Path| {
-        if path == current.path
-            || fs::canonicalize(path).is_ok_and(|real| real == current.real_path)
-        {
+        if same_file(path, current) {
             String::from_utf8(text.to_vec())
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         } else {
@@ -151,6 +159,11 @@ fn problems(main: &Path, current: &Snapshot, text: &[u8]) -> Vec<Error> {
     load::check_with(main, &mut |_| {}, &mut read)
         .err()
         .unwrap_or_default()
+}
+
+/// Whether `path` names the file `current` was read from.
+fn same_file(path: &Path, current: &Snapshot) -> bool {
+    path == current.path || fs::canonicalize(path).is_ok_and(|real| real == current.real_path)
 }
 
 /// A problem that leaves the merged settings unknown, so no edit can be validated.

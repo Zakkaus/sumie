@@ -143,6 +143,30 @@ fn rebase_on_foreign_write() {
 }
 
 #[test]
+fn a_key_set_meanwhile_in_an_overriding_file_is_a_conflict() {
+    let scratch = Scratch::new("edit-shadow");
+    let main = scratch.0.join("sumie.toml");
+    let shared = scratch.0.join("shared.toml");
+    fs::write(&main, "include = ['shared.toml']\n").unwrap();
+    fs::write(&shared, "[cursor]\nblink = false\n").unwrap();
+    let snapshot = Snapshot::read(&winner(&main, "cursor.blink")).unwrap();
+    assert_eq!(snapshot.path, shared);
+    // The main file now overrides the include, so writing the include would change nothing.
+    fs::write(&main, "include = ['shared.toml']\n[cursor]\nblink = true\n").unwrap();
+    let shadowed = save(
+        &main,
+        &snapshot,
+        "cursor.blink",
+        Some(&Value::Boolean(false)),
+    );
+    match shadowed {
+        Err(WriteError::Conflict { path, .. }) => assert_eq!(path, main),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(text(&shared), "[cursor]\nblink = false\n");
+}
+
+#[test]
 fn edits_that_add_problems_are_refused() {
     let scratch = Scratch::new("edit-invalid");
     let main = scratch.0.join("sumie.toml");
