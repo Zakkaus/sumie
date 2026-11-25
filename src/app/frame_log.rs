@@ -5,6 +5,8 @@
 //!
 //! The frame path appends each record to a shared buffer. A writer thread swaps the buffer
 //! out and writes it at most once per second, so the frame path never performs file I/O.
+//! Records buffered within the last second are lost when the process exits without dropping
+//! the log (kill, abort, `process::exit`).
 
 use std::{
     fs::File,
@@ -49,6 +51,8 @@ struct Recorder {
 struct Shared {
     buffer: Mutex<Vec<u8>>,
     stop: AtomicBool,
+    /// Set by the writer after a write error; the recorder then stops appending.
+    failed: AtomicBool,
 }
 
 impl FrameLog {
@@ -112,6 +116,9 @@ impl Recorder {
 
     fn presented(&mut self, repainted: impl Iterator<Item = u64>) {
         let presented = now_ns();
+        if self.shared.failed.load(Ordering::Relaxed) {
+            return;
+        }
         let [Some(start), Some(snapshots), Some(painted), Some(submitted)] =
             std::mem::take(&mut self.stamps)
         else {
@@ -160,6 +167,11 @@ impl Shared {
             if !out.is_empty() {
                 if let Err(error) = file.write_all(&out) {
                     tracing::warn!(%error, "frame log stopped");
+                    self.failed.store(true, Ordering::Relaxed);
+                    self.buffer
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clear();
                     return;
                 }
                 out.clear();

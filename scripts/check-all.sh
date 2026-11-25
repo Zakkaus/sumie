@@ -27,6 +27,8 @@ fi
 panes=
 if [ "$fast" = false ] && [ "$(uname -s)" = Linux ] && command -v kwin_wayland >/dev/null; then
     panes=panes
+elif [ "$fast" = false ] && [ "$(uname -s)" = Linux ]; then
+    echo 'check-all: panes skipped (no kwin_wayland)' >&2
 fi
 for gate in structure terminfo shell fmt clippy $macos_ci test $macos_window $panes; do
     python3 "$scripts/check-gate.py" "$gate" || exit "$?"

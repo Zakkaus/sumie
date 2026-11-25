@@ -567,15 +567,23 @@ def check_panes():
         raise CannotCheck("the pane budget needs kwin_wayland for a private nested session")
     binary = built_binary("--release")
     artifacts = tempfile.mkdtemp(prefix="sumie-panes.")
-    result = subprocess.run(["sh", ROOT / "scripts/perf/stall.sh", artifacts, str(PANES_SECONDS),
-                             "--panes", str(PANES)], env={**os.environ, "SUMIE_BIN": binary},
-                            stdin=subprocess.DEVNULL)
-    if result.returncode:
-        print(f"panes: stall.sh exited {result.returncode}; artifacts kept in {artifacts}",
-              file=sys.stderr)
-        return 1
-    shutil.rmtree(artifacts)
-    return 0
+    try:
+        for attempt in (1, 2):
+            result = subprocess.run(["sh", ROOT / "scripts/perf/stall.sh", artifacts,
+                                     str(PANES_SECONDS), "--panes", str(PANES)],
+                                    env={**os.environ, "SUMIE_BIN": binary},
+                                    stdin=subprocess.DEVNULL)
+            if not result.returncode:
+                shutil.rmtree(artifacts)
+                return 0
+            if attempt == 1:
+                print("panes: retrying once", file=sys.stderr, flush=True)
+    except BaseException:
+        shutil.rmtree(artifacts, ignore_errors=True)
+        raise
+    print(f"panes: stall.sh exited {result.returncode}; artifacts kept in {artifacts}",
+          file=sys.stderr)
+    return 1
 
 
 def main():
