@@ -17,12 +17,19 @@ use winit::{
 
 pub use winit::event_loop::ActiveEventLoop as WindowContext;
 
+#[cfg(feature = "macos-ci")]
+pub mod runner;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     Resumed,
     NeedsRedraw,
     RedrawRequested,
     CloseRequested,
+    #[cfg(feature = "macos-ci")]
+    RunnerCommand(runner::Command),
+    #[cfg(feature = "macos-ci")]
+    RunnerKey(runner::Key),
 }
 
 /// Window access from the winit main-thread callback. wgpu retains its own owner.
@@ -74,6 +81,8 @@ pub fn run(callback: impl FnMut(&WindowContext, Event) -> Result<ControlFlow<()>
     let mut handler = Handler {
         callback,
         result: Ok(()),
+        #[cfg(feature = "macos-ci")]
+        forward_runner_keys: false,
     };
     EventLoop::new()?.run_app(&mut handler)?;
     handler.result
@@ -82,6 +91,8 @@ pub fn run(callback: impl FnMut(&WindowContext, Event) -> Result<ControlFlow<()>
 struct Handler<F> {
     callback: F,
     result: Result<()>,
+    #[cfg(feature = "macos-ci")]
+    forward_runner_keys: bool,
 }
 
 impl<F: FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>> Handler<F> {
@@ -112,6 +123,17 @@ impl<F: FnMut(&WindowContext, Event) -> Result<ControlFlow<()>>> ApplicationHand
             | WindowEvent::Occluded(false) => Event::NeedsRedraw,
             WindowEvent::RedrawRequested => Event::RedrawRequested,
             WindowEvent::CloseRequested => Event::CloseRequested,
+            #[cfg(feature = "macos-ci")]
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic: false,
+                ..
+            } if self.forward_runner_keys => {
+                let Some(key) = runner::Key::from_event(&event) else {
+                    return;
+                };
+                Event::RunnerKey(key)
+            }
             _ => return,
         };
         self.emit(context, event);

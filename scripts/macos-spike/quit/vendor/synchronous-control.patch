@@ -1,0 +1,10 @@
+--- a/src/platform_impl/macos/app_state.rs
++++ b/src/platform_impl/macos/app_state.rs
+@@ -121,6 +121,5 @@
+     pub(super) fn finish_quit(&self) {
+         assert!(matches!(*self.ivars().quit.borrow(), Quit::Draining));
+-        self.ivars().quit.replace(Quit::AfterHandler);
+-        self.schedule_quit();
++        self.reissue_quit();
+     }
+ 

@@ -1,0 +1,19 @@
+[package]
+name = "metal-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "metal-spike"
+path = "metal.rs"
+
+[dependencies]
+pollster = "=1.0.3"
+wgpu = { version = "=30.0.2", default-features = false, features = ["std", "metal"] }
+# Pin the implementation as well as the public wrapper.
+wgpu-core = { version = "=30.0.2", default-features = false }
+wgpu-hal = { version = "=30.0.2", default-features = false }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
+
+[workspace]

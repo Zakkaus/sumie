@@ -297,6 +297,12 @@ def interrupted(_signum, _frame):
 
 def main():
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
+    if sys.argv[1:] == ["macos-quit"]:
+        evidence = os.environ.get("SUMIE_SPIKE_EVIDENCE")
+        if not evidence:
+            sys.exit("macos-quit: set SUMIE_SPIKE_EVIDENCE to an evidence directory")
+        return int(any(subprocess.call(["bash", ROOT / "scripts/macos-spike/quit.sh", evidence, case])
+                          for case in ("synchronous", "nested-queued")))
     # Restoring a probed file can keep its old mtime, so Cargo would reuse the probe's
     # artifacts in the next normal run. Probes build in their own target directory.
     target = os.environ.get("CARGO_TARGET_DIR") or str(ROOT / "target")

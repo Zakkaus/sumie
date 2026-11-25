@@ -351,7 +351,7 @@ def main():
         "test": ("test", "--locked", "--workspace", "--message-format=json"),
     }
     parser = argparse.ArgumentParser()
-    parser.add_argument("gate", choices=("structure", "terminfo", "shell", *commands))
+    parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     os.environ["CARGO_TERM_COLOR"] = "never"
@@ -359,6 +359,12 @@ def main():
     os.environ.setdefault("CARGO_TARGET_DIR", str(cache / "sumie" / "target"))
     print(f"== {gate}: {ROOT}", flush=True)
     try:
+        if gate == "macos-quit":
+            evidence = os.environ.get("SUMIE_SPIKE_EVIDENCE")
+            if not evidence:
+                sys.exit("macos-quit: set SUMIE_SPIKE_EVIDENCE to an evidence directory")
+            return int(any(subprocess.call(["bash", ROOT / "scripts/macos-spike/quit.sh", evidence, case])
+                              for case in ("menu", "key", "nested")))
         if gate == "structure":
             return check_structure()
         if gate == "terminfo":

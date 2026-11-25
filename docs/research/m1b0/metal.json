@@ -1,0 +1,117 @@
+{
+  "held": {
+    "result": "not-reproduced",
+    "surfaces": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "extra_acquire_us": 7859,
+    "max_ping_rtt_ms": 0.1035,
+    "finding": "With all three pool drawables presented behind pending GPU work, the layer returned a fourth IOSurface instead of blocking."
+  },
+  "fifo": {
+    "result": "measured",
+    "surfaces": [
+      1,
+      2,
+      3
+    ],
+    "acquires": 240,
+    "acquire_us_median": 15034,
+    "acquire_us_p95": 16286,
+    "acquire_us_max": 16612,
+    "max_ping_rtt_ms": 17.646667
+  },
+  "occluded": {
+    "result": "returned",
+    "race_acquire_us": [
+      347,
+      8863,
+      7592,
+      8858,
+      7582,
+      8844
+    ],
+    "race_drawables": [
+      "drawable",
+      "drawable",
+      "drawable",
+      "drawable",
+      "drawable",
+      "drawable"
+    ],
+    "presents_pending": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      0
+    ],
+    "frames_before_wgpu_occluded": 63,
+    "max_ping_rtt_ms": 42.3455
+  },
+  "minimized": {
+    "result": "returned",
+    "race_acquire_us": [
+      25,
+      8871,
+      9015,
+      7575,
+      7561,
+      8906
+    ],
+    "race_drawables": [
+      "drawable",
+      "drawable",
+      "drawable",
+      "drawable",
+      "drawable",
+      "drawable"
+    ],
+    "presents_pending": [
+      0,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "frames_before_wgpu_occluded": 62,
+    "max_ping_rtt_ms": 596.103875
+  },
+  "busy-resize": {
+    "result": "reproduced",
+    "blocked_ms": 405.942416,
+    "pings_during_hold": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "max_ping_rtt_ms": 359.457125,
+    "finding": "Main-thread configure waited for the pending GPU submission."
+  },
+  "deferred-resize": {
+    "result": "responsive",
+    "configure_ms": 0.168375,
+    "deferred_ms": 419.322583,
+    "pings_during_hold": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "max_ping_rtt_during_hold_ms": 0.169459,
+    "max_ping_rtt_ms": 0.169459
+  },
+  "clock": "Trace timestamps are watchdog send/receipt times in monotonic nanoseconds since launch.",
+  "scope": "GPU holds are test-owned event waits on real wgpu submissions; FIFO and occlusion use the compositor's own pacing. The race acquire enables Apple's drawable timeout to bound the wait. None of these establishes worker safety or safe teardown ownership."
+}

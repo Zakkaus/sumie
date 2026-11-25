@@ -1,0 +1,7 @@
+menu: exit 0 in 0.98 s, first request returned -> draining -> veto -> repeat request returned -> reaped -> grant -> exiting
+key: exit 0 in 0.58 s, first request returned -> draining -> repeat request returned -> veto -> reaped -> grant -> exiting
+cg: exit 0 in 0.95 s, first request returned -> draining -> repeat request returned -> veto -> reaped -> grant -> exiting
+nested: exit 0 in 0.74 s, first request returned -> draining -> veto -> repeat request returned -> reaped -> handler busy -> nested run loop returned -> grant -> exiting
+synchronous: exit -6 in 0.89 s, first request returned -> draining -> veto -> repeat request returned -> reaped -> grant
+nested-queued: exit -6 in 0.54 s, first request returned -> draining -> veto -> repeat request returned -> reaped
+menu repeats (launch to exit, includes the 300 ms child hold): 0.64 0.54 0.53 0.53 0.58 s

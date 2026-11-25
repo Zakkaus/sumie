@@ -1,0 +1,199 @@
+diff --color -ru a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -456,6 +456,19 @@
+     "UIWindow",
+ ]
+ 
++[target.'cfg(target_os = "macos")'.dependencies.dispatch2]
++version = "=0.3.1"
++
++[target.'cfg(target_os = "macos")'.dependencies.app-kit-safe]
++package = "objc2-app-kit"
++version = "=0.3.2"
++default-features = false
++features = ["std", "NSApplication", "NSResponder"]
++
++[target.'cfg(target_os = "macos")'.dependencies.objc2-safe]
++package = "objc2"
++version = "=0.6.5"
++
+ [target.'cfg(target_os = "macos")'.dependencies.core-graphics]
+ version = "0.23.1"
+ 
+diff --color -ru a/src/platform/macos.rs b/src/platform/macos.rs
+--- a/src/platform/macos.rs
++++ b/src/platform/macos.rs
+@@ -478,6 +478,10 @@
+ 
+ /// Additional methods on [`ActiveEventLoop`] that are specific to macOS.
+ pub trait ActiveEventLoopExtMacOS {
++    /// Intercept the first native Quit, enqueue a request, and veto repeats until cleanup.
++    fn intercept_quit<T: 'static>(&self, proxy: crate::event_loop::EventLoopProxy<T>, request: T);
++    /// Authorize one native termination after the outermost event handler returns.
++    fn finish_quit(&self);
+     /// Hide the entire application. In most applications this is typically triggered with
+     /// Command-H.
+     fn hide_application(&self);
+@@ -493,6 +497,14 @@
+ }
+ 
+ impl ActiveEventLoopExtMacOS for ActiveEventLoop {
++    fn intercept_quit<T: 'static>(&self, proxy: crate::event_loop::EventLoopProxy<T>, request: T) {
++        self.p.intercept_quit(move || { let _ = proxy.send_event(request); });
++    }
++
++    fn finish_quit(&self) {
++        self.p.finish_quit();
++    }
++
+     fn hide_application(&self) {
+         self.p.hide_application()
+     }
+diff --color -ru a/src/platform_impl/macos/app_state.rs b/src/platform_impl/macos/app_state.rs
+--- a/src/platform_impl/macos/app_state.rs
++++ b/src/platform_impl/macos/app_state.rs
+@@ -7,6 +7,7 @@
+ use objc2::{declare_class, msg_send_id, mutability, ClassType, DeclaredClass};
+ use objc2_app_kit::{
+     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSRunningApplication,
++    NSApplicationTerminateReply,
+ };
+ use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol};
+ 
+@@ -18,6 +19,21 @@
+ use crate::event_loop::{ActiveEventLoop as RootActiveEventLoop, ControlFlow};
+ use crate::window::WindowId as RootWindowId;
+ 
++enum Quit {
++    Disabled,
++    Armed(Box<dyn FnOnce()>),
++    Draining,
++    AfterHandler,
++    Scheduled,
++    Authorized,
++}
++
++impl std::fmt::Debug for Quit {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        std::fmt::Debug::fmt(&std::mem::discriminant(self), f)
++    }
++}
++
+ #[derive(Debug)]
+ pub(super) struct AppState {
+     activation_policy: Option<NSApplicationActivationPolicy>,
+@@ -25,6 +41,7 @@
+     activate_ignoring_other_apps: bool,
+     run_loop: RunLoop,
+     event_handler: EventHandler,
++    quit: RefCell<Quit>,
+     stop_on_launch: Cell<bool>,
+     stop_before_wait: Cell<bool>,
+     stop_after_wait: Cell<bool>,
+@@ -66,6 +83,27 @@
+             self.did_finish_launching(notification)
+         }
+ 
++        #[method(applicationShouldTerminate:)]
++        fn should_terminate(&self, _sender: &NSApplication) -> NSApplicationTerminateReply {
++            let mut quit = self.ivars().quit.borrow_mut();
++            match *quit {
++                Quit::Disabled => return NSApplicationTerminateReply::NSTerminateNow,
++                Quit::Authorized => {
++                    eprintln!("quit: grant");
++                    return NSApplicationTerminateReply::NSTerminateNow;
++                },
++                Quit::Armed(_) => {
++                    let Quit::Armed(send) = mem::replace(&mut *quit, Quit::Draining) else {
++                        unreachable!()
++                    };
++                    drop(quit);
++                    send();
++                },
++                _ => eprintln!("quit: veto"),
++            }
++            NSApplicationTerminateReply::NSTerminateCancel
++        }
++
+         #[method(applicationWillTerminate:)]
+         fn app_will_terminate(&self, notification: &NSNotification) {
+             self.will_terminate(notification)
+@@ -74,6 +112,41 @@
+ );
+ 
+ impl ApplicationDelegate {
++    pub(super) fn intercept_quit(&self, send: impl FnOnce() + 'static) {
++        assert!(matches!(*self.ivars().quit.borrow(), Quit::Disabled));
++        self.ivars().quit.replace(Quit::Armed(Box::new(send)));
++    }
++
++    pub(super) fn finish_quit(&self) {
++        assert!(matches!(*self.ivars().quit.borrow(), Quit::Draining));
++        self.ivars().quit.replace(Quit::AfterHandler);
++        self.schedule_quit();
++    }
++
++    /// Queue the grant on the main GCD queue. The block runs only after winit's handler
++    /// borrow is released; a nested run loop inside a handler defers it to that handler's return.
++    fn schedule_quit(&self) {
++        if !matches!(*self.ivars().quit.borrow(), Quit::AfterHandler) {
++            return;
++        }
++        self.ivars().quit.replace(Quit::Scheduled);
++        dispatch2::DispatchQueue::main().exec_async(|| {
++            let delegate = Self::get(MainThreadMarker::new().expect("main queue"));
++            if delegate.ivars().event_handler.in_use() {
++                eprintln!("quit: handler busy");
++                delegate.ivars().quit.replace(Quit::AfterHandler);
++            } else {
++                delegate.reissue_quit();
++            }
++        });
++    }
++
++    fn reissue_quit(&self) {
++        self.ivars().quit.replace(Quit::Authorized);
++        let mtm = objc2_safe::MainThreadMarker::new().expect("AppKit main thread");
++        app_kit_safe::NSApplication::sharedApplication(mtm).terminate(None);
++    }
++
+     pub(super) fn new(
+         mtm: MainThreadMarker,
+         activation_policy: Option<NSApplicationActivationPolicy>,
+@@ -86,6 +159,7 @@
+             activate_ignoring_other_apps,
+             run_loop: RunLoop::main(mtm),
+             event_handler: EventHandler::new(),
++            quit: RefCell::new(Quit::Disabled),
+             stop_on_launch: Cell::new(false),
+             stop_before_wait: Cell::new(false),
+             stop_after_wait: Cell::new(false),
+@@ -321,7 +395,8 @@
+ 
+     #[track_caller]
+     fn handle_event(&self, event: Event<HandlePendingUserEvents>) {
+-        self.ivars().event_handler.handle_event(event, &ActiveEventLoop::new_root(self.retain()))
++        self.ivars().event_handler.handle_event(event, &ActiveEventLoop::new_root(self.retain()));
++        self.schedule_quit();
+     }
+ 
+     /// dispatch `NewEvents(Init)` + `Resumed`
+diff --color -ru a/src/platform_impl/macos/event_loop.rs b/src/platform_impl/macos/event_loop.rs
+--- a/src/platform_impl/macos/event_loop.rs
++++ b/src/platform_impl/macos/event_loop.rs
+@@ -145,6 +145,14 @@
+         self.delegate.exiting()
+     }
+ 
++    pub(crate) fn intercept_quit(&self, request: impl FnOnce() + 'static) {
++        self.delegate.intercept_quit(request);
++    }
++
++    pub(crate) fn finish_quit(&self) {
++        self.delegate.finish_quit();
++    }
++
+     pub(crate) fn owned_display_handle(&self) -> OwnedDisplayHandle {
+         OwnedDisplayHandle
+     }

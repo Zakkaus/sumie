@@ -1,0 +1,85 @@
+{
+  "runs": 5,
+  "failed_runs": 0,
+  "metrics": {
+    "launch_to_first_present_ms": {
+      "median": 192.54475,
+      "min": 187.933541,
+      "max": 288.32,
+      "samples": [
+        288.32,
+        188.41675,
+        187.933541,
+        196.863875,
+        192.54475
+      ]
+    },
+    "max_main_thread_ping_rtt_ms": {
+      "median": 16.479125,
+      "min": 9.503459,
+      "max": 19.596333,
+      "samples": [
+        9.503459,
+        16.479125,
+        19.596333,
+        15.666709,
+        18.255583
+      ]
+    },
+    "max_submission_gap_60s_ms": {
+      "median": 17.848541,
+      "min": 17.697584,
+      "max": 25.829125,
+      "samples": [
+        25.829125,
+        17.848541,
+        17.697584,
+        17.951875,
+        17.75225
+      ]
+    },
+    "close_to_reaped_exit_ms": {
+      "median": 132.484375,
+      "min": 131.579208,
+      "max": 133.552209,
+      "samples": [
+        132.362917,
+        133.552209,
+        132.484375,
+        132.979167,
+        131.579208
+      ]
+    }
+  },
+  "capabilities_in_every_run": {
+    "appkit_key_delivery": [
+      "supported"
+    ],
+    "cg_event_delivery": [
+      "supported"
+    ],
+    "first_responder": [
+      "supported"
+    ],
+    "key_window": [
+      "supported"
+    ],
+    "known_pixel_capture": [
+      "supported"
+    ],
+    "named_pasteboard": [
+      "supported"
+    ],
+    "native_quit": [
+      "separate:see native Quit probe evidence"
+    ],
+    "window_server": [
+      "supported"
+    ]
+  },
+  "load_average_at_end": [
+    2.93994140625,
+    4.5390625,
+    6.37109375
+  ]
+}

@@ -10,6 +10,8 @@ use crate::{Result, capture, frame_window::FrameWindow};
 
 mod page;
 mod reload;
+#[cfg(feature = "macos-ci")]
+mod runner;
 use page::Page;
 use reload::{Reload, Update};
 
@@ -30,6 +32,11 @@ impl FrameWindow for Platform {
 }
 
 pub(crate) fn run(options: &capture::Options) -> Result<()> {
+    #[cfg(feature = "macos-ci")]
+    if let Some(mode) = runner::Mode::from_env()? {
+        return runner::run(mode, options);
+    }
+
     let mut state = None;
     sumie_macos::run(|context, event| {
         match (&mut state, event) {
@@ -162,6 +169,15 @@ impl Smoke {
     }
 
     fn draw(&mut self, options: &capture::Options) -> Result<ControlFlow<()>> {
+        self.draw_with(options, None, || {})
+    }
+
+    fn draw_with(
+        &mut self,
+        options: &capture::Options,
+        clear: Option<wgpu::Color>,
+        presented: impl FnOnce(),
+    ) -> Result<ControlFlow<()>> {
         let size = self.window.device_size();
         let scale = self.window.scale();
         let mut dirty = self.apply_reload(scale)?;
@@ -193,7 +209,7 @@ impl Smoke {
         let mut capture = None;
         let frame = self.surface.draw_with(
             &self.page.draw_list(show_cursor),
-            self.page.clear,
+            clear.unwrap_or(self.page.clear),
             |frame| {
                 if path.is_some() {
                     capture = Some(capture::Readback::copy(
@@ -208,6 +224,7 @@ impl Smoke {
         );
         match frame {
             Ok(SurfaceFrame::Presented { suboptimal }) => {
+                presented();
                 if let Some(path) = path {
                     capture
                         .ok_or("presented without capturing the frame")??

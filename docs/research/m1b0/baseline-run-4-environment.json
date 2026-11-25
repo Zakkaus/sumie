@@ -1,0 +1,30 @@
+{
+  "image_os": null,
+  "image_version": null,
+  "runner_arch": null,
+  "machine": "arm64",
+  "macos_version": "27.0.1",
+  "macos_build": "26A434",
+  "kernel_release": "27.0.0",
+  "logical_cpus": 8,
+  "load_before_timing": [
+    3.455078125,
+    5.40234375,
+    6.9296875
+  ],
+  "load_after_timing": [
+    3.20703125,
+    4.94091796875,
+    6.64892578125
+  ],
+  "load_before_capabilities": [
+    3.20703125,
+    4.94091796875,
+    6.64892578125
+  ],
+  "load_after_capabilities": [
+    3.1904296875,
+    4.90869140625,
+    6.62744140625
+  ]
+}

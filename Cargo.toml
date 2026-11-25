@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+macos-ci = ["sumie-macos/macos-ci"]
+
 [workspace]
 members = [
     "crates/sumie-config",
