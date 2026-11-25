@@ -21,7 +21,7 @@ const SIZE: [u32; 2] = [640, 400];
 const REPORT_WAIT: Duration = Duration::from_secs(5);
 
 pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
-    let mut driver = Driver::new(capture);
+    let mut driver = Driver::new(capture)?;
     let started = Instant::now();
     let mut presented = 0;
     let mut report = None;
@@ -83,7 +83,7 @@ fn command(
             match command {
                 Command::Type(text) => open.window.commit_text(text),
                 Command::Report => {
-                    if !print_report(open) {
+                    if !print_report(open)? {
                         report.get_or_insert_with(|| Instant::now() + REPORT_WAIT);
                     }
                 }
@@ -95,24 +95,30 @@ fn command(
     Ok(())
 }
 
-/// Print the counters once the session exists; returns whether it did.
-fn print_report(open: &Open) -> bool {
+/// Print the counters and the focused pane's shell state once the session exists; returns
+/// whether it did. The OSC 7 URI is last, `-` before the shell reports one.
+fn print_report(open: &Open) -> Result<bool> {
     let Some(app) = &open.app else {
-        return false;
+        return Ok(false);
+    };
+    let Some((prompt, pwd)) = app.shell_state()? else {
+        return Ok(false);
     };
     let gpu = app.gpu();
     let stats = open.window.stats;
     let [columns, rows] = app.snapshot_grid().unwrap_or_default();
     println!(
-        "runner report {} {} {} {} {} {columns} {rows} {}",
+        "runner report {} {} {} {} {} {columns} {rows} {} {} {}",
         gpu.present_count(),
         gpu.configures.0,
         gpu.configures.1,
         stats.deferred_configures,
         stats.timeouts,
         u8::from(app.banner().is_some()),
+        u8::from(prompt),
+        if pwd.is_empty() { "-" } else { &pwd },
     );
-    true
+    Ok(true)
 }
 
 /// Answer a report that waited for the session, or fail once it waited too long.
@@ -121,7 +127,7 @@ fn pending_report(driver: &Driver, report: &mut Option<Instant>) -> Result<()> {
         return Ok(());
     };
     if let State::Open(open) = &driver.state
-        && print_report(open)
+        && print_report(open)?
     {
         *report = None;
     } else if Instant::now() >= until {

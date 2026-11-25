@@ -236,6 +236,17 @@ impl App {
         ])
     }
 
+    /// Whether the focused pane's cursor is at an OSC 133 prompt, and its last OSC 7 URI.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) fn shell_state(&self) -> Result<Option<(bool, String)>> {
+        let Some(session) = &self.session else {
+            return Ok(None);
+        };
+        let terminal = &session.active().pane.terminal;
+        let pwd = terminal.with_pwd(|uri| String::from_utf8_lossy(uri).into_owned())?;
+        Ok(Some((terminal.cursor_at_prompt()?, pwd)))
+    }
+
     /// The settings banner, if one shows.
     #[cfg(feature = "macos-ci")]
     pub(crate) fn banner(&self) -> Option<&str> {

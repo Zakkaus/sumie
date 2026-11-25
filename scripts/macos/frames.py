@@ -151,8 +151,10 @@ class Runner:
         self.send("report")
         _, fields = self.wait_for("runner", "report", since=asked)
         names = ("presents", "configures", "busy_configures", "deferred_configures", "timeouts", "columns",
-                 "rows", "banner")
-        return dict(zip(names, map(int, fields[2:])))
+                 "rows", "banner", "prompt")
+        report = dict(zip(names, map(int, fields[2:2 + len(names)])))
+        report["pwd"] = " ".join(fields[2 + len(names):])
+        return report
 
     def close(self):
         self.pinging = False
