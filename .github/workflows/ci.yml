@@ -43,6 +43,11 @@ jobs:
             echo 'MESA_GLES_VERSION_OVERRIDE=3.0'
             echo 'SUMIE_REQUIRE_GPU=1'
           } >> "$GITHUB_ENV"
+      # ziglang.org sometimes serves a runner at a few KiB/s; keep the checked archive.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/zig-archive
+          key: zig-${{ matrix.zig-platform }}-${{ matrix.zig-sha256 }}
       - name: Install Zig 0.17.1
         shell: bash
         env:
@@ -50,8 +55,16 @@ jobs:
           ZIG_SHA256: ${{ matrix.zig-sha256 }}
         run: |
           name="zig-$ZIG_PLATFORM-0.17.1"
-          archive="$RUNNER_TEMP/$name.tar.xz"
-          curl -fsSL "https://ziglang.org/download/0.17.1/$name.tar.xz" -o "$archive"
+          mkdir -p "$RUNNER_TEMP/zig-archive"
+          archive="$RUNNER_TEMP/zig-archive/$name.tar.xz"
+          # Mirrors from ziglang.org/download/community-mirrors.txt; the checksum below
+          # trusts none of them. A transfer under 100 KB/s for 30 s moves to the next.
+          for base in https://pkg.hexops.org/zig https://zig.linus.dev/zig \
+            https://ziglang.org/download/0.17.1; do
+            test -s "$archive" && break
+            curl -fsSL --retry 2 --speed-limit 100000 --speed-time 30 \
+              "$base/$name.tar.xz" -o "$archive" || rm -f "$archive"
+          done
           printf '%s  %s\n' "$ZIG_SHA256" "$archive" | shasum -a 256 -c -
           tar -xJf "$archive" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
