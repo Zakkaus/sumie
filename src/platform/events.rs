@@ -93,6 +93,16 @@ pub(crate) enum Event {
         /// Predicted refresh interval; zero if unknown.
         refresh: std::time::Duration,
     },
+    /// The window is visible again, and what it presented may be gone: `AppKit` can purge an
+    /// occluded layer's contents (display sleep, a GPU switch). Draw the latest content once.
+    #[cfg_attr(
+        target_os = "linux",
+        expect(
+            dead_code,
+            reason = "Wayland keeps the attached buffer while a window is suspended"
+        )
+    )]
+    Exposed,
     CloseRequested,
     #[cfg_attr(
         target_os = "macos",

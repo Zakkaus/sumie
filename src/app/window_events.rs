@@ -98,6 +98,11 @@ impl App {
     ) -> Result<bool> {
         match event {
             Event::CloseRequested => return Ok(true),
+            Event::Exposed => {
+                if let Some(session) = &mut self.session {
+                    session.active_mut().frame_dirty = true;
+                }
+            }
             Event::Configured {
                 activated,
                 suspended,

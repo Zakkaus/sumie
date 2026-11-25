@@ -102,6 +102,9 @@ impl MacWindow {
                 self.occluded = occluded;
                 self.end_backoff();
                 self.configured();
+                if !occluded {
+                    self.batch.push_back(Event::Exposed);
+                }
             }
             Native::CloseRequested => self.batch.push_back(Event::CloseRequested),
             Native::KeyText(text) => self.commit_text(text),
