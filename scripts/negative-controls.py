@@ -156,6 +156,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           append("#[test]\nfn test_probe() -> Result<(), &'static str> {\n"
                  '    Err("deliberate unit test failure")\n}\n'),
           "test test_probe ... FAILED")
+    probe("Super matches a shortcut", "test", CORE,
+          replace_once("if !matches!(action, KeyAction::Press) || modifiers.super_key {",
+                       "if !matches!(action, KeyAction::Press) {"),
+          "test tests::super_never_matches_a_shortcut ... FAILED")
     probe("closing an earlier tab loses the active pane", "test", "crates/sumie-core/src/tabs.rs",
           replace_once("self.active -= 1;", "self.active = 0;"),
           "test tabs::tests::close_preserves_active_identity_or_selects_a_neighbor ... FAILED")
@@ -268,6 +272,18 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("paste reply uses the current recipient", "test", "src/input.rs",
               replace_once("| Event::ClipboardText { generation, .. }", ""),
               "test tests::matched_shortcuts_never_reach_the_pty ... FAILED")
+        probe("IME preedit applied before its commit", "test", "crates/sumie-wayland/src/ime.rs",
+              replace_once("|| has_preedit {\n            events.push_back(Event::ImePreedit {",
+                           "|| has_preedit {\n            events.push_front(Event::ImePreedit {"),
+              "test ime::tests::done_applies_text_even_when_serial_defers_outgoing_state ... FAILED")
+        probe("IME caret loses the left edge at fractional scale", "test", "src/linux.rs",
+              replace_once("let left = i64::from(bounds.start[i]) * logical / device;",
+                           "let left = (i64::from(bounds.start[i]) * logical + device - 1) / device;"),
+              "test linux::tests::caret_covers_the_cell_on_a_rounded_fractional_buffer ... FAILED")
+        probe("pointer hits use the nominal scale", "test", "src/view/tabs.rs",
+              replace_once("[x, y][i] * f64::from(self.device[i]) / f64::from(self.logical[i])",
+                           "[x, y][i] * f64::from(self.scale) / 120.0"),
+              "test view::tests::odd_fractional_sizes_hit_by_the_per_axis_viewporter_ratio ... FAILED")
         probe("IME accepts the prior recipient's serial", "test", "crates/sumie-wayland/src/ime.rs",
               replace_once("self.enabled_at = Some(self.serial.wrapping_add(1));",
                            "self.enabled_at = Some(self.serial);"),

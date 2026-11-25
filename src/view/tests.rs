@@ -14,19 +14,24 @@ use crate::{
 };
 
 fn view() -> View {
+    let mut view = sized_view([800, 500], [1000, 625]);
+    view.set_tab_count(2).unwrap();
+    view
+}
+
+/// A view at 1.25× with the given logical and buffer sizes.
+fn sized_view(logical: [u32; 2], device: [u32; 2]) -> View {
     let config = sumie_config::Config::default();
     let font = FontSettings::from_config(config.font).unwrap();
-    let mut view = View::new(
+    View::new(
         150,
-        [800, 500],
-        [1000, 625],
+        logical,
+        device,
         font,
         &config.colors,
         config.window.padding(),
     )
-    .unwrap();
-    view.set_tab_count(2).unwrap();
-    view
+    .unwrap()
 }
 
 #[test]
@@ -257,6 +262,48 @@ fn split_overlays_and_hit_targets_use_the_active_panes_origin() {
         view.link_cell(logical(x - 1, y + 1), right, false, 0)
             .is_none()
     );
+}
+
+#[test]
+fn odd_fractional_sizes_hit_by_the_per_axis_viewporter_ratio() {
+    // At 1.25×, 801×599 rounds to a 1001×749 buffer, so each axis has its own ratio.
+    let (logical, device) = ([801, 599], [1001, 749]);
+    let view = sized_view(logical, device);
+    let [left, divider, right] = panes(&view);
+    let [left_grid, right_grid] = [left, right].map(|rect| view.pane_grid(rect));
+    let cells = |grid: Rect, axis: usize| [grid.width, grid.height][axis] / view.cell[axis];
+    let last = |grid: Rect, axis: usize| u16::try_from(cells(grid, axis) - 1).unwrap();
+    let [left_end, right_end] =
+        [left_grid, right_grid].map(|grid| grid.x + cells(grid, 0) * view.cell[0]);
+    let bottom = right_grid.y + cells(right_grid, 1) * view.cell[1];
+    let row = left_grid.y + 2 * view.cell[1];
+    let corner = [last(right_grid, 0), last(right_grid, 1)];
+    for (rect, pixel, hit) in [
+        (left, [left_grid.x - 1, row], None),
+        (left, [left_grid.x, row], Some([0, 2])),
+        (left, [left_end - 1, row], Some([last(left_grid, 0), 2])),
+        (left, [divider.x, row], None),
+        (right, [divider.x, row], None),
+        (right, [right_grid.x, row], Some([0, 2])),
+        (right, [right_end - 1, bottom - 1], Some(corner)),
+        (right, [right_end - 1, bottom], None),
+    ] {
+        // Points just inside both edges of the device pixel.
+        for inset in [0.02, 0.98] {
+            let at = |axis: usize| {
+                (f64::from(pixel[axis]) + inset) * f64::from(logical[axis])
+                    / f64::from(device[axis])
+            };
+            let position = (at(0), at(1));
+            let (cell, _, over_grid) = view.pointer_position(position, rect, 0);
+            let found = over_grid.then_some([cell.column, cell.row]);
+            assert_eq!(found, hit, "device pixel {pixel:?} + {inset}");
+            if pixel[0] == divider.x {
+                let edge = f64::from(divider.x);
+                assert!((edge..edge + 1.0).contains(&view.window_pixel(position)[0]));
+            }
+        }
+    }
 }
 
 #[test]

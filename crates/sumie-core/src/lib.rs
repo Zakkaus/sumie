@@ -260,3 +260,49 @@ pub trait Pane {
     /// Returns an error if the pane cannot copy its current render state.
     fn snapshot(&mut self) -> Result<Self::Snapshot, Self::Error>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{KeyAction, KeyCode as K, KeyModifiers, PhysicalKey, Shortcuts};
+
+    #[test]
+    fn super_never_matches_a_shortcut() {
+        let ctrl = KeyModifiers {
+            control: true,
+            ..KeyModifiers::default()
+        };
+        let ctrl_shift = KeyModifiers {
+            shift: true,
+            ..ctrl
+        };
+        let ctrl_alt = KeyModifiers { alt: true, ..ctrl };
+        let alt = KeyModifiers {
+            alt: true,
+            ..KeyModifiers::default()
+        };
+        // Each chord matches without Super: by layout character, by the non-Latin
+        // fallback, by alias, by tab digit and by split direction.
+        for (code, symbol, modifiers) in [
+            (K::KeyC, Some('C'), ctrl_shift),
+            (K::KeyZ, Some('W'), ctrl_shift),
+            (K::KeyC, Some('С'), ctrl_shift),
+            (K::Tab, None, ctrl),
+            (K::Equal, Some('='), ctrl),
+            (K::Digit1, Some('1'), alt),
+            (K::ArrowLeft, None, ctrl_alt),
+        ] {
+            let physical = PhysicalKey::Code(code);
+            let held = KeyModifiers {
+                super_key: true,
+                ..modifiers
+            };
+            let mut shortcuts = Shortcuts::default();
+            for action in [KeyAction::Press, KeyAction::Repeat, KeyAction::Release] {
+                let matched = shortcuts.match_key(physical, symbol, held, action, true);
+                assert!(matched.is_none(), "Super matched {code:?}");
+            }
+            let matched = shortcuts.match_key(physical, symbol, modifiers, KeyAction::Press, true);
+            assert!(matched.is_some(), "{code:?} did not match");
+        }
+    }
+}
