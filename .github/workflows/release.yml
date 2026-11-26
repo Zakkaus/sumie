@@ -31,7 +31,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             target: aarch64-linux
             zig-sha256: a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3fe7795
-          - runner: macos-15
+          - runner: macos-26
             target: aarch64-macos
             zig-sha256: 75f1bc7a1e9852f17ec9a0c1895f767c4ec56d46bc8a834920eece1d0359dd8d
     runs-on: ${{ matrix.runner }}
@@ -62,6 +62,18 @@ jobs:
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - run: rustup toolchain install stable --profile minimal
+      - name: Check the tag against the workspace version
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          crate=$(cargo metadata --no-deps --format-version 1 |
+            python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          if [ "$crate" != "$VERSION" ]; then
+            echo "tag $VERSION does not match the workspace version $crate" >&2
+            exit 1
+          fi
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -149,6 +161,11 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TAG: ${{ github.ref_name }}
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: docs/release-notes.md
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: release-*
@@ -161,14 +178,7 @@ jobs:
           sha256sum --check SHA256SUMS
       - name: Create the draft release
         run: |
-          cat > notes.md <<'NOTES'
-          Checksums are in `SHA256SUMS`.
-
-          The macOS disk image holds an ad-hoc signed app, not a notarized one. After
-          downloading it, open System Settings, Privacy & Security and choose "Open Anyway",
-          or run `xattr -dr com.apple.quarantine /Applications/sumie.app`.
-          NOTES
           prerelease=
           case $TAG in *-*) prerelease=--prerelease ;; esac
           gh release create "$TAG" dist/* --draft --verify-tag $prerelease \
-            --title "$TAG" --notes-file notes.md --generate-notes
+            --title "$TAG" --notes-file docs/release-notes.md --generate-notes

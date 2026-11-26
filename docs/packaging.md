@@ -165,3 +165,15 @@ cargo test --release --locked --offline
 
 The tests that draw need a GPU; CI runs them on Mesa software drivers (`lavapipe` for Vulkan)
 with `SUMIE_REQUIRE_GPU=1`. Without a driver those tests skip.
+
+## Cutting a release
+
+1. Set `version` under `[workspace.package]` in `Cargo.toml`, refresh `Cargo.lock`, and merge.
+2. Push the tag `v<version>`. The release workflow stops if the tag, without the leading `v`,
+   differs from the workspace version in `cargo metadata`.
+3. The workflow builds both Linux tarballs and the macOS disk image, then opens a draft
+   release whose notes come from [release-notes.md](release-notes.md). Review the draft and
+   publish it by hand.
+
+The notes mark the release as a preview and state the macOS limits: arm64 only, ad-hoc signed,
+not notarized, declared minimum macOS 13 with only macOS 26 and 27 tested. Linux is Wayland only.
