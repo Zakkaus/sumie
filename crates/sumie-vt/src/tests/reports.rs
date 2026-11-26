@@ -30,3 +30,24 @@ fn size_and_color_scheme_queries_get_replies() {
     terminal.drain_replies(|bytes| replies.extend_from_slice(bytes));
     assert_eq!(replies, b"\x1b[8;10;40t");
 }
+
+#[test]
+fn size_queries_wait_for_a_cell_size() {
+    let mut terminal = Terminal::new(80, 24).unwrap();
+    for output in [&b"\x1b[14t"[..], b"\x1b[16t", b"\x1b[18t"] {
+        terminal.write(output);
+        let mut replies = Vec::new();
+        terminal.drain_replies(|bytes| replies.extend_from_slice(bytes));
+        assert!(
+            replies.is_empty(),
+            "{} got {}",
+            output.escape_ascii(),
+            replies.escape_ascii()
+        );
+    }
+    terminal.resize_pixels(80, 24, [9, 18]).unwrap();
+    terminal.write(b"\x1b[16t");
+    let mut replies = Vec::new();
+    terminal.drain_replies(|bytes| replies.extend_from_slice(bytes));
+    assert_eq!(replies, b"\x1b[6;18;9t");
+}

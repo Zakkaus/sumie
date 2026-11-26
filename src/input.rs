@@ -225,8 +225,8 @@ pub(crate) fn route(
                 modifiers,
                 action,
                 has_splits,
-                pane.primary_screen()?,
-            );
+                || pane.primary_screen(),
+            )?;
             match shortcut {
                 Some(Shortcut::Tab(action)) => return Ok(Effect::Tab(action)),
                 Some(Shortcut::Pane(action)) => return Ok(Effect::Pane(action)),

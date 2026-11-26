@@ -74,13 +74,18 @@ unsafe extern "C" fn report_size(
     let (Some(columns @ 1..), Some(rows @ 1..), Some(width), Some(height)) = size else {
         return false;
     };
+    let (cell_width, cell_height) = (width / u32::from(columns), height / u32::from(rows));
+    // Without a cell size yet, no reply beats one that claims 0;0.
+    if cell_width == 0 || cell_height == 0 {
+        return false;
+    }
     // SAFETY: Ghostty passes a writable size for the duration of the call.
     unsafe {
         *out = SizeReport {
             rows,
             columns,
-            cell_width: width / u32::from(columns),
-            cell_height: height / u32::from(rows),
+            cell_width,
+            cell_height,
         };
     }
     true

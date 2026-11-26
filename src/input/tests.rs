@@ -11,6 +11,7 @@ use crate::{
 struct Recorder {
     reports: bool,
     alternate: bool,
+    screen_fails: bool,
     keys: Vec<(K, &'static str)>,
     pages: Vec<bool>,
     focus: Vec<bool>,
@@ -54,6 +55,9 @@ impl Pane for Recorder {
     }
 
     fn primary_screen(&self) -> Result<bool> {
+        if self.screen_fails {
+            return Err("screen query failed".into());
+        }
         Ok(!self.alternate)
     }
 }
@@ -204,6 +208,29 @@ fn shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one() {
         false,
     );
     assert!(matches!(effect.unwrap(), super::Effect::Tab(_)));
+}
+
+#[test]
+fn only_shift_page_keys_ask_which_screen_is_active() {
+    let mut pane = Recorder {
+        screen_fails: true,
+        ..Recorder::default()
+    };
+    let mut routing = Routing::default();
+    let event = key(K::KeyA, 'a', KeyAction::Press);
+    route((1, 0), &mut pane, &mut routing, false, event, false).unwrap();
+    assert_eq!(pane.keys, [(K::KeyA, "press")]);
+    let event = Event::Key {
+        physical: PhysicalKey::Code(K::PageUp),
+        logical: LogicalKey::Other(None),
+        utf8: None,
+        modifiers: Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        },
+        action: KeyAction::Press,
+    };
+    assert!(route((1, 0), &mut pane, &mut routing, false, event, false).is_err());
 }
 
 #[test]

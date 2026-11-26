@@ -96,35 +96,45 @@ impl Shortcuts {
     /// if the user releases a modifier first or the layout changes.
     /// Directional pane bindings are reserved only in tabs with splits, and Shift+PageUp and
     /// Shift+PageDown only on the primary screen; the alternate screen has no history.
-    pub fn match_key(
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of `primary_screen`, which runs only for those two keys.
+    pub fn match_key<E>(
         &mut self,
         physical: PhysicalKey,
         symbol: Option<char>,
         modifiers: KeyModifiers,
         action: KeyAction,
         has_splits: bool,
-        primary_screen: bool,
-    ) -> Option<Shortcut> {
+        primary_screen: impl FnOnce() -> Result<bool, E>,
+    ) -> Result<Option<Shortcut>, E> {
         if let Some(index) = self.consumed.iter().position(|&held| held == physical) {
             if !matches!(action, KeyAction::Repeat) {
                 self.consumed.swap_remove(index);
             }
             if !matches!(action, KeyAction::Press) {
-                return Some(Shortcut::Consume);
+                return Ok(Some(Shortcut::Consume));
             }
         }
         if !matches!(action, KeyAction::Press) || modifiers.super_key {
-            return None;
+            return Ok(None);
         }
         let shortcut = match (modifiers.control, modifiers.alt, modifiers.shift) {
             (true, false, shift) => control_shortcut(physical, symbol, shift),
             (true, true, shift) if has_splits => directional_shortcut(physical, shift),
             (false, true, false) => alt_tab_shortcut(physical, symbol).map(Shortcut::Tab),
-            (false, false, true) if primary_screen => page_shortcut(physical),
+            (false, false, true) => match page_shortcut(physical) {
+                Some(page) if primary_screen()? => Some(page),
+                _ => None,
+            },
             _ => None,
-        }?;
+        };
+        let Some(shortcut) = shortcut else {
+            return Ok(None);
+        };
         self.consumed.push(physical);
-        Some(shortcut)
+        Ok(Some(shortcut))
     }
 }
 
@@ -329,11 +339,13 @@ mod tests {
                 ..modifiers
             };
             let mut shortcuts = Shortcuts::default();
-            let matched = shortcuts.match_key(physical, symbol, held, KeyAction::Press, true, true);
-            assert!(matched.is_none(), "Super matched {code:?}");
+            let primary = || Ok::<_, ()>(true);
             let matched =
-                shortcuts.match_key(physical, symbol, modifiers, KeyAction::Press, true, true);
-            assert!(matched.is_some(), "{code:?} did not match");
+                shortcuts.match_key(physical, symbol, held, KeyAction::Press, true, primary);
+            assert!(matches!(matched, Ok(None)), "Super matched {code:?}");
+            let matched =
+                shortcuts.match_key(physical, symbol, modifiers, KeyAction::Press, true, primary);
+            assert!(matches!(matched, Ok(Some(_))), "{code:?} did not match");
         }
     }
 }
