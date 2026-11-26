@@ -130,11 +130,10 @@ def macos_controls():
                            "                input::report_focus(&mut pane.pane, false)?;\n"
                            "            }\n"),
               "keys: focus: 2 focus-out reports for one focus loss")
-        # Reading the general board first, the check fails before anything could write to it.
-        probe("serve the general board in the check", "macos-pasteboard", "src/macos/pasteboard.rs",
-              replace_once("let board = std::env::var(BOARD_ENV).ok();",
-                           "let board = std::env::var(BOARD_ENV).ok().filter(|_| false);"),
-              "pasteboard: paste: recorded")
+        # A unit test, so no check ever serves the general board.
+        probe("select the general board in a macos-ci build", "test", "src/macos/pasteboard.rs",
+              replace_once("    Ok(Board::named(name)?)\n}", "    let _ = name;\n    Ok(Board::General)\n}"),
+              "test macos::pasteboard::tests::a_ci_build_serves_only_a_named_board ... FAILED")
         probe("stamp a paste with the current generation", "macos-pasteboard", "src/macos/window.rs",
               replace_once("                generation: recipient,\n",
                            "                generation: {\n                    let _ = recipient;\n"

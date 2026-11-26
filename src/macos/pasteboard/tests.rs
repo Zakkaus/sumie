@@ -20,7 +20,7 @@ const CHILD_ENV: &str = "SUMIE_TEST_PASTEBOARD_CHILD";
 #[ignore = "the pasteboard child of the other tests"]
 fn pasteboard_child() {
     if let Some(board) = env::var_os(CHILD_ENV) {
-        serve_child(Some(board.into_string().unwrap())).unwrap();
+        serve_child(&Board::named(board.to_str().unwrap()).unwrap()).unwrap();
     }
 }
 
@@ -127,9 +127,20 @@ fn requests_run_in_order_and_reads_keep_their_recipient() {
 }
 
 #[test]
+fn a_ci_build_serves_only_a_named_board() {
+    for env in [None, Some(""), Some("Apple CFPasteboard general")] {
+        assert!(select_board(env).is_err(), "{env:?} selected a board");
+    }
+    assert_eq!(
+        select_board(Some("org.sumie.test")).unwrap(),
+        Board::named("org.sumie.test").unwrap()
+    );
+}
+
+#[test]
 fn an_empty_or_oversized_board_pastes_nothing() {
     let name = unique();
-    let board = Board::Named(name.clone());
+    let board = Board::named(&name).unwrap();
     let mut fixture = Fixture::new(child(&name), TIMEOUT);
     assert!(pasteboard::write(&board, Some("")));
     fixture.request(Request::Read { recipient: 1 });

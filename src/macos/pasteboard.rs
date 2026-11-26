@@ -11,6 +11,10 @@
 //!
 //! A read's reply carries the recipient generation of its request, and the session drops it
 //! when that recipient is gone. Contents never reach argv or the logs.
+//!
+//! Release builds serve the general board. A `macos-ci` build serves only the board that
+//! `SUMIE_MACOS_CI_PASTEBOARD` names and refuses every request without one, so no check
+//! touches the user's pasteboard.
 
 use std::{
     collections::VecDeque,
@@ -37,10 +41,10 @@ use crate::{
     reload::frame::{self, Decoder, Frame, Kind},
 };
 
-/// Selects the child mode on the command line; an optional argument names the board.
+/// Selects the child mode on the command line.
 pub(crate) const CHILD_ARG: &str = "--internal-pasteboard";
-/// Names the runner's board for the pasteboard check; release builds serve the general board.
-#[cfg(feature = "macos-ci")]
+/// Names the check's board for a `macos-ci` build's helpers.
+#[cfg(any(test, feature = "macos-ci"))]
 const BOARD_ENV: &str = "SUMIE_MACOS_CI_PASTEBOARD";
 const TIMEOUT: Duration = Duration::from_secs(5);
 /// A cancelled child exits on EOF at once unless it is stopped; then SIGKILL ends it.
@@ -119,16 +123,12 @@ const fn write_key(id: u64) -> Key {
 }
 
 impl Pasteboard {
-    /// The production helpers: this executable in [`CHILD_ARG`] mode, on the general board.
+    /// The production helpers: this executable in [`CHILD_ARG`] mode.
     pub(super) fn new(watches: &Watches) -> Result<Self> {
         let program = std::env::current_exe()?;
-        #[cfg(feature = "macos-ci")]
-        let board = std::env::var(BOARD_ENV).ok();
-        #[cfg(not(feature = "macos-ci"))]
-        let board: Option<String> = None;
         let launch = move || {
             let mut command = Command::new(&program);
-            command.arg(CHILD_ARG).args(&board);
+            command.arg(CHILD_ARG);
             Ok(command)
         };
         Ok(Self::with_launch(Box::new(launch), TIMEOUT, watches))
@@ -426,9 +426,27 @@ fn finish(recipient: Option<u64>, outcome: Outcome) -> Option<Pasted> {
     None
 }
 
-/// Serve one request in the helper child. Its stdin is the app's socket; `board` names a
-/// board other than the general one.
-pub(crate) fn serve_child(board: Option<String>) -> Result<()> {
+/// The helper child's entry: serve one request on this build's board.
+pub(crate) fn run_child() -> Result<()> {
+    #[cfg(feature = "macos-ci")]
+    let board = select_board(std::env::var(BOARD_ENV).ok().as_deref())?;
+    #[cfg(not(feature = "macos-ci"))]
+    let board = Board::General;
+    serve_child(&board)
+}
+
+/// A `macos-ci` build's board: the one `env`, the value of [`BOARD_ENV`], names. Never the
+/// general board: without a name there is no board to serve.
+#[cfg(any(test, feature = "macos-ci"))]
+fn select_board(env: Option<&str>) -> Result<Board> {
+    let name = env
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("{BOARD_ENV} must name the pasteboard a macos-ci build serves"))?;
+    Ok(Board::named(name)?)
+}
+
+/// Serve one request in the helper child. Its stdin is the app's socket.
+fn serve_child(board: &Board) -> Result<()> {
     let socket = UnixStream::from(io::stdin().as_fd().try_clone_to_owned()?);
     let Some(request) = receive(&socket)? else {
         // Cancelled before the request was whole.
@@ -443,9 +461,8 @@ pub(crate) fn serve_child(board: Option<String>) -> Result<()> {
             let _ = (&cancel).read(&mut [0]);
             process::exit(0);
         })?;
-    let board = board.map_or(Board::General, Board::Named);
     let (kind, body) = match request.kind {
-        Kind::Read => match pasteboard::read(&board) {
+        Kind::Read => match pasteboard::read(board) {
             None => (Kind::Empty, String::new()),
             Some(text) if text.is_empty() => (Kind::Empty, String::new()),
             Some(text) if text.len() > LIMIT => (Kind::TooLarge, String::new()),
@@ -455,7 +472,7 @@ pub(crate) fn serve_child(board: Option<String>) -> Result<()> {
             let text = (request.kind == Kind::Write)
                 .then(|| String::from_utf8(request.body))
                 .transpose()?;
-            let written = pasteboard::write(&board, text.as_deref());
+            let written = pasteboard::write(board, text.as_deref());
             (
                 if written {
                     Kind::Written

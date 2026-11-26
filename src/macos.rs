@@ -26,7 +26,7 @@ mod sources;
 mod surface;
 mod window;
 use page::Page;
-pub(crate) use pasteboard::{CHILD_ARG as PASTEBOARD_ARG, serve_child as run_pasteboard};
+pub(crate) use pasteboard::{CHILD_ARG as PASTEBOARD_ARG, run_child as run_pasteboard};
 pub(crate) use reload::{CHILD_ARG as CONFIG_WATCH_ARG, watch_child as run_config_watch};
 use reload::{Reload, Update};
 use sources::{Timers, Watches};
