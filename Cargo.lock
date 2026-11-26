@@ -1843,7 +1843,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "sumie"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "calloop 0.14.5",
  "nix",
@@ -1867,7 +1867,7 @@ dependencies = [
 
 [[package]]
 name = "sumie-config"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "nix",
  "rustix 1.1.6",
@@ -1881,14 +1881,14 @@ dependencies = [
 
 [[package]]
 name = "sumie-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "unicode-script",
 ]
 
 [[package]]
 name = "sumie-font"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fontconfig",
  "harfrust",
@@ -1902,7 +1902,7 @@ dependencies = [
 
 [[package]]
 name = "sumie-macos"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "nix",
  "objc2 0.6.5",
@@ -1917,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "sumie-pty"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "nix",
  "pty-process",
@@ -1929,7 +1929,7 @@ dependencies = [
 
 [[package]]
 name = "sumie-render"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "bytemuck",
  "objc2-quartz-core 0.3.2",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "sumie-ui"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "sumie-core",
  "sumie-render",
@@ -1949,14 +1949,14 @@ dependencies = [
 
 [[package]]
 name = "sumie-vt"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "sumie-core",
 ]
 
 [[package]]
 name = "sumie-wayland"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "raw-window-handle",
  "rustix 1.1.6",
