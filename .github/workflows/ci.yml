@@ -102,11 +102,19 @@ jobs:
         run: |
           cargo clippy --locked --release --workspace --all-targets --features macos-ci -- -D warnings
           cargo build --release --locked --features macos-ci
+      # The build can relink libghostty-vt, so only the run itself is bounded.
+      - name: Build the debug binary for the Metal smoke run
+        if: runner.os == 'macOS'
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
+        run: cargo build --locked --bin sumie
       - name: Present three Metal frames and capture the third
         if: runner.os == 'macOS'
         timeout-minutes: 3
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
+          ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
         run: |
           cargo run --locked --bin sumie -- --exit-after-frames 3 --screenshot smoke.png
           test -s smoke.png
