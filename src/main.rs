@@ -73,6 +73,15 @@ fn run() -> Result<()> {
         }
         return macos::run_config_watch();
     }
+    #[cfg(target_os = "macos")]
+    if args.next_if(|arg| arg == macos::PASTEBOARD_ARG).is_some() {
+        let board = args.next().map(std::ffi::OsString::into_string).transpose();
+        let board = board.map_err(|_| "the pasteboard name is not UTF-8")?;
+        if args.next().is_some() {
+            return Err("the pasteboard helper takes at most a board name".into());
+        }
+        return macos::run_pasteboard(board);
+    }
 
     if args.next_if(|arg| arg == "config").is_some() {
         let mut stdout = std::io::stdout().lock();

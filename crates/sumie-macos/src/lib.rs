@@ -24,6 +24,7 @@ pub use window::{Platform, Pointer, double_click_interval};
 
 pub mod exit;
 mod keyboard;
+pub mod pasteboard;
 pub mod readiness;
 #[cfg(feature = "macos-ci")]
 pub mod runner;

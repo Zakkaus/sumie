@@ -211,6 +211,7 @@ fn decode(frame: Frame) -> Result<Update, String> {
         Kind::Invalid => String::from_utf8(frame.body)
             .map(Update::Diagnostic)
             .map_err(|error| format!("malformed diagnostic: {error}")),
+        kind => Err(format!("unexpected frame kind {kind:?}")),
     }
 }
 

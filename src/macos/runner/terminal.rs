@@ -133,6 +133,13 @@ fn command(
                             .get_or_insert_with(|| Instant::now() + REPORT_WAIT);
                     }
                 }
+                Command::Select(row) => {
+                    let selected = match &mut open.app {
+                        Some(app) => app.select_line(row)?,
+                        None => false,
+                    };
+                    println!("runner selected {selected}");
+                }
                 Command::Step(step) => native::step(context, open.window.platform(), step)?,
                 Command::Key(key) => println!("runner posted key {}", native::post_key(key)),
                 _ => return Err("unexpected runner controller command".into()),

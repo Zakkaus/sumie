@@ -19,14 +19,19 @@ use nix::errno::Errno;
 use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use nix::sys::event::{EvFlags, EventFilter, FilterFlag, KEvent, Kqueue};
 
-/// What a registration reports. Descriptors report readability except [`Interest::Input`],
-/// which reports writability; [`Interest::Blink`] and [`Interest::Timer`] are deadlines.
+/// What a registration reports. Descriptors report readability except [`Interest::Input`]
+/// and [`Interest::PasteboardWrite`], which report writability; [`Interest::Blink`] and
+/// [`Interest::Timer`] are deadlines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Interest {
     Output,
     Input,
     Exit,
     Config,
+    /// A pasteboard helper's socket or exit report.
+    Pasteboard,
+    /// A pasteboard helper's socket while a request waits to be written.
+    PasteboardWrite,
     Blink,
     Timer,
 }
@@ -34,8 +39,8 @@ pub enum Interest {
 impl Interest {
     const fn filter(self) -> EventFilter {
         match self {
-            Self::Output | Self::Exit | Self::Config => EventFilter::EVFILT_READ,
-            Self::Input => EventFilter::EVFILT_WRITE,
+            Self::Output | Self::Exit | Self::Config | Self::Pasteboard => EventFilter::EVFILT_READ,
+            Self::Input | Self::PasteboardWrite => EventFilter::EVFILT_WRITE,
             Self::Blink | Self::Timer => EventFilter::EVFILT_TIMER,
         }
     }

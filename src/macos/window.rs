@@ -1,5 +1,6 @@
-//! Binds the shared window operations to the `AppKit` window, its readiness bridge and the
-//! display-paced frame slot. Native events queue into one batch per run-loop turn.
+//! Binds the shared window operations to the `AppKit` window, its readiness bridge, the
+//! display-paced frame slot and the pasteboard helpers. Native events and finished pastes
+//! queue into one batch per run-loop turn.
 
 use std::{collections::VecDeque, os::fd::BorrowedFd, time::Instant};
 
@@ -9,7 +10,11 @@ use sumie_macos::{
     readiness::{Interest, Key, Readiness},
 };
 
-use super::{sources::Watches, surface::FrameSlot};
+use super::{
+    pasteboard::{Pasteboard, Pasted, Request},
+    sources::Watches,
+    surface::FrameSlot,
+};
 use crate::{
     Result,
     frame_window::FrameWindow,
@@ -36,6 +41,7 @@ pub(super) struct Stats {
 
 pub(super) struct MacWindow {
     pub(super) watches: Watches,
+    pasteboard: Pasteboard,
     platform: Platform,
     readiness: Readiness,
     slot: FrameSlot,
@@ -55,9 +61,11 @@ pub(super) struct MacWindow {
 }
 
 impl MacWindow {
-    pub(super) fn new(platform: Platform, readiness: Readiness) -> Self {
+    pub(super) fn new(platform: Platform, readiness: Readiness) -> Result<Self> {
+        let watches = Watches::new(readiness.clone());
         let mut window = Self {
-            watches: Watches::new(readiness.clone()),
+            pasteboard: Pasteboard::new(&watches)?,
+            watches,
             slot: FrameSlot::new(platform.maximum_frames_per_second()),
             readiness,
             batch: VecDeque::new(),
@@ -79,16 +87,33 @@ impl MacWindow {
             suspended: false,
         });
         window.resized();
-        window
+        Ok(window)
     }
 
     pub(super) const fn platform(&self) -> &Platform {
         &self.platform
     }
 
-    /// Drop the native window owner and keep the watches for children still closing.
-    pub(super) fn into_watches(self) -> Watches {
-        self.watches
+    /// Drop the native window owner and keep the watches and pasteboard helpers for children
+    /// still closing.
+    pub(super) fn into_parts(self) -> (Watches, Pasteboard) {
+        (self.watches, self.pasteboard)
+    }
+
+    /// Queue finished pastes, stamped with their request's recipient, for this turn.
+    pub(super) fn service_pasteboard(&mut self) -> Result<()> {
+        for Pasted { text, recipient } in self.pasteboard.service(&mut self.watches)? {
+            self.batch.push_back(Event::ClipboardText {
+                text,
+                generation: recipient,
+            });
+        }
+        Ok(())
+    }
+
+    /// Cancel pasteboard requests: draining drops paste results.
+    pub(super) fn close_pasteboard(&mut self) -> Result<()> {
+        self.pasteboard.close(&mut self.watches)
     }
 
     /// Queue a native event for the next turn.
@@ -319,15 +344,29 @@ impl WindowOps for MacWindow {
         self.generation = generation;
     }
 
-    fn read_clipboard(&mut self, _: u64) {
-        tracing::debug!("no pasteboard yet; dropped a paste request");
+    fn read_clipboard(&mut self, recipient: u64) {
+        self.pasteboard
+            .request(Request::Read { recipient }, &mut self.watches);
     }
 
-    fn write_clipboard(&mut self, _: String) {
-        tracing::debug!("no pasteboard yet; dropped a copy");
+    fn write_clipboard(&mut self, text: String) {
+        self.pasteboard
+            .request(Request::Write(Some(text)), &mut self.watches);
     }
 
-    fn write_terminal_clipboard(&mut self, _: Option<Vec<u8>>) {}
+    /// OSC 52: a terminal may write or clear the pasteboard only while the window is key.
+    fn write_terminal_clipboard(&mut self, bytes: Option<Vec<u8>>) {
+        if !self.focused {
+            tracing::debug!("dropped a terminal clipboard write without keyboard focus");
+            return;
+        }
+        let Ok(text) = bytes.map(String::from_utf8).transpose() else {
+            tracing::warn!("dropped a terminal clipboard write that is not UTF-8");
+            return;
+        };
+        self.pasteboard
+            .request(Request::Write(text), &mut self.watches);
+    }
 
     fn queue_title(&mut self, title: String) {
         #[cfg(feature = "macos-ci")]

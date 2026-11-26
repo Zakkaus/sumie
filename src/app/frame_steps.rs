@@ -247,6 +247,29 @@ impl App {
         Ok(Some((terminal.cursor_at_prompt()?, pwd)))
     }
 
+    /// Select one row of the focused pane, as a triple click begins to, without copying it;
+    /// returns whether a range is selected.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) fn select_line(&mut self, row: u16) -> Result<bool> {
+        use sumie_core::{CellPosition, mouse::SelectStep, mouse::SelectionUnit};
+
+        let Some(session) = &mut self.session else {
+            return Ok(false);
+        };
+        let pane = session.active_mut();
+        pane.update_snapshot()?;
+        let rows = pane
+            .snapshot
+            .as_ref()
+            .map_or(0, |snapshot| snapshot.rows.len());
+        if usize::from(row) >= rows {
+            return Ok(false);
+        }
+        let hit = CellPosition { row, column: 0 };
+        pane.select(SelectStep::Begin(SelectionUnit::Line), hit)?;
+        Ok(pane.selection.range().is_some())
+    }
+
     /// The settings banner, if one shows.
     #[cfg(feature = "macos-ci")]
     pub(crate) fn banner(&self) -> Option<&str> {

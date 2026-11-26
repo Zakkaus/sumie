@@ -56,6 +56,8 @@ pub enum Command {
     Type(String),
     /// Print the terminal driver's counters.
     Report,
+    /// Select one row of the focused pane, without copying it.
+    Select(u16),
     Finish,
     Inspect,
     AppKitKeys,
@@ -162,6 +164,9 @@ impl Command {
             line => {
                 if let Some(text) = line.strip_prefix("type ") {
                     return Self::Type(format!("{text}\r"));
+                }
+                if let Some(row) = line.strip_prefix("select ") {
+                    return row.parse().map_or(Self::Invalid, Self::Select);
                 }
                 if let Some(key) = line.strip_prefix("key ") {
                     return PostedKey::parse(key).map_or(Self::Invalid, Self::Key);

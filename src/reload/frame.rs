@@ -1,5 +1,6 @@
-//! Frames the configuration child's results: a 4-byte big-endian body length, a version byte,
-//! a kind byte, then the body. The decoder validates the header before it allocates the body,
+//! Frames the helper children's messages (the configuration child's results, the pasteboard
+//! child's request and reply): a 4-byte big-endian body length, a version byte, a kind byte,
+//! then the body. The decoder validates the header before it allocates the body,
 //! accepts input split at any byte, and reports a frame only once it is complete.
 
 use std::fmt;
@@ -15,6 +16,32 @@ pub(crate) enum Kind {
     Settings = 1,
     /// A located diagnostic for the banner, as UTF-8 text.
     Invalid = 2,
+    /// Pasteboard requests: read the string, replace it with the UTF-8 body, or clear it.
+    Read = 3,
+    Write = 4,
+    Clear = 5,
+    /// Pasteboard replies: the string as UTF-8, no string, a string over the read limit, a
+    /// write the board took, or one it refused.
+    Text = 6,
+    Empty = 7,
+    TooLarge = 8,
+    Written = 9,
+    Refused = 10,
+}
+
+impl Kind {
+    const ALL: [Self; 10] = [
+        Self::Settings,
+        Self::Invalid,
+        Self::Read,
+        Self::Write,
+        Self::Clear,
+        Self::Text,
+        Self::Empty,
+        Self::TooLarge,
+        Self::Written,
+        Self::Refused,
+    ];
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -122,10 +149,8 @@ impl Decoder {
         if version != VERSION {
             return Err(FrameError::Version(version));
         }
-        let kind = match kind {
-            1 => Kind::Settings,
-            2 => Kind::Invalid,
-            other => return Err(FrameError::Kind(other)),
+        let Some(kind) = Kind::ALL.into_iter().find(|known| *known as u8 == kind) else {
+            return Err(FrameError::Kind(kind));
         };
         let length = u32::from_be_bytes([a, b, c, d]);
         let size = usize::try_from(length).map_err(|_| FrameError::TooLong(length))?;
@@ -225,7 +250,7 @@ mod tests {
         frame[4] = VERSION + 1;
         assert_eq!(decode(&[&frame]).1, Err(FrameError::Version(VERSION + 1)));
         frame[4] = VERSION;
-        frame[5] = 9;
-        assert_eq!(decode(&[&frame]).1, Err(FrameError::Kind(9)));
+        frame[5] = 11;
+        assert_eq!(decode(&[&frame]).1, Err(FrameError::Kind(11)));
     }
 }

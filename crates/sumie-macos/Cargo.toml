@@ -10,7 +10,6 @@ macos-ci = [
     "dep:objc2-core-graphics",
     "objc2-app-kit/NSApplication",
     "objc2-app-kit/NSGraphicsContext",
-    "objc2-app-kit/NSPasteboard",
     "objc2-app-kit/NSResponder",
     "objc2-app-kit/NSView",
     "objc2-app-kit/NSWindow",
@@ -27,7 +26,7 @@ macos-ci = [
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { workspace = true, features = ["fs"] }
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSEvent", "NSGraphics", "NSScreen"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSEvent", "NSGraphics", "NSPasteboard", "NSScreen"] }
 objc2-core-graphics = { version = "0.3.2", optional = true, default-features = false, features = ["std", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation", "CGWindow", "libc"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDictionary", "NSString", "NSValue"] }
 signal-hook = { version = "0.4.6", default-features = false }

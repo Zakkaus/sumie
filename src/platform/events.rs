@@ -100,10 +100,6 @@ pub(crate) enum Event {
     )]
     Exposed,
     CloseRequested,
-    #[cfg_attr(
-        target_os = "macos",
-        expect(dead_code, reason = "macOS has no pasteboard reads yet")
-    )]
     ClipboardText {
         text: String,
         generation: u64,

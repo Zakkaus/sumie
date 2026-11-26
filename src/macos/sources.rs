@@ -41,6 +41,9 @@ pub(crate) struct Watches {
     /// Registered configuration keys, and whether any reported since the last take.
     config: Vec<Key>,
     config_ready: bool,
+    /// Registered pasteboard helper keys, and whether any reported since the last take.
+    pasteboard: Vec<Key>,
+    pasteboard_ready: bool,
 }
 
 /// One-shot deadlines that only wake dispatch, like the Linux calloop timer.
@@ -65,6 +68,8 @@ impl Watches {
             panes: HashMap::new(),
             config: Vec::new(),
             config_ready: false,
+            pasteboard: Vec::new(),
+            pasteboard_ready: false,
         }
     }
 
@@ -113,11 +118,45 @@ impl Watches {
         Ok(ready)
     }
 
+    /// Watch a pasteboard helper's descriptor: its socket ([`Interest::Pasteboard`] or
+    /// [`Interest::PasteboardWrite`]) or its exit report.
+    pub(crate) fn watch_pasteboard(&mut self, key: Key, fd: BorrowedFd<'_>) -> Result<()> {
+        self.readiness.watch(key, fd)?;
+        self.pasteboard.push(key);
+        Ok(())
+    }
+
+    /// Stop watching a pasteboard key; unknown keys are ignored.
+    pub(crate) fn stop_pasteboard(&mut self, key: Key) {
+        if let Some(index) = self.pasteboard.iter().position(|watched| *watched == key) {
+            self.pasteboard.swap_remove(index);
+            self.readiness.remove(key);
+        }
+    }
+
+    /// Whether a pasteboard key reported; taking re-arms them all.
+    pub(crate) fn take_pasteboard_ready(&mut self) -> Result<bool> {
+        let ready = std::mem::take(&mut self.pasteboard_ready);
+        if ready {
+            for key in &self.pasteboard {
+                self.readiness.rearm(*key)?;
+            }
+        }
+        Ok(ready)
+    }
+
     /// Fold the bridge's reports into pane state. Call on `Event::Ready`, before servicing.
     pub(crate) fn dispatch(&mut self) -> Result<()> {
         for key in self.readiness.take() {
             if key.interest == Interest::Config {
                 self.config_ready |= self.config.contains(&key);
+                continue;
+            }
+            if matches!(
+                key.interest,
+                Interest::Pasteboard | Interest::PasteboardWrite
+            ) {
+                self.pasteboard_ready |= self.pasteboard.contains(&key);
                 continue;
             }
             let Some(pane) = self.panes.get_mut(&key.id) else {
@@ -141,7 +180,10 @@ impl Watches {
                     let deadline = pane.blink.expect("blink phase").deadline;
                     self.readiness.set_deadline(key, deadline)?;
                 }
-                Interest::Config | Interest::Timer => (),
+                Interest::Config
+                | Interest::Pasteboard
+                | Interest::PasteboardWrite
+                | Interest::Timer => (),
             }
         }
         Ok(())
@@ -168,6 +210,9 @@ impl Watches {
 impl Drop for Watches {
     fn drop(&mut self) {
         self.unregister_config();
+        for key in self.pasteboard.drain(..) {
+            self.readiness.remove(key);
+        }
         for id in self.panes.keys().copied().collect::<Vec<_>>() {
             self.unregister(id);
         }

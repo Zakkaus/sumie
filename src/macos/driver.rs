@@ -34,6 +34,7 @@ use sumie_macos::{
 
 use super::{
     login,
+    pasteboard::Pasteboard,
     reload::{self, Reload, Update},
     sources::{Timers, Watches},
     surface,
@@ -85,6 +86,7 @@ pub(super) struct Open {
 pub(super) struct Reaping {
     session: Option<Session>,
     reload: Reload,
+    pasteboard: Pasteboard,
     watches: Watches,
 }
 
@@ -134,7 +136,7 @@ impl Driver {
     /// Show the window and start the configuration child; the session waits for its result
     /// until [`FIRST_RESULT`].
     pub(super) fn open(&mut self, readiness: &Readiness, platform: Platform) -> Result<()> {
-        let mut window = MacWindow::new(platform, readiness.clone());
+        let mut window = MacWindow::new(platform, readiness.clone())?;
         tracing::debug!(refresh = ?window.refresh(), "paced the frame slot to the screen");
         let reload = Reload::spawn(reload::command()?, &mut window.watches)?;
         let animation = Wake::new(window.watches.animation_timer());
@@ -256,7 +258,10 @@ impl Driver {
             Some(app) => app.close_all(&mut open.window),
             None => Ok(()),
         };
-        let stop = open.reload.close(&mut open.window.watches);
+        let stop = open
+            .reload
+            .close(&mut open.window.watches)
+            .and(open.window.close_pasteboard());
         let hidden = Rc::new(Cell::new(false));
         let done = Rc::clone(&hidden);
         open.window
@@ -285,10 +290,12 @@ impl Driver {
         {
             tracing::warn!("GPU work was still pending when the surface dropped");
         }
+        let (watches, pasteboard) = window.into_parts();
         self.state = State::Reaping(Box::new(Reaping {
             session: app.and_then(App::into_session),
             reload,
-            watches: window.into_watches(),
+            pasteboard,
+            watches,
         }));
         self.reap(readiness)
     }
@@ -300,15 +307,17 @@ impl Driver {
         let Reaping {
             session,
             reload,
+            pasteboard,
             watches,
         } = &mut **reaping;
         watches.dispatch()?;
         // Results that arrive after the close no longer apply.
         reload.service(watches)?;
+        pasteboard.service(watches)?;
         let now = Instant::now();
         let reply_by = self.termination.reply_by();
         // The configuration child's exit watch and kill timer report through `Event::Ready`.
-        let mut open = usize::from(!reload.reaped());
+        let mut open = usize::from(!reload.reaped()) + pasteboard.children();
         let mut deadline = reply_by;
         if let Some(session) = session {
             session.service_closing(now, watches)?;
@@ -366,6 +375,7 @@ impl Open {
             let pending = pending.take().ok_or("the session started twice")?;
             app.insert(start(window, pending, first)?)
         };
+        window.service_pasteboard()?;
         let closed = app.service_batch(window, |app, window| {
             window.deliver_events(|event, window| app.handle_event(event, window))
         })?;
