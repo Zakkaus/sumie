@@ -25,6 +25,9 @@ def input_controls():
           "test tests::keys::modified_enter_is_cr_until_a_mode_asks_for_more ... FAILED")
     probe("legacy Ctrl+[ sends nothing", "test", BUILD, without_key_patch("install_control_bytes", 2),
           "test tests::keys::legacy_control_keys_send_their_c0_byte ... FAILED")
+    probe("modifyOtherKeys 2 sends Ctrl+[ as ESC", "test", BUILD,
+          without_key_patch("install_other_keys_without_text", 3),
+          "test tests::keys::modify_other_keys_2_encodes_control_keys_without_text ... FAILED")
     probe("size and color-scheme queries go unanswered", "test", "crates/sumie-vt/src/lib.rs",
           replace_once("            check(reports::register(terminal.raw))?;\n", ""),
           "test tests::reports::size_and_color_scheme_queries_get_replies ... FAILED")

@@ -42,9 +42,15 @@ fn modified_enter_is_cr_until_a_mode_asks_for_more() {
         (b"", Enter, CTRL, None, b"\r"),
         (b"", Enter, CTRL | SHIFT, None, b"\r"),
         (b"", Enter, ALT, None, b"\x1b\r"),
+        (b"", Enter, ALT | SHIFT, None, b"\x1b\r"),
+        (b"", Enter, ALT | CTRL, None, b"\x1b\r"),
+        (b"", Enter, ALT | CTRL | SHIFT, None, b"\x1b\r"),
+        (b"\x1b[>4;1m", Enter, ALT | CTRL, None, b"\x1b\r"),
         (b"\x1b[>4;2m", Enter, SHIFT, None, b"\x1b[27;2;13~"),
         (b"\x1b[>4;2m", Enter, CTRL, None, b"\x1b[27;5;13~"),
+        (b"\x1b[>4;2m", Enter, ALT | SHIFT, None, b"\x1b[27;4;13~"),
         (b"\x1b[>1u", Enter, SHIFT, None, b"\x1b[13;2u"),
+        (b"\x1b[>1u", Enter, CTRL | SHIFT, None, b"\x1b[13;6u"),
     ]);
 }
 
@@ -57,6 +63,24 @@ fn legacy_control_keys_send_their_c0_byte() {
         (b"", K::KeyI, CTRL, Some('i'), b"\t"),
         (b"", K::KeyM, CTRL, Some('m'), b"\r"),
         (b"", K::KeyC, CTRL, Some('c'), b"\x03"),
+        (b"", K::KeyA, CTRL | SHIFT, None, b"\x01"),
+        (b"", K::KeyZ, CTRL | SHIFT, None, b"\x1a"),
+        (b"", K::KeyA, ALT | CTRL | SHIFT, None, b"\x1b\x01"),
         (b"\x1b[>1u", K::BracketLeft, CTRL, Some('['), b"\x1b[91;5u"),
+    ]);
+}
+
+#[test]
+fn modify_other_keys_2_encodes_control_keys_without_text() {
+    use sumie_core::KeyCode as K;
+
+    const MODE: &[u8] = b"\x1b[>4;2m";
+    assert_key_bytes(&[
+        (MODE, K::BracketLeft, CTRL, Some('['), b"\x1b[27;5;91~"),
+        (MODE, K::KeyI, CTRL, Some('i'), b"\x1b[27;5;105~"),
+        (MODE, K::KeyM, CTRL, Some('m'), b"\x1b[27;5;109~"),
+        (MODE, K::KeyC, CTRL, Some('c'), b"\x1b[27;5;99~"),
+        (MODE, K::KeyA, CTRL | SHIFT, None, b"\x1b[27;6;65~"),
+        (b"\x1b[>4;1m", K::KeyA, CTRL | SHIFT, None, b"\x01"),
     ]);
 }
