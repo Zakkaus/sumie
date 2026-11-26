@@ -95,7 +95,7 @@ notarized, so macOS quarantines it after a download. Do one of the following:
   choose "Open Anyway" next to sumie.
 - Or remove the quarantine flag: `xattr -dr com.apple.quarantine /Applications/sumie.app`.
 
-macOS 13 is the declared minimum. Only macOS 15 (the CI runner) and macOS 27 are tested. As
+macOS 13 is the declared minimum. Only macOS 26 and 27 are tested. As
 noted at the top, the macOS build shows a GPU test page for now.
 
 ### Distribution packages
