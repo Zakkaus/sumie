@@ -17,7 +17,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             zig-platform: aarch64-linux
             zig-sha256: a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3fe7795
-          - runner: macos-15
+          - runner: macos-26
             zig-platform: aarch64-macos
             zig-sha256: 75f1bc7a1e9852f17ec9a0c1895f767c4ec56d46bc8a834920eece1d0359dd8d
     runs-on: ${{ matrix.runner }}
@@ -136,7 +136,7 @@ jobs:
 
   # Native Quit through the pinned winit fork: nine cases, then the three controls.
   macos-quit:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 25
     env:
       MACOSX_DEPLOYMENT_TARGET: '13.0'
