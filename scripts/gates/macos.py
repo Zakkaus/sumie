@@ -1,4 +1,4 @@
-"""The macOS window gates: wake, keys, frame slot, and close and Quit."""
+"""The macOS window gates: wake, keys, pasteboard, frame slot, and close and Quit."""
 import os
 from pathlib import Path
 import subprocess
@@ -88,6 +88,19 @@ def check_macos_keys():
                               timeout=FRAME_TIMEOUT).returncode
     except subprocess.TimeoutExpired:
         print("macos-keys: the check timed out", file=sys.stderr)
+        return 1
+
+
+def check_macos_pasteboard():
+    """Copy and paste through the helpers on a named board; see scripts/macos/pasteboard.py."""
+    if sys.platform != "darwin":
+        raise CannotCheck("the pasteboard check needs the macOS window server")
+    binary = runner_binary()
+    try:
+        return subprocess.run([sys.executable, ROOT / "scripts/macos/pasteboard.py", binary],
+                              timeout=FRAME_TIMEOUT).returncode
+    except subprocess.TimeoutExpired:
+        print("macos-pasteboard: the check timed out", file=sys.stderr)
         return 1
 
 

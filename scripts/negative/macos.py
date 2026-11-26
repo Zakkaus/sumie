@@ -130,6 +130,30 @@ def macos_controls():
                            "                input::report_focus(&mut pane.pane, false)?;\n"
                            "            }\n"),
               "keys: focus: 2 focus-out reports for one focus loss")
+        # Reading the general board first, the check fails before anything could write to it.
+        probe("serve the general board in the check", "macos-pasteboard", "src/macos/pasteboard.rs",
+              replace_once("let board = std::env::var(BOARD_ENV).ok();",
+                           "let board = std::env::var(BOARD_ENV).ok().filter(|_| false);"),
+              "pasteboard: paste: recorded")
+        probe("stamp a paste with the current generation", "macos-pasteboard", "src/macos/window.rs",
+              replace_once("                generation: recipient,\n",
+                           "                generation: {\n                    let _ = recipient;\n"
+                           "                    self.generation\n                },\n"),
+              "pasteboard: stale: 2 pastes")
+        probe("send a paste unframed when the framed one does not fit", "macos-pasteboard", "src/pane.rs",
+              replace_once("                self.pty.enqueue_input(&self.terminal.encode_paste(text)?)?;\n",
+                           "                let unframed = text.clone().into_bytes();\n"
+                           "                if self.pty.enqueue_input(&self.terminal.encode_paste(text)?).is_err() {\n"
+                           "                    self.pty.enqueue_input(&unframed)?;\n"
+                           "                }\n"),
+              "pasteboard: oversized: recorded")
+        probe("no pasteboard helper timeout", "macos-pasteboard", "src/macos/pasteboard.rs",
+              replace_once("const TIMEOUT: Duration = Duration::from_secs(5);",
+                           "const TIMEOUT: Duration = Duration::from_secs(3600);"),
+              "pasteboard: stalled: the helper outlived its 5 s timeout")
+        probe("OSC 52 write without focus", "macos-pasteboard", "src/macos/window.rs",
+              replace_once("        if !self.focused {\n", "        if false && !self.focused {\n"),
+              "pasteboard: osc52: a write without focus changed the board")
         probe("configure on Resized", "macos-resize", "src/app/window_events.rs",
               replace_once("session.view.request_resize(scale, logical, device);\n",
                            "session.view.request_resize(scale, logical, device);\n"

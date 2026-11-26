@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""M1b-2 pasteboard check on the terminal driver, run by check-gate.py.
+
+usage: pasteboard.py BINARY [EVIDENCE_DIR]
+
+Starts the terminal runner like keys.py with SUMIE_MACOS_CI_PASTEBOARD naming a fresh board,
+so its pasteboard helpers serve that board instead of the general one. The check reaches the
+board through its own tool (pbfixture.m), runs keyrec.py in the shell and posts real `CGEvent`
+keys: Ctrl+Shift+V pastes and Ctrl+Shift+C copies through the shared actions. Exit 0 on a
+pass, 1 on a violation, 2 if it cannot check. Contents never appear in its output.
+  paste      The board's string arrives as is, and framed whole in mode 2004.
+  empty      A board without a string, or with an empty one, sends nothing; a later paste
+             still arrives.
+  oversized  A string over 1 MiB sends nothing; in mode 2004, one whose framing makes it
+             1 MiB + 1 sends nothing, and one that fills the 1 MiB FIFO exactly arrives whole.
+  stale      A paste whose provider answers after search opened and closed sends nothing;
+             the paste requested after it arrives once.
+  stalled    A provider that never answers: nothing arrives, pings stay <= 100 ms, and within
+             6.2 s of the request no helper is left; then a paste arrives again.
+  copy       Selecting a row leaves the sentinel; Ctrl+Shift+C replaces it with the row.
+  osc52      A focused OSC 52 write sets the board and an empty one clears it; without focus
+             the board keeps its sentinel; a query gets no contents back.
+After every case the general board's change count must be unchanged (it is never read).
+"""
+import base64
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from frames import RECORD_TIMING, CannotCheck, Runner, build_tools  # noqa: E402
+from keys import CONTROL, SHIFT, Keys, Violation  # noqa: E402
+
+SCRIPTS = Path(__file__).resolve().parent
+LIMIT = 1 << 20
+C, V, F, ESCAPE = 0x08, 0x09, 0x03, 0x35
+CONTENT = "sumie 墨 paste\tend"
+START, END = "1b5b3230307e", "1b5b3230317e"
+HELPER_TIMEOUT = 5.0
+REAPED_BY = 6.2
+PING_LIMIT_MS = 100.0
+
+
+def framed(text):
+    return START + text.encode().hex() + END
+
+
+class Board:
+    def __init__(self, tool, name):
+        self.tool, self.name = str(tool), name
+
+    def run(self, *args, text=None, board=None):
+        return subprocess.run([self.tool, args[0], board or self.name, *args[1:]], capture_output=True,
+                              input=None if text is None else text.encode(), timeout=10)
+
+    def set(self, text):
+        if self.run("set", text=text).returncode:
+            raise CannotCheck("pbfixture could not set the board")
+
+    def clear(self):
+        self.run("clear")
+
+    def get(self):
+        result = self.run("get")
+        return None if result.returncode == 3 else result.stdout.decode()
+
+    def general_count(self):
+        return int(self.run("count", board="general").stdout)
+
+    def provide(self, text, delay_ms):
+        process = subprocess.Popen([self.tool, "provide", self.name, str(delay_ms)], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE)
+        process.stdin.write(text.encode())
+        process.stdin.close()
+        if process.stdout.readline().strip() != b"ready":
+            raise CannotCheck("pbfixture could not promise the board")
+        return process
+
+
+class Check:
+    def __init__(self, runner, board):
+        self.runner, self.board, self.keys = runner, board, Keys(runner)
+        self.general = board.general_count()
+
+    def chord(self, code):
+        self.keys.key(CONTROL, "down", "control")
+        self.keys.key(SHIFT, "down", "shift+control")
+        self.keys.tap(code, "shift+control")
+        self.keys.key(SHIFT, "up", "control")
+        self.keys.key(CONTROL, "up")
+
+    def paste(self):
+        self.chord(V)
+
+    def await_recorded(self, out, length, timeout=5.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end and len("".join(out.read_text().split())) < length:
+            time.sleep(0.05)
+        return self.keys.recorded(out)
+
+    def shell(self, command):
+        self.runner.send(f"type {command}")
+        time.sleep(0.5)
+
+    def await_board(self, want, timeout=5.0):
+        end = time.monotonic() + timeout
+        got = self.board.get()
+        while got != want and time.monotonic() < end:
+            time.sleep(0.05)
+            got = self.board.get()
+        return got
+
+    def general_unchanged(self, case):
+        if self.board.general_count() != self.general:
+            raise Violation(f"pasteboard: {case}: the general pasteboard changed (a copy elsewhere during "
+                            "the check also counts)")
+
+
+def expect(case, got, want, what):
+    if got != want:
+        raise Violation(f"pasteboard: {case}: recorded {len(got) // 2} bytes instead of {what} "
+                        f"({len(want) // 2} bytes)")
+    print(f"pasteboard: {case}: {what}")
+
+
+def case_paste(check):
+    check.board.set(CONTENT)
+    for name, modes, want in (("paste", "plain", CONTENT.encode().hex()), ("framed", "paste", framed(CONTENT))):
+        out = check.keys.start(name, modes)
+        check.paste()
+        got = check.await_recorded(out, len(want))
+        check.keys.stop(name)
+        expect(name, got, want, "the board's string only" if modes == "plain" else "the string framed once")
+
+
+def case_empty(check):
+    out = check.keys.start("empty", "paste")
+    for fill in (check.board.clear, lambda: check.board.set("")):
+        fill()
+        check.paste()
+        time.sleep(1.0)
+    check.board.set("after empty")
+    check.paste()
+    got = check.await_recorded(out, len(framed("after empty")))
+    check.keys.stop("empty")
+    expect("empty", got, framed("after empty"), "nothing for no string and an empty one, then the next paste")
+
+
+def case_oversized(check):
+    out = check.keys.start("oversized", "paste")
+    for length in (LIMIT + 1, LIMIT - 11):
+        check.board.set("x" * length)
+        check.paste()
+        time.sleep(2.0)
+    fits = "x" * (LIMIT - 12)
+    check.board.set(fits)
+    check.paste()
+    got = check.await_recorded(out, len(framed(fits)), timeout=20.0)
+    check.keys.stop("oversized")
+    expect("oversized", got, framed(fits), "nothing for 1 MiB + 1 and a framed 1 MiB + 1, then a whole 1 MiB")
+
+
+def case_stale(check):
+    out = check.keys.start("stale", "paste")
+    provider = check.board.provide("stale paste", 1500)
+    try:
+        check.paste()
+        if provider.stdout.readline().strip() != b"asked":
+            raise CannotCheck("the provider was not asked")
+        # A new recipient generation: search opens and closes before the provider answers.
+        check.chord(F)
+        check.keys.tap(ESCAPE)
+        check.paste()
+        got = check.await_recorded(out, 2 * len(framed("stale paste")), timeout=4.0)
+    finally:
+        provider.kill()
+        provider.wait()
+    check.keys.stop("stale")
+    count = got.count(framed("stale paste"))
+    if got != framed("stale paste"):
+        raise Violation(f"pasteboard: stale: {count} pastes ({len(got) // 2} bytes) instead of one: the paste "
+                        "requested before the recipient changed arrived")
+    print("pasteboard: stale: the paste requested before the recipient changed was dropped")
+
+
+def helpers(runner):
+    listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat=,command="], capture_output=True,
+                             text=True).stdout
+    parent = str(runner.process.pid)
+    return [fields[0] for fields in (line.split(None, 3) for line in listing.splitlines())
+            if len(fields) == 4 and fields[1] == parent
+            and ("--internal-pasteboard" in fields[3] or fields[2].startswith("Z"))]
+
+
+def case_stalled(check):
+    out = check.keys.start("stalled", "paste")
+    provider = check.board.provide("never", -1)
+    runner = check.runner
+    try:
+        runner.start_pings()
+        asked = time.monotonic()
+        check.paste()
+        if provider.stdout.readline().strip() != b"asked":
+            raise CannotCheck("the provider was not asked")
+        time.sleep(max(0.0, asked + REAPED_BY - time.monotonic()))
+        runner.pinging = False
+        left = helpers(runner)
+        early = check.keys.recorded(out)
+    finally:
+        runner.pinging = False
+        provider.kill()
+        provider.wait()
+    worst, count = runner.worst_ping_ms(asked, asked + HELPER_TIMEOUT)
+    errors = []
+    if early:
+        errors.append(f"pasteboard: stalled: recorded {len(early) // 2} bytes from a provider that never answered")
+    if left:
+        errors.append(f"pasteboard: stalled: the helper outlived its {HELPER_TIMEOUT:.0f} s timeout "
+                      f"({len(left)} left {REAPED_BY} s after the request)")
+    print(f"pasteboard: stalled: worst ping {worst:.1f} ms over {count} pings")
+    if worst > PING_LIMIT_MS:
+        message = f"pasteboard: stalled: a ping took {worst:.1f} ms (limit {PING_LIMIT_MS:.0f} ms)"
+        if RECORD_TIMING:
+            print(f"{message} (recorded only)")
+        else:
+            errors.append(message)
+    check.board.set("after stall")
+    check.paste()
+    got = check.await_recorded(out, len(early) + len(framed("after stall")))
+    check.keys.stop("stalled")
+    if errors:
+        raise Violation("\n".join(errors))
+    expect("stalled", got, framed("after stall"), "nothing from the stalled provider, then the next paste")
+
+
+def case_copy(check):
+    check.board.set("sentinel")
+    # Erasing the display pushes the rows to history, where the wrapped command line before it
+    # would join row 0's logical line; erase the history too.
+    printed = check.runner.home / "copy.printed"
+    check.runner.send(f"type printf '\\033[3J\\033[2J\\033[Hsumie-copy-fixture\\n'; : > {shlex.quote(str(printed))}")
+    check.runner.wait_for_file(printed)
+    time.sleep(0.3)
+    asked = time.monotonic()
+    check.runner.send("select 0")
+    _, fields = check.runner.wait_for("runner", "selected", since=asked)
+    if fields[2] != "true":
+        raise CannotCheck("the runner could not select the fixture row")
+    time.sleep(1.0)
+    if check.board.get() != "sentinel":
+        raise Violation("pasteboard: copy: selecting a row changed the sentinel")
+    check.chord(C)
+    got = check.await_board("sumie-copy-fixture")
+    if got != "sumie-copy-fixture":
+        state = "kept the sentinel" if got == "sentinel" else f"holds {len(got or '')} other bytes"
+        raise Violation(f"pasteboard: copy: after Ctrl+Shift+C the board {state}")
+    print("pasteboard: copy: the sentinel stays on select and Ctrl+Shift+C replaces it with the row")
+
+
+def osc52(text):
+    return f"printf '\\033]52;c;%s\\007' {base64.b64encode(text.encode()).decode()}"
+
+
+def case_osc52(check):
+    check.board.set("sentinel")
+    check.shell(osc52("osc52 write 墨"))
+    if check.await_board("osc52 write 墨") != "osc52 write 墨":
+        raise Violation("pasteboard: osc52: a focused write did not reach the board")
+    check.shell("printf '\\033]52;c;\\007'")
+    if check.await_board(None) is not None:
+        raise Violation("pasteboard: osc52: a focused clear left a string on the board")
+    check.board.set("sentinel")
+    check.keys.focus(False)
+    check.shell(osc52("osc52 unfocused"))
+    time.sleep(1.0)
+    check.keys.focus(True)
+    if check.board.get() != "sentinel":
+        raise Violation("pasteboard: osc52: a write without focus changed the board")
+    check.keys.start("osc52", "osc52")
+    time.sleep(1.0)
+    got = check.keys.stop("osc52")
+    if "sentinel".encode().hex() in got or base64.b64encode(b"sentinel").hex() in got:
+        raise Violation("pasteboard: osc52: a query got the board's contents back")
+    print(f"pasteboard: osc52: focused write and clear apply, unfocused write dropped, query answered with "
+          f"{len(got) // 2} bytes and no contents")
+
+
+CASES = (case_paste, case_empty, case_oversized, case_stale, case_stalled, case_copy, case_osc52)
+
+
+def main():
+    if len(sys.argv) not in (2, 3):
+        print(__doc__, file=sys.stderr)
+        return 2
+    binary = sys.argv[1]
+    evidence = Path(sys.argv[2]) if len(sys.argv) == 3 else None
+    errors = []
+    with tempfile.TemporaryDirectory(prefix="sumie-pasteboard.") as scratch:
+        board = Board(Path(scratch) / "pbfixture", f"org.sumie.check.{os.getpid()}.{time.monotonic_ns()}")
+        try:
+            subprocess.run(["xcrun", "clang", "-arch", "arm64", "-fobjc-arc", "-Wall", "-Wextra", "-Werror",
+                            "-framework", "AppKit", SCRIPTS / "pbfixture.m", "-o", board.tool], check=True)
+            hook, _ = build_tools(Path(scratch), False)
+            board.set("sentinel")
+            os.environ["SUMIE_MACOS_CI_PASTEBOARD"] = board.name
+            runner = Runner(binary, hook, str(Path(scratch) / "home"))
+        except (OSError, subprocess.CalledProcessError, CannotCheck) as error:
+            print(f"pasteboard: could not start: {error}", file=sys.stderr)
+            return 2
+        try:
+            if not runner.first.wait(30):
+                raise CannotCheck("no first frame")
+            runner.wait_for("runner", "focused", "true", timeout=10)
+            check = Check(runner, board)
+            for case in CASES:
+                case(check)
+                check.general_unchanged(case.__name__.removeprefix("case_"))
+        except CannotCheck as error:
+            print(f"pasteboard: could not check: {error}", file=sys.stderr)
+            return 2
+        except Violation as error:
+            errors += str(error).splitlines()
+        finally:
+            code = runner.close()
+            board.clear()
+    if code != 0:
+        errors.append(f"pasteboard: the runner exited {code}")
+    if evidence:
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "pasteboard.json").write_text(json.dumps({"errors": errors, "load": os.getloadavg()}, indent=1))
+    for error in errors:
+        print(error, file=sys.stderr)
+    return int(bool(errors))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
