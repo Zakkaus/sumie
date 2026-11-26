@@ -134,6 +134,9 @@ def macos_controls():
         probe("select the general board in a macos-ci build", "test", "src/macos/pasteboard.rs",
               replace_once("    Ok(Board::named(name)?)\n}", "    let _ = name;\n    Ok(Board::General)\n}"),
               "test macos::pasteboard::tests::a_ci_build_serves_only_a_named_board ... FAILED")
+        probe("start a helper for every repeated paste", "test", "src/macos/pasteboard.rs",
+              replace_once("            && self.reading(recipient)\n", "            && self.reading(recipient) && false\n"),
+              "test macos::pasteboard::tests::a_second_paste_for_the_same_recipient_joins_the_pending_one ... FAILED")
         probe("stamp a paste with the current generation", "macos-pasteboard", "src/macos/window.rs",
               replace_once("                generation: recipient,\n",
                            "                generation: {\n                    let _ = recipient;\n"

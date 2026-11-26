@@ -138,6 +138,29 @@ fn a_ci_build_serves_only_a_named_board() {
 }
 
 #[test]
+fn a_second_paste_for_the_same_recipient_joins_the_pending_one() {
+    let board = unique();
+    let mut fixture = Fixture::new(child(&board), TIMEOUT);
+    fixture.request(Request::Write(Some("once".to_owned())));
+    for recipient in [4, 4, 5, 4] {
+        fixture.request(Request::Read { recipient });
+    }
+    fixture.settle();
+    assert_eq!(
+        fixture.pasted,
+        [("once".to_owned(), 4), ("once".to_owned(), 5)]
+    );
+    assert_eq!(
+        fixture.pasteboard.next_id, 3,
+        "one helper per distinct request"
+    );
+    // Once the reply is in, the recipient's next paste reads again.
+    fixture.request(Request::Read { recipient: 4 });
+    fixture.settle();
+    assert_eq!(fixture.pasted.len(), 3);
+}
+
+#[test]
 fn an_empty_or_oversized_board_pastes_nothing() {
     let name = unique();
     let board = Board::named(&name).unwrap();

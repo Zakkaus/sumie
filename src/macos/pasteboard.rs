@@ -10,7 +10,8 @@
 //! reaps every child on exit readiness with `try_wait` and never waits or joins.
 //!
 //! A read's reply carries the recipient generation of its request, and the session drops it
-//! when that recipient is gone. Contents never reach argv or the logs.
+//! when that recipient is gone; a read for a recipient that already has one pending joins it.
+//! Contents never reach argv or the logs.
 //!
 //! Release builds serve the general board. A `macos-ci` build serves only the board that
 //! `SUMIE_MACOS_CI_PASTEBOARD` names and refuses every request without one, so no check
@@ -162,6 +163,12 @@ impl Pasteboard {
             );
             return;
         }
+        if let Request::Read { recipient } = request
+            && self.reading(recipient)
+        {
+            tracing::debug!("a paste for this recipient is already pending");
+            return;
+        }
         if self.queue.len() >= QUEUE {
             tracing::warn!("too many pasteboard requests are waiting; dropped one");
             return;
@@ -219,6 +226,17 @@ impl Pasteboard {
     /// Children not yet reaped.
     pub(super) fn children(&self) -> usize {
         self.closing.len() + usize::from(self.running.is_some())
+    }
+
+    /// Whether a read for `recipient` is in flight or waiting.
+    fn reading(&self, recipient: u64) -> bool {
+        self.running
+            .as_ref()
+            .is_some_and(|running| running.recipient == Some(recipient))
+            || self
+                .queue
+                .iter()
+                .any(|request| matches!(*request, Request::Read { recipient: r } if r == recipient))
     }
 
     fn start_next(&mut self, watches: &mut Watches) {
