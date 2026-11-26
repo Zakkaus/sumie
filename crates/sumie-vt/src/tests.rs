@@ -1,4 +1,6 @@
+mod keys;
 mod kitty_budget;
+mod reports;
 
 use sumie_core::graphics::{ImageSource, PixelFormat};
 

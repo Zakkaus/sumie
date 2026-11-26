@@ -9,6 +9,7 @@ mod graphics;
 mod identity;
 mod key;
 mod mouse;
+mod reports;
 mod search;
 mod selection;
 mod shell;
@@ -155,6 +156,7 @@ impl Terminal {
                 terminal.effects.cast(),
             ))?;
             check(effects::register(terminal.raw))?;
+            check(reports::register(terminal.raw))?;
             check(ffi::ghostty_terminal_set(
                 terminal.raw,
                 ffi::TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,

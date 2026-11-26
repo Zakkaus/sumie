@@ -8,6 +8,7 @@ import sys
 # Importing the control modules must not leave bytecode in the worktree: the controls compare
 # its status before and after.
 sys.dont_write_bytecode = True
+from negative.input import input_controls  # noqa: E402
 from negative.macos import macos_controls  # noqa: E402
 from negative.probe import ROOT, GateUnavailable, append, git_status, probe, replace_once  # noqa: E402
 
@@ -330,6 +331,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         probe("SIGKILL escalation removed", "linux-panes", "crates/sumie-pty/src/child.rs",
               replace_once("            signal_group(self.pid, Signal::KILL)?;\n", ""),
               "the shell was not reaped within 6 s of the close")
+    input_controls()
     macos_controls()
     if sys.platform.startswith("linux") and shutil.which("kwin_wayland"):
         pane_controls()

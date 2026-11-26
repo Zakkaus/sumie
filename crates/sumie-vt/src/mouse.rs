@@ -116,11 +116,15 @@ impl Terminal {
                 from_mut(&mut alternate_scroll).cast(),
             ))?;
         }
-        Ok((
-            tracking,
-            self.screen_id()? == SCREEN_ALTERNATE,
-            alternate_scroll.value,
-        ))
+        Ok((tracking, self.alternate_screen()?, alternate_scroll.value))
+    }
+
+    /// Whether the alternate screen is active.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the active screen.
+    pub fn alternate_screen(&self) -> Result<bool, Error> {
+        Ok(self.screen_id()? == SCREEN_ALTERNATE)
     }
 
     /// Identify the active screen (primary or alternate).

@@ -5,6 +5,8 @@ use std::process::Command;
 
 #[path = "build/clock.rs"]
 mod clock_patch;
+#[path = "build/keys.rs"]
+mod keys_patch;
 #[path = "build/kitty.rs"]
 mod kitty_patch;
 
@@ -12,7 +14,7 @@ const GHOSTTY_COMMIT: &str = "108cacb17ed8990840cd14abfce43d8ed8503ca1";
 const GHOSTTY_ARCHIVE_SHA256: &str =
     "2c276d3e62cb15fb38f0d7f621f199029d1d4df86538096c6bec2a107cad7159";
 // Bump when changing patches already applied to a cached extraction.
-const GHOSTTY_PATCH_LEVEL: u32 = 3;
+const GHOSTTY_PATCH_LEVEL: u32 = 4;
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
@@ -50,6 +52,8 @@ fn main() {
     install_placement_lifetime(&source);
     install_screen_clear_epoch(&source);
     clock_patch::install(&source);
+    keys_patch::install_plain_enter(&source);
+    keys_patch::install_control_bytes(&source);
     let prefix = out.join("ghostty-install");
     let mut build = Command::new(zig);
     build
