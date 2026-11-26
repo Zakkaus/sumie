@@ -317,9 +317,16 @@ impl Pasteboard {
             return Ok(());
         }
         let at = Instant::now() + KILL_AFTER;
-        helper.kill = Some((at, self.timers.register(at)?));
+        let result = self
+            .timers
+            .register(at)
+            .map(|key| helper.kill = Some((at, key)));
+        if result.is_err() {
+            // No deadline would kill it: kill it now and reap it on its exit watch.
+            let _ = helper.child.kill();
+        }
         self.closing.push(helper);
-        Ok(())
+        result
     }
 }
 
