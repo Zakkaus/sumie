@@ -1,0 +1,180 @@
+"""The negative controls that need macOS: the window gates and the macos-ci build."""
+import os
+import sys
+
+from negative.probe import append, probe, replace_once
+
+# A default-mode-only performSelector wake. objc2 marks performSelector unsafe, so the
+# probe also lifts sumie-macos's unsafe forbid; only this temporary build sees either.
+DEFAULT_MODE_WAKE = """    let send = move || {
+        let _ = proxy.send_event(event.clone());
+    };
+    let _ = DEFAULT_MODE_WAKE.set(std::sync::Mutex::new(Box::new(send)));
+    || {
+        let target: objc2::rc::Retained<DefaultModeWake> =
+            unsafe { objc2::msg_send![<DefaultModeWake as objc2::ClassType>::class(), new] };
+        let modes = objc2_foundation::NSArray::from_slice(&[objc2_foundation::ns_string!(
+            "kCFRunLoopDefaultMode"
+        )]);
+        let () = unsafe {
+            objc2::msg_send![&*target, performSelectorOnMainThread: objc2::sel!(wake),
+                withObject: None::<&objc2::runtime::AnyObject>, waitUntilDone: false,
+                modes: &*modes]
+        };
+    }
+}
+
+static DEFAULT_MODE_WAKE: std::sync::OnceLock<std::sync::Mutex<Box<dyn Fn() + Send>>> =
+    std::sync::OnceLock::new();
+
+objc2::define_class!(
+    #[unsafe(super(objc2::runtime::NSObject))]
+    #[thread_kind = objc2::AnyThread]
+    #[name = "SumieDefaultModeWake"]
+    struct DefaultModeWake;
+
+    impl DefaultModeWake {
+        #[unsafe(method(wake))]
+        fn wake(&self) {
+            (DEFAULT_MODE_WAKE.get().unwrap().lock().unwrap())();
+        }
+    }
+);
+"""
+
+
+def macos_controls():
+    if sys.platform == "darwin":
+        probe("pedantic lint in macos-ci code", "clippy-macos-ci", "crates/sumie-macos/src/runner.rs",
+              append("#[must_use]\npub fn narrow_probe(value: u16) -> u8 {\n    value as u8\n}\n"),
+              "clippy::cast_possible_truncation")
+        probe("default-mode-only performSelector wake", "macos-wake", "crates/sumie-macos/src/lib.rs",
+              lambda source: replace_once("#![forbid(unsafe_code)]\n", "")(
+                  replace_once("    move || {\n        let _ = proxy.send_event(event.clone());\n    }\n}\n",
+                               DEFAULT_MODE_WAKE)(source)),
+              "macos-wake: event-tracking: no wake inside the 300 ms interval")
+        probe("exit watch removed on the first NOTE_EXIT", "test", "src/macos/sources.rs",
+              replace_once("        self.take_ready(id).exit\n",
+                           "        let exit = self.take_ready(id).exit;\n"
+                           "        if exit {\n"
+                           "            self.readiness.remove(Key::new(id, Interest::Exit));\n"
+                           "        }\n"
+                           "        exit\n"),
+              "test macos::sources::tests::an_unreaped_exit_keeps_reporting_until_unregistered ... FAILED")
+        probe("wake for a removed key delivered", "test", "crates/sumie-macos/src/readiness.rs",
+              replace_once("        let live = !state.ready.is_empty();\n", "        let live = true;\n"),
+              "test macos::sources::tests::a_report_queued_before_unregister_never_surfaces_after_it ... FAILED")
+        probe("no re-watch after an early NOTE_EXIT", "test", "crates/sumie-pty/src/child/macos.rs",
+              replace_once("            self.rewatch()?;\n        }\n        Ok(status",
+                           "        }\n        Ok(status"),
+              "test child::platform::tests::early_note_exit_is_watched_until_reaped ... FAILED")
+        probe("frame cap checked after allocation", "test", "src/reload/frame.rs",
+              lambda source: replace_once(
+                  "        if size > MAX_BODY {\n            return Err(FrameError::TooLong(length));\n"
+                  "        }\n        Ok((kind, size))", "        Ok((kind, size))")(
+                  replace_once("            self.body = Some((kind, Vec::with_capacity(length), length));\n",
+                               "            self.body = Some((kind, Vec::with_capacity(length), length));\n"
+                               "            if length > MAX_BODY {\n"
+                               "                return Err(FrameError::TooLong(u32::try_from(length).unwrap()));\n"
+                               "            }\n")(source)),
+              "test reload::frame::tests::a_body_over_the_cap_is_rejected_before_allocation ... FAILED")
+        probe("config child waited for in Drop", "test", "src/macos/reload.rs",
+              replace_once("    fn drop(&mut self) {\n        if let Some((_, key)) = self.kill.take() {",
+                           "    fn drop(&mut self) {\n        let _ = self.child.wait();\n"
+                           "        if let Some((_, key)) = self.kill.take() {"),
+              "test macos::reload::tests::dropping_a_blocked_child_does_not_wait ... FAILED")
+        probe("Core Text bypasses every fallback step", "test", "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("let Some(ch) = ch else {", "let Some(ch) = ch.filter(|_| false) else {"),
+              "test tests::core_text_loads_the_named_collection_face_and_cjk_fallback ... FAILED")
+        probe("Core Text system-wide fallback queries an uncovered character", "test",
+              "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("location: u32::from(ch).try_into().ok()?,", "location: 0x378,"),
+              "test tests::core_text_system_wide_fallback_covers_cjk ... FAILED")
+        probe("Core Text system-wide fallback runs for undrawable characters", "font-test",
+              "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("        if !drawable(ch) {\n", "        if !drawable(ch) && false {\n"),
+              "test discovery::core_text::tests::undrawable_misses_skip_the_system_wide_step ... FAILED")
+        probe("Core Text system-wide fallback waits for the worker without a bound", "test",
+              "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("self.answers.recv_timeout(SYSTEM_WIDE_WAIT)", "self.answers.recv()"),
+              "test discovery::core_text::tests::a_slow_system_wide_lookup_is_pending_after_the_wait ... FAILED")
+        login = "test macos::login::tests::"
+        lsof = login + "a_login_shell_inherits_no_parent_descriptor ... "
+        probe("bridge duplicate inherited across exec", "test", "crates/sumie-macos/src/readiness.rs",
+              replace_once("        let fd = fd.try_clone_to_owned()?;\n",
+                           "        let fd = fd.try_clone_to_owned()?;\n"
+                           "        fcntl(&fd, FcntlArg::F_SETFD(FdFlag::empty()))?;\n"),
+              lsof + "FAILED")
+        # XNU never copies a kqueue into a child, so the lsof test stays green here; the flag
+        # test catches it, and the duplicates above are what the bridge could leak.
+        probe("bridge kqueue without FD_CLOEXEC", "test", "crates/sumie-macos/src/readiness.rs",
+              replace_once("fcntl(&queue, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;",
+                           "fcntl(&queue, FcntlArg::F_SETFD(FdFlag::empty()))?;"),
+              "test readiness::tests::bridge_descriptors_close_on_exec ... FAILED")
+        probe("PS0 exported to Bash 3.2", "test", "shell-integration/bash/sumie.bash",
+              replace_once("\n_sumie_ran=0\n", "\n_sumie_ran=0\nexport PS0='\\e]133;C\\a'\n"),
+              login + "bash_3_2_login_shell_reads_its_profile_once_and_marks_prompts ... FAILED")
+        probe("Bash 3.2 bootstrap no-op resets $?", "test", "shell-integration/bash/sumie.bash",
+              replace_once("""//"$_sumie_boot"/'${_sumie_ran+_sumie_keep}'}""", """//"$_sumie_boot"/:}"""),
+              login + "bash::bash_3_2_profile_appends_after_the_bootstrap ... FAILED")
+        probe("Bash 3.2 DEBUG trap not reinstalled", "test", "shell-integration/bash/sumie.bash",
+              replace_once('|| eval "${_sumie_trap-}"', "|| :"),
+              login + "bash::bash_3_2_reinstalls_its_trap_after_one_set_at_the_prompt ... FAILED")
+        probe("stop forwarding keys", "macos-keys", "src/macos/window.rs",
+              replace_once("            Native::Key(key) => self.key(key),\n", "            Native::Key(_) => (),\n"),
+              "keys: plain: recorded nothing instead of")
+        probe("report focus on ModifiersChanged", "macos-keys", "src/app/pane_input.rs",
+              replace_once("            pane.pane.pointer_modifiers_changed(modifiers);\n",
+                           "            pane.pane.pointer_modifiers_changed(modifiers);\n"
+                           "            if modifiers == KeyModifiers::default() {\n"
+                           "                input::report_focus(&mut pane.pane, false)?;\n"
+                           "            }\n"),
+              "keys: focus: 2 focus-out reports for one focus loss")
+        probe("configure on Resized", "macos-resize", "src/app/window_events.rs",
+              replace_once("session.view.request_resize(scale, logical, device);\n",
+                           "session.view.request_resize(scale, logical, device);\n"
+                           "                    self.gpu.resize(device);\n"),
+              "configures ran while GPU work was pending")
+        probe("present every turn even when clean", "macos-idle", "src/macos/window.rs",
+              replace_once("    fn background_commit_needed(&self) -> bool {\n        false",
+                           "    fn background_commit_needed(&self) -> bool {\n        true"),
+              "presents within")
+        probe("retry 50 ms after a drawable timeout", "macos-timeout", "src/macos/surface.rs",
+              replace_once("        self.hold(now + wait)\n",
+                           "        self.hold(now + wait.min(Duration::from_millis(50)))\n"),
+              "timeout: acquired again")
+        probe("free the frame slot on every wake", "macos-flood", "src/macos/driver.rs",
+              replace_once("                open.window.watches.dispatch()?;\n",
+                           "                open.window.watches.dispatch()?;\n"
+                           "                crate::platform::WindowOps::recover_frame_slot(&mut open.window);\n"),
+              "flood: more than one present per refresh")
+        probe("wait for the first settings without a deadline", "macos-loading", "src/macos/driver.rs",
+              replace_once("None if Instant::now() >= *first_by =>", "None if false && Instant::now() >= *first_by =>"),
+              "loading: no present within")
+        probe("keep the window visible until the reap", "macos-close", "src/macos/driver.rs",
+              replace_once("        open.window\n            .platform()\n            .order_out(context, move || done.set(true));\n",
+                           "        std::mem::forget(open.window.platform().window_owner());\n"
+                           "        let _ = context;\n"
+                           "        done.set(true);\n"),
+              "close: the window was still on screen when the child was reaped")
+        probe("no SIGKILL at the grace period", "macos-close", "src/app/lifetime.rs",
+              replace_once("if watches.take_exit_ready(*id) || pty.close_deadline().is_some_and(|at| at <= now) {",
+                           "if watches.take_exit_ready(*id) {"),
+              "close: no SIGKILL at the 3 s grace period")
+        probe("answer Cancel to a system quit", "macos-system", "crates/sumie-macos/src/lib.rs",
+              replace_once("                context.finish_quit();\n",
+                           "                context.run_after_handler(|| {\n"
+                           "                    objc2_app_kit::NSApplication::sharedApplication(\n"
+                           "                        objc2::MainThreadMarker::new().unwrap(),\n"
+                           "                    )\n"
+                           "                    .replyToApplicationShouldTerminate(false);\n"
+                           "                });\n"),
+              "system: the watchdog ended the process")
+        probe("no watchdog", "macos-stuck", "crates/sumie-macos/src/termination.rs",
+              replace_once(".spawn(move || watch(&watched))?", ".spawn(move || drop(watched))?"),
+              "stuck: still running 10.5 s after the quit")
+        # Its marker is a rate, which hosted runners only record.
+        if os.environ.get("SUMIE_TIMING") != "record":
+            probe("an 8-byte PTY read buffer", "macos-throughput", "crates/sumie-pty/src/reader.rs",
+                  replace_once("const CHUNK_SIZE: usize = 8192;", "const CHUNK_SIZE: usize = 8;"),
+                  "(below 20 MB/s)")

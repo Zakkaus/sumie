@@ -5,14 +5,19 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import tomllib
 
-ROOT = Path(__file__).resolve().parents[1]
+# Importing the gate modules must not leave bytecode in the worktree: the negative controls
+# compare its status before and after.
+sys.dont_write_bytecode = True
+from gates.build import ROOT, CannotCheck, cargo_record, run  # noqa: E402
+from gates.macos import (FRAME_GATES, LIFETIME_GATES, check_macos_frames,  # noqa: E402
+                         check_macos_keys, check_macos_lifetime, check_macos_wake)
+from gates.panes import check_linux_panes, check_panes  # noqa: E402
+
 BASE = frozenset({"sumie-core", "sumie-config"})
 ADAPTERS = {"sumie-vt", "sumie-font", "sumie-render", "sumie-wayland", "sumie-macos", "sumie-pty"}
 EDGES = {name: BASE for name in ADAPTERS}
@@ -33,33 +38,13 @@ GATED_LINTS = {
 }
 CLIPPY_CONFIGS = {"clippy.toml", ".clippy.toml"}
 TEST_SUMMARY = re.compile(r"^test result: (ok|FAILED)\. ([0-9]+) passed;")
-CARGO_RECORDS = ("compiler-artifact", "compiler-message", "build-script-executed", "build-finished")
 FULL_REV = re.compile(r"[0-9a-f]{40}")
 DEBUG_PRINT = re.compile(r"\b(?:e?print(?:ln)?|dbg)!")
-WAKE_MODES = ("default", "event-tracking", "modal-panel")
-WAKE_LIMIT_NS = 100_000_000
-WAKE_TIMEOUT = 120
-# The terminal driver's frame-slot checks; scripts/macos/frames.py runs one case per gate.
-FRAME_GATES = {"macos-resize": "resize", "macos-idle": "idle", "macos-flood": "flood",
-               "macos-timeout": "timeout", "macos-throughput": "throughput",
-               "macos-loading": "loading"}
-FRAME_TIMEOUT = 300
-# The close and Quit contract; scripts/macos/lifetime.py runs each case in a fresh process.
-# macos-cycles is not in check-all: hosted CI records it, the owner's Mac measures it.
-LIFETIME_GATES = {"macos-close": ("close",), "macos-repeat": ("repeat",),
-                  "macos-fatal": ("fatal", "fatal-quit"), "macos-system": ("system", "system-fatal"),
-                  "macos-stuck": ("stuck", "stuck-system"), "macos-exit": ("exit",),
-                  "macos-cycles": ("cycles",)}
-LIFETIME_TIMEOUT = 120
 # The test gate builds first, so this bounds only the test binaries: a hung test fails the
 # gate in minutes instead of running until the CI job limit.
 TEST_TIMEOUT = 600
 # A probe that breaks sumie-font runs only its tests, so dependants cannot hang the gate.
 TEST_GATES = ("test", "font-test")
-PANES_TIMEOUT = 700
-PANES_TOOLS = ("kwin_wayland", "kscreen-doctor", "wayland-scanner", "cc", "pkg-config")
-PANES = 20
-PANES_SECONDS = 20
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -69,14 +54,6 @@ RUST_TOKEN = re.compile(
     r'(?:r\#)?\w+|\S'
 )
 BLOCK_DELIMITER = re.compile(r'/\*|\*/')
-
-
-class CannotCheck(Exception):
-    pass
-
-
-def run(*args):
-    return subprocess.run(args, cwd=ROOT, capture_output=True)
 
 
 def read_command(*args):
@@ -336,18 +313,6 @@ def check_structure():
     return int(bool(errors))
 
 
-def cargo_record(line):
-    if not line.startswith("{"):
-        return None
-    try:
-        record = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(record, dict) and record.get("reason") in CARGO_RECORDS:
-        return record
-    return None
-
-
 def run_cargo(args, timeout):
     """Runs cargo in its own process group, so a timeout also stops the test binaries."""
     with subprocess.Popen(["cargo", *args], cwd=ROOT, stdout=subprocess.PIPE,
@@ -431,159 +396,6 @@ def check_shell():
             print(f"{file}: [[ -v needs Bash 4.2; macOS has 3.2", file=sys.stderr)
             return 1
     return 0
-
-
-def built_binary(*features):
-    result = run("cargo", "build", "--locked", *features, "--message-format=json")
-    if result.returncode:
-        print(result.stderr.decode(errors="replace"), end="", file=sys.stderr)
-        raise CannotCheck(f"cargo build exited {result.returncode}")
-    for line in result.stdout.decode(errors="replace").splitlines():
-        record = cargo_record(line)
-        if (record and record["reason"] == "compiler-artifact" and record.get("executable")
-                and record["target"]["name"] == "sumie"):
-            return record["executable"]
-    raise CannotCheck("cargo build did not report the sumie executable")
-
-
-def runner_binary():
-    return built_binary("--features", "macos-ci")
-
-
-def check_macos_wake():
-    """A pipe write during each AppKit run-loop mode reaches the handler within 100 ms."""
-    if sys.platform != "darwin":
-        raise CannotCheck("the wake scenario needs the macOS window server")
-    binary = runner_binary()
-    with tempfile.TemporaryDirectory(prefix="sumie-wake.") as home:
-        env = {**os.environ, "SUMIE_MACOS_CI_RUNNER": "wake", "HOME": home,
-               "XDG_CONFIG_HOME": str(Path(home) / "config")}
-        try:
-            result = subprocess.run([binary], env=env, stdin=subprocess.DEVNULL, capture_output=True,
-                                    text=True, timeout=WAKE_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            print("macos-wake: the scenario timed out", file=sys.stderr)
-            return 1
-    print(result.stderr, end="", file=sys.stderr)
-    legs = {}
-    for line in result.stdout.splitlines():
-        fields = line.split()
-        if fields[:2] == ["runner", "wake"] and len(fields) == 6:
-            legs[fields[2]] = fields[3:]
-    errors = []
-    if result.returncode or "runner wake done" not in result.stdout:
-        errors.append(f"macos-wake: the scenario exited {result.returncode} without finishing")
-    for mode in WAKE_MODES:
-        if mode not in legs:
-            errors.append(f"macos-wake: {mode}: no report")
-            continue
-        latency, arrived, inside = legs[mode]
-        if latency == "none" or inside != "true":
-            errors.append(f"macos-wake: {mode}: no wake inside the 300 ms interval")
-        elif arrived != mode:
-            errors.append(f"macos-wake: {mode}: the wake ran in the {arrived} mode")
-        elif int(latency) > WAKE_LIMIT_NS:
-            errors.append(f"macos-wake: {mode}: {int(latency) / 1e6:.1f} ms exceeds 100 ms")
-        else:
-            print(f"macos-wake: {mode}: write to handler {int(latency) / 1e6:.3f} ms")
-    for error in errors:
-        print(error, file=sys.stderr)
-    return int(bool(errors))
-
-
-def check_macos_frames(case):
-    """One frame-slot case on the terminal driver; see scripts/macos/frames.py."""
-    if sys.platform != "darwin":
-        raise CannotCheck("the frame-slot checks need the macOS window server")
-    binary = runner_binary()
-    try:
-        return subprocess.run([sys.executable, ROOT / "scripts/macos/frames.py", case, binary],
-                              timeout=FRAME_TIMEOUT).returncode
-    except subprocess.TimeoutExpired:
-        print(f"macos-{case}: the case timed out", file=sys.stderr)
-        return 1
-
-
-def check_macos_keys():
-    """Keys and focus through the terminal driver to a recorder; see scripts/macos/keys.py."""
-    if sys.platform != "darwin":
-        raise CannotCheck("the keyboard check needs the macOS window server")
-    binary = runner_binary()
-    try:
-        return subprocess.run([sys.executable, ROOT / "scripts/macos/keys.py", binary],
-                              timeout=FRAME_TIMEOUT).returncode
-    except subprocess.TimeoutExpired:
-        print("macos-keys: the check timed out", file=sys.stderr)
-        return 1
-
-
-def check_macos_lifetime(cases):
-    """Close and Quit cases on the terminal driver; see scripts/macos/lifetime.py."""
-    if sys.platform != "darwin":
-        raise CannotCheck("the close and Quit checks need the macOS window server")
-    binary = runner_binary()
-    codes = []
-    for case in cases:
-        try:
-            codes.append(subprocess.run([sys.executable, ROOT / "scripts/macos/lifetime.py", case, binary],
-                                        timeout=LIFETIME_TIMEOUT).returncode)
-        except subprocess.TimeoutExpired:
-            print(f"macos-{case}: the case timed out", file=sys.stderr)
-            codes.append(1)
-    return 2 if 2 in codes else int(any(codes))
-
-
-def check_linux_panes():
-    """200 pane and 200 tab open/close cycles in a private KWin leave no handle, thread or
-    zombie above the baseline, and a pane that ignores SIGHUP closes without stalling drawing."""
-    if sys.platform != "linux":
-        raise CannotCheck("the pane cycle gate needs Linux and KWin")
-    missing = [tool for tool in PANES_TOOLS if shutil.which(tool) is None]
-    if missing:
-        raise CannotCheck(f"the pane cycle gate needs {', '.join(missing)}")
-    # Only a debug build writes the presentation log that the no-stall check reads.
-    binary = built_binary()
-    with tempfile.TemporaryDirectory(prefix="sumie-panes.") as artifacts:
-        try:
-            result = subprocess.run(["sh", ROOT / "scripts/perf/panes.sh", artifacts],
-                                    env={**os.environ, "SUMIE_BIN": binary}, stdin=subprocess.DEVNULL,
-                                    capture_output=True, text=True, timeout=PANES_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            print("linux-panes: the scenario timed out", file=sys.stderr)
-            return 1
-    print(result.stdout, end="")
-    if result.returncode == 0:
-        return 0
-    print(result.stderr[-4000:], end="", file=sys.stderr)
-    if result.returncode == 1 and "FAIL: " in result.stdout:
-        return 1
-    raise CannotCheck(f"the scenario exited {result.returncode} without a verdict")
-
-
-def check_panes():
-    """20 writer panes in a private nested KWin, release build: every writer advances, each
-    pane repaints within 200 ms of every line, and no presentation gap exceeds 100 ms."""
-    if sys.platform != "linux" or not shutil.which("kwin_wayland"):
-        raise CannotCheck("the pane budget needs kwin_wayland for a private nested session")
-    binary = built_binary("--release")
-    artifacts = tempfile.mkdtemp(prefix="sumie-panes.")
-    try:
-        for attempt in (1, 2):
-            result = subprocess.run(["sh", ROOT / "scripts/perf/stall.sh", artifacts,
-                                     str(PANES_SECONDS), "--panes", str(PANES)],
-                                    env={**os.environ, "SUMIE_BIN": binary},
-                                    stdin=subprocess.DEVNULL)
-            if not result.returncode:
-                shutil.rmtree(artifacts)
-                return 0
-            if attempt == 1:
-                print("panes: retrying once", file=sys.stderr, flush=True)
-    except BaseException:
-        shutil.rmtree(artifacts, ignore_errors=True)
-        raise
-    print(f"panes: stall.sh exited {result.returncode}; artifacts kept in {artifacts}",
-          file=sys.stderr)
-    return 1
 
 
 def main():
