@@ -6,9 +6,9 @@
 
 use std::{error::Error, fmt};
 
-use objc2::rc::Retained;
-use objc2_app_kit::NSPasteboard;
-use objc2_foundation::{NSString, ns_string};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_app_kit::{NSPasteboard, NSPasteboardItem};
+use objc2_foundation::{NSArray, NSString, ns_string};
 
 /// Which board a helper serves.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,11 +75,25 @@ pub fn read(board: &Board) -> Option<String> {
 /// Replace the board's contents with `text`, or clear them for `None`; returns whether the
 /// board took the string. The string goes to the pasteboard server at once, so it outlives
 /// the calling process.
+///
+/// The new item is whole before the clear, so the board changes only by the clear and one
+/// write after it. The API has no atomic replace: a write the server refuses after the clear
+/// leaves the board empty, unless another owner has written to it since.
 #[must_use]
 pub fn write(board: &Board, text: Option<&str>) -> bool {
     let board = board.open();
+    let Some(text) = text else {
+        board.clearContents();
+        return true;
+    };
+    let item = NSPasteboardItem::new();
+    if !item.setString_forType(&NSString::from_str(text), string_type()) {
+        return false;
+    }
     board.clearContents();
-    text.is_none_or(|text| board.setString_forType(&NSString::from_str(text), string_type()))
+    board.writeObjects(&NSArray::from_retained_slice(&[
+        ProtocolObject::from_retained(item),
+    ]))
 }
 
 #[cfg(test)]
@@ -110,6 +124,8 @@ mod tests {
         assert_eq!(read(&board), None);
         assert!(write(&board, Some("sumie 墨\n")));
         assert_eq!(read(&board).as_deref(), Some("sumie 墨\n"));
+        assert!(write(&board, Some("two")));
+        assert_eq!(read(&board).as_deref(), Some("two"));
         assert!(write(&board, None));
         assert_eq!(read(&board), None);
     }
