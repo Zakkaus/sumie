@@ -173,6 +173,7 @@ impl Pane for LocalPane {
                 }
             }
             PaneCommand::Mouse(event) => return self.pointer(event),
+            PaneCommand::ScrollPage { up } => return self.scroll_page(up),
             PaneCommand::Focus(focused) => {
                 let report = self.terminal.encode_focus(focused)?;
                 if !report.is_empty() {
@@ -214,6 +215,10 @@ impl Pane for LocalPane {
 
     fn snapshot(&mut self) -> Result<Snapshot> {
         Ok(self.terminal.render_snapshot()?)
+    }
+
+    fn primary_screen(&self) -> Result<bool> {
+        Ok(!self.terminal.alternate_screen()?)
     }
 }
 

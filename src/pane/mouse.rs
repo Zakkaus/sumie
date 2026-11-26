@@ -226,6 +226,12 @@ impl LocalPane {
         Ok(PaneEffect::None)
     }
 
+    /// Scroll the history by the grid's height.
+    pub(super) fn scroll_page(&mut self, up: bool) -> Result<PaneEffect> {
+        let rows = i32::try_from(self.mouse.grid[1]).unwrap_or(i32::MAX);
+        self.scroll_history(if up { -rows } else { rows })
+    }
+
     fn scroll_history(&mut self, steps: i32) -> Result<PaneEffect> {
         self.terminal.scroll_rows(steps)?;
         self.mouse.state.reset_clicks();

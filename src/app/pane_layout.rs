@@ -181,17 +181,19 @@ impl Session {
         )
     }
 
-    pub(super) fn focus_pane(&mut self, id: u64, window: &mut impl WindowOps) -> Result<()> {
+    /// Returns whether focus moved.
+    pub(super) fn focus_pane(&mut self, id: u64, window: &mut impl WindowOps) -> Result<bool> {
         let tab = self.tabs.active_mut().unwrap();
         let old = tab.tree.focused();
-        if tab.tree.focus(id) {
+        let moved = tab.tree.focus(id);
+        if moved {
             self.focus_changed(
                 Some((self.tabs.active_index().unwrap(), old)),
                 window,
                 false,
             )?;
         }
-        Ok(())
+        Ok(moved)
     }
 
     pub(super) fn drag_divider(&mut self, id: u64, pos: [u32; 2]) -> Result<()> {

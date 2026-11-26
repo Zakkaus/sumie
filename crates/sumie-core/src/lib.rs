@@ -62,6 +62,10 @@ pub enum Shortcut {
     Tab(TabAction),
     Pane(PaneAction),
     Zoom(FontZoom),
+    /// Scroll the history one page, up or down.
+    ScrollPage {
+        up: bool,
+    },
     Consume,
 }
 
@@ -90,7 +94,8 @@ impl Shortcuts {
 
     /// Match before encoding. A captured press owns its repeats and release even
     /// if the user releases a modifier first or the layout changes.
-    /// Directional pane bindings are reserved only in tabs with splits.
+    /// Directional pane bindings are reserved only in tabs with splits, and Shift+PageUp and
+    /// Shift+PageDown only on the primary screen; the alternate screen has no history.
     pub fn match_key(
         &mut self,
         physical: PhysicalKey,
@@ -98,6 +103,7 @@ impl Shortcuts {
         modifiers: KeyModifiers,
         action: KeyAction,
         has_splits: bool,
+        primary_screen: bool,
     ) -> Option<Shortcut> {
         if let Some(index) = self.consumed.iter().position(|&held| held == physical) {
             if !matches!(action, KeyAction::Repeat) {
@@ -114,6 +120,7 @@ impl Shortcuts {
             (true, false, shift) => control_shortcut(physical, symbol, shift),
             (true, true, shift) if has_splits => directional_shortcut(physical, shift),
             (false, true, false) => alt_tab_shortcut(physical, symbol).map(Shortcut::Tab),
+            (false, false, true) if primary_screen => page_shortcut(physical),
             _ => None,
         }?;
         self.consumed.push(physical);
@@ -174,6 +181,14 @@ fn control_shortcut(physical: PhysicalKey, symbol: Option<char>, shift: bool) ->
     Some(Shortcut::Tab(action))
 }
 
+fn page_shortcut(physical: PhysicalKey) -> Option<Shortcut> {
+    match physical {
+        PhysicalKey::Code(KeyCode::PageUp) => Some(Shortcut::ScrollPage { up: true }),
+        PhysicalKey::Code(KeyCode::PageDown) => Some(Shortcut::ScrollPage { up: false }),
+        _ => None,
+    }
+}
+
 fn directional_shortcut(physical: PhysicalKey, resize: bool) -> Option<Shortcut> {
     let direction = match physical {
         PhysicalKey::Code(KeyCode::ArrowUp) => Direction::Up,
@@ -220,6 +235,10 @@ pub enum PaneCommand<'a> {
         unshifted: Option<char>,
     },
     Mouse(mouse::MouseEvent),
+    /// Scroll the history one page, up or down.
+    ScrollPage {
+        up: bool,
+    },
     /// The window gained or lost the keyboard. Reaches the PTY only in mode 1004.
     Focus(bool),
     Text(&'a [u8]),
@@ -261,6 +280,12 @@ pub trait Pane {
     /// # Errors
     /// Returns an error if the pane cannot copy its current render state.
     fn snapshot(&mut self) -> Result<Self::Snapshot, Self::Error>;
+
+    /// Whether the primary screen is active, where page keys scroll the history.
+    ///
+    /// # Errors
+    /// Returns an error if the terminal cannot report its active screen.
+    fn primary_screen(&self) -> Result<bool, Self::Error>;
 }
 
 #[cfg(test)]
@@ -282,8 +307,12 @@ mod tests {
             alt: true,
             ..KeyModifiers::default()
         };
+        let shift = KeyModifiers {
+            shift: true,
+            ..KeyModifiers::default()
+        };
         // Each chord matches without Super: by layout character, by the non-Latin
-        // fallback, by alias, by tab digit and by split direction.
+        // fallback, by alias, by tab digit, by split direction and by page key.
         for (code, symbol, modifiers) in [
             (K::KeyC, Some('C'), ctrl_shift),
             (K::KeyZ, Some('W'), ctrl_shift),
@@ -292,6 +321,7 @@ mod tests {
             (K::Equal, Some('='), ctrl),
             (K::Digit1, Some('1'), alt),
             (K::ArrowLeft, None, ctrl_alt),
+            (K::PageUp, None, shift),
         ] {
             let physical = PhysicalKey::Code(code);
             let held = KeyModifiers {
@@ -299,9 +329,10 @@ mod tests {
                 ..modifiers
             };
             let mut shortcuts = Shortcuts::default();
-            let matched = shortcuts.match_key(physical, symbol, held, KeyAction::Press, true);
+            let matched = shortcuts.match_key(physical, symbol, held, KeyAction::Press, true, true);
             assert!(matched.is_none(), "Super matched {code:?}");
-            let matched = shortcuts.match_key(physical, symbol, modifiers, KeyAction::Press, true);
+            let matched =
+                shortcuts.match_key(physical, symbol, modifiers, KeyAction::Press, true, true);
             assert!(matched.is_some(), "{code:?} did not match");
         }
     }

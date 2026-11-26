@@ -56,6 +56,8 @@ pub(super) struct Pointer {
     presented: Option<LayoutKey>,
     pressed_layout: Option<LayoutKey>,
     recover_frame: bool,
+    /// The held left press only moved pane focus; its release stays out of the pane too.
+    focus_click: bool,
     pub(super) image_click: super::viewer::Click,
 }
 
@@ -75,6 +77,7 @@ impl Pointer {
     pub(super) fn reset(&mut self) {
         // A focus change ends the drag but does not transfer held buttons to a new pane.
         self.target = None;
+        self.focus_click = false;
         self.image_click = super::viewer::Click::default();
     }
 
@@ -119,25 +122,36 @@ impl Pointer {
         }
     }
 
-    fn press(&mut self, button: Button, target: Target) {
+    /// Hold `button` over `target`. Returns whether the press reaches the pane: as in Ghostty,
+    /// a left press that moved pane focus does not, even with mouse tracking on.
+    fn press(&mut self, button: Button, target: Target, moved_focus: bool) -> bool {
         self.target = Some(target);
         self.pressed_layout = self.presented;
         self.held[button as usize] = true;
+        if button == Button::Left {
+            self.focus_click = moved_focus;
+        }
+        !(button == Button::Left && moved_focus)
     }
 
     fn release(&mut self, button: Button) -> Option<Target> {
         if !std::mem::take(&mut self.held[button as usize]) {
             return None;
         }
-        if self.held.contains(&true) {
+        let target = if self.held.contains(&true) {
             self.target
         } else {
             self.target.take()
+        };
+        if button == Button::Left && std::mem::take(&mut self.focus_click) {
+            return None;
         }
+        target
     }
 
     fn cancel(&mut self) -> Option<Target> {
         self.held.fill(false);
+        self.focus_click = false;
         self.target.take()
     }
 }
@@ -257,10 +271,13 @@ impl Session {
             return Ok(());
         };
         if let Phase::Press(button, _) = event.phase {
-            if let Target::Pane(id) = target {
-                self.focus_pane(id, window)?;
+            let moved_focus = match target {
+                Target::Pane(id) => self.focus_pane(id, window)?,
+                Target::Divider(_) => false,
+            };
+            if !self.pane_pointer.press(button, target, moved_focus) {
+                return Ok(());
             }
-            self.pane_pointer.press(button, target);
         }
         match target {
             Target::Pane(id) => {
@@ -466,7 +483,7 @@ mod tests {
         let left = Target::Pane(1);
         let right = Target::Pane(2);
         let over_right = || Some(right);
-        pointer.press(Button::Left, left);
+        assert!(pointer.press(Button::Left, left, false));
         assert_eq!(pointer.route(Phase::Motion, SHOWN, over_right), Some(left));
         assert_eq!(
             pointer.route(Phase::Wheel(120.0), SHOWN, over_right),
@@ -477,6 +494,32 @@ mod tests {
             Some(left)
         );
         assert_eq!(pointer.route(Phase::Motion, SHOWN, over_right), Some(right));
+    }
+
+    #[test]
+    fn a_left_click_that_moves_focus_stays_out_of_the_pane() {
+        let pane = Target::Pane(2);
+        let over_pane = || Some(pane);
+        let left = Phase::Release(Button::Left);
+        let right = Phase::Release(Button::Right);
+        let mut pointer = pointer();
+        // Focusing left click: neither press nor release reaches the pane; the drag does.
+        assert!(!pointer.press(Button::Left, pane, true));
+        assert_eq!(pointer.route(Phase::Motion, SHOWN, over_pane), Some(pane));
+        assert!(pointer.press(Button::Right, pane, false));
+        assert_eq!(pointer.route(right, SHOWN, over_pane), Some(pane));
+        assert_eq!(pointer.route(left, SHOWN, over_pane), None);
+        // The next click in the focused pane is delivered whole.
+        assert!(pointer.press(Button::Left, pane, false));
+        assert_eq!(pointer.route(left, SHOWN, over_pane), Some(pane));
+        // Other buttons focus and still reach the pane.
+        assert!(pointer.press(Button::Right, pane, true));
+        assert_eq!(pointer.route(right, SHOWN, over_pane), Some(pane));
+        // A cancelled focusing click leaves no swallowed release behind.
+        assert!(!pointer.press(Button::Left, pane, true));
+        pointer.route(Phase::Cancel, SHOWN, over_pane);
+        assert!(pointer.press(Button::Left, pane, false));
+        assert_eq!(pointer.route(left, SHOWN, over_pane), Some(pane));
     }
 
     #[test]
@@ -494,7 +537,7 @@ mod tests {
             pointer.route(left_press, SHOWN, over_divider),
             Some(divider)
         );
-        pointer.press(Button::Left, divider);
+        pointer.press(Button::Left, divider, false);
         assert_eq!(pointer.cancel_stale_pane(PENDING), None);
         assert_eq!(
             pointer.route(Phase::Motion, PENDING, over_pane),
@@ -502,13 +545,13 @@ mod tests {
         );
         assert_eq!(pointer.route(release, PENDING, over_pane), Some(divider));
 
-        pointer.press(Button::Left, divider);
+        pointer.press(Button::Left, divider, false);
         pointer.reset();
         assert_eq!(pointer.route(Phase::Motion, SHOWN, over_pane), None);
         assert_eq!(pointer.route(release, SHOWN, over_pane), None);
         assert_eq!(pointer.route(Phase::Motion, SHOWN, over_pane), over_pane());
 
-        pointer.press(Button::Left, divider);
+        pointer.press(Button::Left, divider, false);
         assert_eq!(
             pointer.route(Phase::Cancel, SHOWN, over_pane),
             Some(divider)

@@ -1,5 +1,6 @@
-"""The negative controls for key encoding and query replies."""
+"""The negative controls for key encoding, page scrolling, focusing clicks and query replies."""
 import re
+import sys
 
 from negative.probe import probe, replace_once
 
@@ -27,3 +28,12 @@ def input_controls():
     probe("size and color-scheme queries go unanswered", "test", "crates/sumie-vt/src/lib.rs",
           replace_once("            check(reports::register(terminal.raw))?;\n", ""),
           "test tests::reports::size_and_color_scheme_queries_get_replies ... FAILED")
+    if sys.platform.startswith("linux"):
+        probe("Shift+PageUp leaves the history in place", "test", "src/input.rs",
+              replace_once("return send_input(pane, routing, id, PaneCommand::ScrollPage { up });",
+                           "return Ok(Effect::None);"),
+              "test input::tests::shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one"
+              " ... FAILED")
+        probe("a focusing click reaches the pane", "test", "src/app/pane_input.rs",
+              replace_once("        !(button == Button::Left && moved_focus)\n", "        true\n"),
+              "test app::pane_input::tests::a_left_click_that_moves_focus_stays_out_of_the_pane ... FAILED")
