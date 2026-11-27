@@ -4,11 +4,7 @@ use std::{
     fs::{self, File, OpenOptions},
     os::unix::fs::OpenOptionsExt as _,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::mpsc,
 };
 
 use sumie_config::CursorStyle;
@@ -158,8 +154,16 @@ impl Fixture {
         assert!(self.reload.reaped(), "the watcher was not reaped");
     }
 
+    /// Closing is nonblocking and takes microseconds; waiting for the child to answer the EOF
+    /// would take until the kill escalation, so [`KILL_AFTER`] bounds the call alone.
     fn close_and_reap(mut self) {
+        let started = Instant::now();
         self.reload.close(&mut self.watches).unwrap();
+        let closing = started.elapsed();
+        assert!(
+            closing <= KILL_AFTER,
+            "close spent {closing:?} on the main thread"
+        );
         self.reap();
     }
 }
@@ -212,21 +216,20 @@ fn dropping_a_blocked_child_does_not_wait() {
     let fixture = Fixture::spawn(child(&scratch.0));
     let writer = scratch.hold_fifo();
     let pid = fixture.reload.child.id().to_string();
-    // A drop that waits would hang on the blocked child; end it later so the failure is a flag.
-    let dropped = Arc::new(AtomicBool::new(false));
-    let rescued = Arc::new(AtomicBool::new(false));
-    let (done, fired) = (Arc::clone(&dropped), Arc::clone(&rescued));
-    thread::spawn(move || {
-        thread::sleep(WAIT);
-        if !done.load(Ordering::Relaxed) {
-            fired.store(true, Ordering::Relaxed);
+    // A drop that waits would hang on the blocked child. The rescue ends the child after WAIT
+    // so the failure is a flag; the join settles it before the assertion.
+    let (disarm, armed) = mpsc::channel::<()>();
+    let rescue = thread::spawn(move || {
+        let late = armed.recv_timeout(WAIT) == Err(mpsc::RecvTimeoutError::Timeout);
+        if late {
             let _ = Command::new("kill").args(["-KILL", &pid]).status();
         }
+        late
     });
     drop(fixture);
-    dropped.store(true, Ordering::Relaxed);
+    drop(disarm);
     assert!(
-        !rescued.load(Ordering::Relaxed),
+        !rescue.join().unwrap(),
         "dropping waited for the blocked child"
     );
     drop(writer);
@@ -234,25 +237,30 @@ fn dropping_a_blocked_child_does_not_wait() {
 
 #[test]
 fn malformed_results_and_early_eof_are_faults_that_end_the_watcher() {
-    for (script, fault) in [
-        ("exit 0", "the watcher exited"),
+    // `ignores_eof` marks a child that never exits by itself; only the deadline kill ends it.
+    for (script, fault, ignores_eof) in [
+        ("exit 0", "the watcher exited", false),
         // A grandchild keeps the socket open, so only the exit report ends the watcher.
-        ("sleep 3 <&0 & exit 0", "the watcher exited"),
+        ("sleep 3 <&0 & exit 0", "the watcher exited", false),
         (
             r"printf '\000\000' >&0",
             "stream ended 2 bytes into a frame",
+            false,
         ),
         (
-            r"printf '\000\000\000\002\011\001{}' >&0; exec sleep 10",
+            r"printf '\000\000\000\002\011\001{}' >&0; exec sleep 600",
             "unsupported frame version 9",
+            true,
         ),
         (
-            r"printf '\000\020\000\001\001\001' >&0; exec sleep 10",
+            r"printf '\000\020\000\001\001\001' >&0; exec sleep 600",
             "frame body of 1048577 bytes exceeds 1048576",
+            true,
         ),
         (
-            r"printf '\000\000\000\001\001\001{' >&0; exec sleep 10",
+            r"printf '\000\000\000\001\001\001{' >&0; exec sleep 600",
             "malformed settings",
+            true,
         ),
     ] {
         let mut fixture = Fixture::spawn(shell(script));
@@ -263,7 +271,7 @@ fn malformed_results_and_early_eof_are_faults_that_end_the_watcher() {
         );
         // A fault closes the socket without waiting: a child that ignores the EOF still runs
         // until the deadline kills it.
-        if script.contains("exec sleep") {
+        if ignores_eof {
             let running = fixture.reload.child.try_wait().unwrap().is_none();
             assert!(running, "{script}: the fault waited for the child");
         }
