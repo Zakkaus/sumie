@@ -101,6 +101,35 @@ impl Drop for Scratch {
     }
 }
 
+/// Kills a child after `WAIT` unless disarmed first, so a regression that waits for a child
+/// that never exits fails within seconds instead of hanging. `finish` settles the thread and
+/// reports whether the kill was needed.
+struct Rescue {
+    disarm: mpsc::Sender<()>,
+    thread: thread::JoinHandle<bool>,
+}
+
+impl Rescue {
+    fn arm(pid: u32) -> Self {
+        let (disarm, armed) = mpsc::channel();
+        let thread = thread::spawn(move || {
+            let late = armed.recv_timeout(WAIT) == Err(mpsc::RecvTimeoutError::Timeout);
+            if late {
+                let _ = Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .status();
+            }
+            late
+        });
+        Self { disarm, thread }
+    }
+
+    fn finish(self) -> bool {
+        drop(self.disarm);
+        self.thread.join().unwrap()
+    }
+}
+
 /// Plays the event loop: a bridge wake is `Event::Ready`.
 struct Fixture {
     reload: Reload,
@@ -215,23 +244,9 @@ fn dropping_a_blocked_child_does_not_wait() {
     scratch.include_fifo();
     let fixture = Fixture::spawn(child(&scratch.0));
     let writer = scratch.hold_fifo();
-    let pid = fixture.reload.child.id().to_string();
-    // A drop that waits would hang on the blocked child. The rescue ends the child after WAIT
-    // so the failure is a flag; the join settles it before the assertion.
-    let (disarm, armed) = mpsc::channel::<()>();
-    let rescue = thread::spawn(move || {
-        let late = armed.recv_timeout(WAIT) == Err(mpsc::RecvTimeoutError::Timeout);
-        if late {
-            let _ = Command::new("kill").args(["-KILL", &pid]).status();
-        }
-        late
-    });
+    let rescue = Rescue::arm(fixture.reload.child.id());
     drop(fixture);
-    drop(disarm);
-    assert!(
-        !rescue.join().unwrap(),
-        "dropping waited for the blocked child"
-    );
+    assert!(!rescue.finish(), "dropping waited for the blocked child");
     drop(writer);
 }
 
@@ -264,6 +279,7 @@ fn malformed_results_and_early_eof_are_faults_that_end_the_watcher() {
         ),
     ] {
         let mut fixture = Fixture::spawn(shell(script));
+        let rescue = ignores_eof.then(|| Rescue::arm(fixture.reload.child.id()));
         let update = fixture.next();
         assert!(
             matches!(&update, Update::Diagnostic(message) if message.contains(fault)),
@@ -271,9 +287,13 @@ fn malformed_results_and_early_eof_are_faults_that_end_the_watcher() {
         );
         // A fault closes the socket without waiting: a child that ignores the EOF still runs
         // until the deadline kills it.
-        if ignores_eof {
+        if let Some(rescue) = rescue {
             let running = fixture.reload.child.try_wait().unwrap().is_none();
-            assert!(running, "{script}: the fault waited for the child");
+            let rescued = rescue.finish();
+            assert!(
+                running && !rescued,
+                "{script}: the fault waited for the child"
+            );
         }
         fixture.reap();
         assert!(
