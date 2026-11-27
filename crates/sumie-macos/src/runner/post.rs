@@ -107,7 +107,8 @@ impl PostedMouse {
     }
 }
 
-/// With existing permission, post one key event to this PID while the probe window is key.
+/// With existing permission, post one key event to this PID while the probe window is key; a
+/// repeat goes through `AppKit`'s queue instead.
 #[must_use]
 pub fn post_key(key: PostedKey) -> bool {
     if !CGPreflightPostEventAccess() {
@@ -131,6 +132,13 @@ pub fn post_key(key: PostedKey) -> bool {
     CGEvent::set_flags(Some(&event), CGEventFlags::from_bits_retain(key.flags));
     if key.phase == KeyPhase::Repeat {
         CGEvent::set_integer_value_field(Some(&event), CGEventField::KeyboardEventAutorepeat, 1);
+        // The window server delivers a repeat posted to a PID as nothing; queued in AppKit it
+        // reaches the window as `isARepeat`, like a held key's.
+        let Some(repeat) = NSEvent::eventWithCGEvent(&event) else {
+            return false;
+        };
+        app.postEvent_atStart(&repeat, false);
+        return true;
     }
     CGEvent::post_to_pid(pid, Some(&event));
     true
