@@ -36,13 +36,16 @@ jobs:
             zig-sha256: 75f1bc7a1e9852f17ec9a0c1895f767c4ec56d46bc8a834920eece1d0359dd8d
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
-      ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+      # The runner context is not available in job-level env, so export these here.
+      - name: Point the build caches at the runner temp directory
+        shell: bash
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/sumie-target" >> "$GITHUB_ENV"
+          echo "ZIG_GLOBAL_CACHE_DIR=$RUNNER_TEMP/zig-cache" >> "$GITHUB_ENV"
       - name: Resolve the version
         id: version
         shell: bash
