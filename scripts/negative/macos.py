@@ -130,6 +130,33 @@ def macos_controls():
                            "                input::report_focus(&mut pane.pane, false)?;\n"
                            "            }\n"),
               "keys: focus: 2 focus-out reports for one focus loss")
+        probe("leak the release of a consumed shortcut", "macos-keys", "src/input.rs",
+              replace_once("                Some(Shortcut::Consume) => return Ok(Effect::None),\n",
+                           "                Some(Shortcut::Consume) if !matches!(action, KeyAction::Release) => {\n"
+                           "                    return Ok(Effect::None);\n"
+                           "                }\n"
+                           "                Some(Shortcut::Consume) => (),\n"),
+              "keys: command: recorded")
+        probe("right Option sent as Meta", "macos-keys", "crates/sumie-macos/src/window.rs",
+              replace_once("        right_alt: state.alt_key() && right_alt,\n",
+                           "        right_alt: state.alt_key() && right_alt && false,\n"),
+              "keys: option: recorded")
+        probe("Linux Alt+digit tab aliases on macOS", "macos-keys", "crates/sumie-core/src/shortcuts.rs",
+              replace_once("            Platform::MacOS => macos_shortcut(physical, modifiers, has_splits),\n",
+                           "            Platform::MacOS => linux_shortcut(physical, symbol, modifiers, has_splits),\n"),
+              "keys: option: recorded")
+        probe("open a link released after a drag off it", "macos-keys", "crates/sumie-core/src/mouse.rs",
+              replace_once("            self.link_press = None;\n            self.selecting = Some((SelectionUnit::Cell, cell));\n",
+                           "            self.selecting = Some((SelectionUnit::Cell, cell));\n"),
+              "keys: links: opened")
+        probe("report a tracking press before it becomes a click or a drag", "macos-keys",
+              "crates/sumie-core/src/mouse.rs",
+              replace_once("                if left && modes.tracking && !event.modifiers.alt && event.over_grid =>\n",
+                           "                if false =>\n"),
+              "keys: tracking: recorded")
+        probe("copy on a drag release", "macos-pasteboard", "crates/sumie-core/src/lib.rs",
+              replace_once("        matches!(self, Self::Linux)\n", "        true\n"),
+              "pasteboard: copy: the drag release changed the sentinel")
         # A unit test, so no check ever serves the general board.
         probe("select the general board in a macos-ci build", "test", "src/macos/pasteboard.rs",
               replace_once("    Ok(Board::named(name)?)\n}", "    let _ = name;\n    Ok(Board::General)\n}"),

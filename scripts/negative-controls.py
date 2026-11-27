@@ -137,10 +137,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           append("#[test]\nfn test_probe() -> Result<(), &'static str> {\n"
                  '    Err("deliberate unit test failure")\n}\n'),
           "test test_probe ... FAILED")
-    probe("Super matches a shortcut", "test", CORE,
-          replace_once("if !matches!(action, KeyAction::Press) || modifiers.super_key {",
-                       "if !matches!(action, KeyAction::Press) {"),
-          "test tests::super_never_matches_a_shortcut ... FAILED")
+    probe("Super matches a shortcut", "test", "crates/sumie-core/src/shortcuts.rs",
+          replace_once("            Platform::Linux if modifiers.super_key => return Ok(None),\n", ""),
+          "test shortcuts::tests::super_never_matches_a_shortcut ... FAILED")
     probe("closing an earlier tab loses the active pane", "test", "crates/sumie-core/src/tabs.rs",
           replace_once("self.active -= 1;", "self.active = 0;"),
           "test tabs::tests::close_preserves_active_identity_or_selects_a_neighbor ... FAILED")
@@ -233,8 +232,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("style.hyperlink || hovered.is_some()", "hovered.is_some()"),
               "test view::attributes::tests::link_underline_precedence ... FAILED")
         probe("Ctrl+click link opens on press", "test", "crates/sumie-core/src/mouse.rs",
-              replace_once("Some(event.pixel.map(f32::to_bits))));\n                Dispatch::Ignore",
-                           "Some(event.pixel.map(f32::to_bits))));\n                Dispatch::OpenLink"),
+              replace_once("Some(event.pixel.map(f32::to_bits))));\n            return Dispatch::Ignore;",
+                           "Some(event.pixel.map(f32::to_bits))));\n            return Dispatch::OpenLink;"),
               "test tests::ctrl_click_a_link_bypasses_mouse_tracking ... FAILED")
         probe("pane ink crosses the divider", "test", "crates/sumie-render/src/renderer.rs",
               replace_once("let scissor = pane.rect;", "let scissor = full;"),

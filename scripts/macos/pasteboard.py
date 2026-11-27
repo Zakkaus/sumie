@@ -6,8 +6,8 @@ usage: pasteboard.py BINARY [EVIDENCE_DIR]
 Starts the terminal runner like keys.py with SUMIE_MACOS_CI_PASTEBOARD naming a fresh board,
 so its pasteboard helpers serve that board instead of the general one. The check reaches the
 board through its own tool (pbfixture.m), runs keyrec.py in the shell and posts real `CGEvent`
-keys: Ctrl+Shift+V pastes and Ctrl+Shift+C copies through the shared actions. Exit 0 on a
-pass, 1 on a violation, 2 if it cannot check. Contents never appear in its output.
+keys: Cmd+V pastes and Cmd+C copies through the shared actions. Exit 0 on a pass, 1 on a
+violation, 2 if it cannot check. Contents never appear in its output.
   paste      The board's string arrives as is, and framed whole in mode 2004.
   empty      A board without a string, or with an empty one, sends nothing; a later paste
              still arrives.
@@ -17,7 +17,8 @@ pass, 1 on a violation, 2 if it cannot check. Contents never appear in its outpu
              the paste requested after it arrives once.
   stalled    A provider that never answers: nothing arrives, pings stay <= 100 ms, and within
              6.2 s of the request no helper is left; then a paste arrives again.
-  copy       Selecting a row leaves the sentinel; Ctrl+Shift+C replaces it with the row.
+  copy       A mouse drag over row 0 selects it and its release leaves the sentinel; Cmd+C
+             replaces the sentinel with the dragged cells.
   osc52      A focused OSC 52 write sets the board and an empty one clears it; without focus
              the board keeps its sentinel; a query gets no contents back.
 After every case the general board's change count must be unchanged (it is never read).
@@ -35,7 +36,7 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from frames import RECORD_TIMING, CannotCheck, Runner, build_tools  # noqa: E402
-from keys import CONTROL, SHIFT, Keys, Violation  # noqa: E402
+from keys import COMMAND, Keys, Violation  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 LIMIT = 1 << 20
@@ -89,11 +90,9 @@ class Check:
         self.general = board.general_count()
 
     def chord(self, code):
-        self.keys.key(CONTROL, "down", "control")
-        self.keys.key(SHIFT, "down", "shift+control")
-        self.keys.tap(code, "shift+control")
-        self.keys.key(SHIFT, "up", "control")
-        self.keys.key(CONTROL, "up")
+        self.keys.key(COMMAND, "down", "command")
+        self.keys.tap(code, "command")
+        self.keys.key(COMMAND, "up")
 
     def paste(self):
         self.chord(V)
@@ -247,20 +246,17 @@ def case_copy(check):
     check.runner.send(f"type printf '\\033[3J\\033[2J\\033[Hsumie-copy-fixture\\n'; : > {shlex.quote(str(printed))}")
     check.runner.wait_for_file(printed)
     time.sleep(0.3)
-    asked = time.monotonic()
-    check.runner.send("select 0")
-    _, fields = check.runner.wait_for("runner", "selected", since=asked)
-    if fields[2] != "true":
-        raise CannotCheck("the runner could not select the fixture row")
+    dragged = "sumie-copy"
+    check.keys.drag((0, 0), (len(dragged) - 1, 0))
     time.sleep(1.0)
     if check.board.get() != "sentinel":
-        raise Violation("pasteboard: copy: selecting a row changed the sentinel")
+        raise Violation("pasteboard: copy: the drag release changed the sentinel; macOS copies only on Cmd+C")
     check.chord(C)
-    got = check.await_board("sumie-copy-fixture")
-    if got != "sumie-copy-fixture":
+    got = check.await_board(dragged)
+    if got != dragged:
         state = "kept the sentinel" if got == "sentinel" else f"holds {len(got or '')} other bytes"
-        raise Violation(f"pasteboard: copy: after Ctrl+Shift+C the board {state}")
-    print("pasteboard: copy: the sentinel stays on select and Ctrl+Shift+C replaces it with the row")
+        raise Violation(f"pasteboard: copy: after Cmd+C the board {state}")
+    print("pasteboard: copy: the sentinel stays after a drag and Cmd+C replaces it with the dragged cells")
 
 
 def osc52(text):

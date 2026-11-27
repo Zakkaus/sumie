@@ -133,15 +133,18 @@ fn command(
                             .get_or_insert_with(|| Instant::now() + REPORT_WAIT);
                     }
                 }
-                Command::Select(row) => {
-                    let selected = match &mut open.app {
-                        Some(app) => app.select_line(row)?,
-                        None => false,
-                    };
-                    println!("runner selected {selected}");
-                }
                 Command::Step(step) => native::step(context, open.window.platform(), step)?,
                 Command::Key(key) => println!("runner posted key {}", native::post_key(key)),
+                Command::Mouse(mouse) => {
+                    let scale = open.window.platform().scale();
+                    let point = open
+                        .app
+                        .as_ref()
+                        .and_then(|app| app.cell_center(mouse.cell))
+                        .map(|backing| backing.map(|px| px / scale));
+                    let posted = point.is_some_and(|point| native::post_mouse(mouse, point));
+                    println!("runner posted mouse {posted}");
+                }
                 _ => return Err("unexpected runner controller command".into()),
             }
         }

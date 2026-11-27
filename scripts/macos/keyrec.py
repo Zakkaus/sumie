@@ -5,7 +5,8 @@ usage: keyrec.py MODES OUT
 
 MODES is a comma-separated list of: plain; deckm (DECCKM, mode 1); kitty (Kitty keyboard
 flags 11: disambiguate, event types, every key as an escape); focus (mode 1004); paste
-(bracketed paste, mode 2004); osc52 (no mode: an OSC 52 clipboard query once recording
+(bracketed paste, mode 2004); mouse (button-event tracking, mode 1002, with SGR reports, mode
+1006); osc52 (no mode: an OSC 52 clipboard query once recording
 starts, so its reply is recorded). The recorder puts its tty in raw mode, sets the modes and
 waits for a cursor position report, so the terminal has applied every mode before the first
 key. Then it creates OUT.ready and writes each read as one hex line to OUT, never to the
@@ -20,9 +21,9 @@ import termios
 import tty
 
 ENABLE = {"plain": "", "deckm": "\x1b[?1h", "kitty": "\x1b[>11u", "focus": "\x1b[?1004h",
-          "paste": "\x1b[?2004h", "osc52": ""}
+          "paste": "\x1b[?2004h", "mouse": "\x1b[?1002h\x1b[?1006h", "osc52": ""}
 DISABLE = {"plain": "", "deckm": "\x1b[?1l", "kitty": "\x1b[<u", "focus": "\x1b[?1004l",
-           "paste": "\x1b[?2004l", "osc52": ""}
+           "paste": "\x1b[?2004l", "mouse": "\x1b[?1006l\x1b[?1002l", "osc52": ""}
 QUERY = {"osc52": "\x1b]52;c;?\x07"}
 POLL = 0.02
 

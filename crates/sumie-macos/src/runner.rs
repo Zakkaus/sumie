@@ -13,8 +13,8 @@ use objc2_app_kit::{
     NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSPasteboard, NSWindow,
 };
 use objc2_core_graphics::{
-    CGEvent, CGEventField, CGEventFlags, CGEventType, CGPreflightPostEventAccess,
-    CGPreflightScreenCaptureAccess, CGWindowListCopyWindowInfo, CGWindowListOption,
+    CGEvent, CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
+    CGWindowListCopyWindowInfo, CGWindowListOption,
 };
 use objc2_foundation::{NSDate, NSPoint, NSRunLoop, NSString, ns_string};
 use winit::{
@@ -32,17 +32,15 @@ use super::{
     termination::Quit, waker,
 };
 
+pub use post::{KeyPhase, MousePhase, PostedKey, PostedMouse, post_key, post_mouse};
 pub use quit::request_quit;
 
+mod post;
 mod quit;
 
 const TITLE: &str = "sumie / CI runner probe";
 const F13: u16 = 0x69;
 const F14: u16 = 0x6b;
-/// `kVK_Shift`, `kVK_Control`, `kVK_Option`, `kVK_Command` and their right-hand twins: their
-/// events are flag changes, not key downs.
-const MODIFIER_KEYS: [u16; 8] = [0x38, 0x3b, 0x3a, 0x37, 0x3c, 0x3e, 0x3d, 0x36];
-
 thread_local! {
     /// A second window that takes key status from the probe window for `blur`; its events
     /// never reach the callback.
@@ -56,14 +54,14 @@ pub enum Command {
     Type(String),
     /// Print the terminal driver's counters.
     Report,
-    /// Select one row of the focused pane, without copying it.
-    Select(u16),
     Finish,
     Inspect,
     AppKitKeys,
     CgKeys,
     /// One `CGEvent` key, posted to this process while the probe window is key.
     Key(PostedKey),
+    /// One mouse event at a cell of the focused pane, queued to the probe window.
+    Mouse(PostedMouse),
     Close,
     /// Window steps for the idle mode; see `scripts/macos-spike/animations.py`.
     Step(Step),
@@ -96,50 +94,6 @@ pub enum Step {
     Focus,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyPhase {
-    Down,
-    Up,
-    Repeat,
-}
-
-/// `key <virtual key code> <down|up|repeat> <modifiers>`, the modifiers as `shift+control`,
-/// `option` or `command`, or `-` for none.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PostedKey {
-    code: u16,
-    phase: KeyPhase,
-    flags: u64,
-}
-
-impl PostedKey {
-    fn parse(fields: &str) -> Option<Self> {
-        let mut fields = fields.split(' ');
-        let code = fields.next()?.parse().ok()?;
-        let phase = match fields.next()? {
-            "down" => KeyPhase::Down,
-            "up" => KeyPhase::Up,
-            "repeat" => KeyPhase::Repeat,
-            _ => return None,
-        };
-        let mut flags = CGEventFlags::empty();
-        for name in fields.next()?.split('+').filter(|name| *name != "-") {
-            flags |= match name {
-                "shift" => CGEventFlags::MaskShift,
-                "control" => CGEventFlags::MaskControl,
-                "option" => CGEventFlags::MaskAlternate,
-                "command" => CGEventFlags::MaskCommand,
-                _ => return None,
-            };
-        }
-        fields.next().is_none().then_some(Self {
-            code,
-            phase,
-            flags: flags.bits(),
-        })
-    }
-}
-
 impl Command {
     fn parse(line: &str) -> Self {
         match line {
@@ -165,11 +119,11 @@ impl Command {
                 if let Some(text) = line.strip_prefix("type ") {
                     return Self::Type(format!("{text}\r"));
                 }
-                if let Some(row) = line.strip_prefix("select ") {
-                    return row.parse().map_or(Self::Invalid, Self::Select);
-                }
                 if let Some(key) = line.strip_prefix("key ") {
                     return PostedKey::parse(key).map_or(Self::Invalid, Self::Key);
+                }
+                if let Some(mouse) = line.strip_prefix("mouse ") {
+                    return PostedMouse::parse(mouse).map_or(Self::Invalid, Self::Mouse);
                 }
                 line.strip_prefix("ping ")
                     .and_then(|number| number.parse().ok())
@@ -530,35 +484,6 @@ pub fn post_cg_keys() -> bool {
     };
     CGEvent::post_to_pid(pid, Some(&down));
     CGEvent::post_to_pid(pid, Some(&up));
-    true
-}
-
-/// With existing permission, post one key event to this PID while the probe window is key.
-#[must_use]
-pub fn post_key(key: PostedKey) -> bool {
-    if !CGPreflightPostEventAccess() {
-        return false;
-    }
-    let Some(app) = app() else {
-        return false;
-    };
-    if window(&app).is_none_or(|window| input_state(&app, &window) != (true, true)) {
-        return false;
-    }
-    let (Ok(pid), Some(event)) = (
-        i32::try_from(process::id()),
-        CGEvent::new_keyboard_event(None, key.code, key.phase != KeyPhase::Up),
-    ) else {
-        return false;
-    };
-    if MODIFIER_KEYS.contains(&key.code) {
-        CGEvent::set_type(Some(&event), CGEventType::FlagsChanged);
-    }
-    CGEvent::set_flags(Some(&event), CGEventFlags::from_bits_retain(key.flags));
-    if key.phase == KeyPhase::Repeat {
-        CGEvent::set_integer_value_field(Some(&event), CGEventField::KeyboardEventAutorepeat, 1);
-    }
-    CGEvent::post_to_pid(pid, Some(&event));
     true
 }
 

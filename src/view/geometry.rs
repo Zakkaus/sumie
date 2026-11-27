@@ -38,6 +38,20 @@ impl View {
         self.device_padding
     }
 
+    /// The centre of a cell of the pane at `rect`, in window device pixels: where the runner
+    /// points its mouse.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) fn cell_center(&self, rect: Rect, [column, row]: [u16; 2]) -> [f64; 2] {
+        let grid = self.pane_grid(rect);
+        let center = |origin: u32, cell: u32, index: u16| {
+            f64::from(origin) + (f64::from(index) + 0.5) * f64::from(cell)
+        };
+        [
+            center(grid.x, self.cell[0], column),
+            center(grid.y, self.cell[1], row),
+        ]
+    }
+
     pub(super) fn pane_grid(&self, rect: Rect) -> Rect {
         // Drop padding before clipping the terminal's minimum one-cell grid.
         let x = self.device_padding[0].min(rect.width.saturating_sub(self.cell[0]) / 2);
