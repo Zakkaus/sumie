@@ -280,18 +280,21 @@ fn malformed_results_and_early_eof_are_faults_that_end_the_watcher() {
     ] {
         let mut fixture = Fixture::spawn(shell(script));
         let rescue = ignores_eof.then(|| Rescue::arm(fixture.reload.child.id()));
+        let started = Instant::now();
         let update = fixture.next();
         assert!(
             matches!(&update, Update::Diagnostic(message) if message.contains(fault)),
             "{script}: {update:?}"
         );
         // A fault closes the socket without waiting: a child that ignores the EOF still runs
-        // until the deadline kills it.
+        // until the deadline kills it. A thread preempted past the deadline sees that kill
+        // already, so a stopped child is a failure only before that deadline could pass.
         if let Some(rescue) = rescue {
-            let running = fixture.reload.child.try_wait().unwrap().is_none();
+            let unwaited = fixture.reload.child.try_wait().unwrap().is_none()
+                || started.elapsed() >= KILL_AFTER;
             let rescued = rescue.finish();
             assert!(
-                running && !rescued,
+                unwaited && !rescued,
                 "{script}: the fault waited for the child"
             );
         }
