@@ -112,6 +112,7 @@ fn modifiers(mods: sumie_wayland::Modifiers) -> Modifiers {
         super_key: mods.logo,
         caps_lock: mods.caps_lock,
         num_lock: mods.num_lock,
+        ..Modifiers::default()
     }
 }
 

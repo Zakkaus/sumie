@@ -336,7 +336,7 @@ fn ctrl_click_a_link_bypasses_mouse_tracking() {
     use MousePhase::{Cancel, Motion, Press, Release};
     use input::Effect::{None as Ignore, OpenLink, Select};
     use sumie_core::mouse::{
-        SelectStep::{Drag, DragFromLink, Finish},
+        SelectStep::{Drag, DragFrom, Finish},
         SelectionUnit::Cell,
     };
 
@@ -373,10 +373,19 @@ fn ctrl_click_a_link_bypasses_mouse_tracking() {
             1,
             12.0,
             false,
-            Select(DragFromLink(CellPosition { row: 0, column: 0 })),
+            Select(DragFrom(CellPosition { row: 0, column: 0 })),
         ),
         (Motion, 0, 0.0, false, Select(Drag(Cell))),
-        (release, 0, 0.0, true, Select(Finish(Cell))),
+        (
+            release,
+            0,
+            0.0,
+            true,
+            Select(Finish {
+                unit: Cell,
+                copy: true,
+            }),
+        ),
         (press, 0, 0.0, true, Ignore),
         (Motion, 0, 1.0, false, Ignore),
         (release, 0, 0.0, true, Ignore),

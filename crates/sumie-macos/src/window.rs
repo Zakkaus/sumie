@@ -13,8 +13,11 @@ use sumie_core::{
 use winit::{
     dpi::LogicalSize,
     event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
-    keyboard::ModifiersState,
-    platform::macos::{ActiveEventLoopExtMacOS as _, MonitorHandleExtMacOS as _},
+    keyboard::{ModifiersKeyState, ModifiersState},
+    platform::macos::{
+        ActiveEventLoopExtMacOS as _, MonitorHandleExtMacOS as _, OptionAsAlt,
+        WindowAttributesExtMacOS as _,
+    },
     window::{CursorIcon, Window},
 };
 
@@ -22,16 +25,32 @@ use super::{Event, Result, WindowContext};
 
 /// Used when the window has no screen or the screen reports no rate.
 const FALLBACK_FPS: u32 = 60;
-const VALUE120_PER_NOTCH: f64 = 120.0;
 
-/// A pointer event in the backing pixels of the window's content view. `MousePhase::Touch`
-/// carries the trackpad's vertical movement in backing pixels, not value120 units; positive
-/// scrolls down.
+/// A pointer event in the backing pixels of the window's content view. Scrolling arrives as
+/// [`PointerPhase::Scroll`], in winit's units, so the binary converts it once.
 #[derive(Clone, Copy)]
 pub struct Pointer {
-    pub phase: MousePhase,
+    pub phase: PointerPhase,
     pub position: [f64; 2],
     pub modifiers: KeyModifiers,
+}
+
+#[derive(Clone, Copy)]
+pub enum PointerPhase {
+    /// A button or motion; never a wheel or touch phase.
+    Mouse(MousePhase),
+    Scroll(Scroll),
+}
+
+/// Vertical scrolling as winit reports it: positive reveals the content above.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Scroll {
+    /// A wheel without precise deltas, in lines; possibly fractional.
+    Lines(f64),
+    /// A trackpad or precise wheel, in backing pixels.
+    Pixels(f64),
+    /// The fingers lifted, or the system's momentum ended.
+    Ended,
 }
 
 /// Window access from the winit main-thread callback. wgpu retains its own owner.
@@ -45,7 +64,8 @@ impl Platform {
     pub fn create(context: &WindowContext, title: &str, size: [u32; 2]) -> Result<Self> {
         let attributes = Window::default_attributes()
             .with_title(title)
-            .with_inner_size(LogicalSize::new(size[0], size[1]));
+            .with_inner_size(LogicalSize::new(size[0], size[1]))
+            .with_option_as_alt(OptionAsAlt::OnlyLeft);
         Ok(Self(Arc::new(context.create_window(attributes)?)))
     }
 
@@ -163,7 +183,7 @@ impl Default for Input {
 
 impl Input {
     pub(super) fn convert(&mut self, event: WindowEvent) -> Option<Event> {
-        let pointer = |input: &Self, phase| {
+        let pointer = |input: &Self, phase: PointerPhase| {
             Some(Event::Pointer(Pointer {
                 phase,
                 position: input.position,
@@ -178,7 +198,10 @@ impl Input {
             WindowEvent::RedrawRequested => Event::RedrawRequested,
             WindowEvent::CloseRequested => Event::CloseRequested,
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = key_modifiers(modifiers.state());
+                // With both held winit already typed the key without Option: left wins.
+                let right_alt = modifiers.ralt_state() == ModifiersKeyState::Pressed
+                    && modifiers.lalt_state() != ModifiersKeyState::Pressed;
+                self.modifiers = key_modifiers(modifiers.state(), right_alt);
                 Event::ModifiersChanged(self.modifiers)
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -192,12 +215,12 @@ impl Input {
                 self.position = [position.x, position.y];
                 if std::mem::take(&mut self.entering) {
                     return Some(Event::PointerEntered(Pointer {
-                        phase: MousePhase::Motion,
+                        phase: PointerPhase::Mouse(MousePhase::Motion),
                         position: self.position,
                         modifiers: self.modifiers,
                     }));
                 }
-                return pointer(self, MousePhase::Motion);
+                return pointer(self, PointerPhase::Mouse(MousePhase::Motion));
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let button = match button {
@@ -210,20 +233,15 @@ impl Input {
                     ElementState::Pressed => MousePhase::Press(button, self.millis()),
                     ElementState::Released => MousePhase::Release(button),
                 };
-                return pointer(self, phase);
+                return pointer(self, PointerPhase::Mouse(phase));
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                // winit's positive deltas reveal content above; value120 scrolls down.
-                let phase = match delta {
-                    MouseScrollDelta::LineDelta(_, lines) => {
-                        MousePhase::Wheel(-f64::from(lines) * VALUE120_PER_NOTCH)
-                    }
-                    MouseScrollDelta::PixelDelta(_) if phase == TouchPhase::Ended => {
-                        MousePhase::TouchEnd
-                    }
-                    MouseScrollDelta::PixelDelta(pixels) => MousePhase::Touch(-pixels.y),
+                let scroll = match delta {
+                    MouseScrollDelta::LineDelta(_, lines) => Scroll::Lines(f64::from(lines)),
+                    MouseScrollDelta::PixelDelta(_) if phase == TouchPhase::Ended => Scroll::Ended,
+                    MouseScrollDelta::PixelDelta(pixels) => Scroll::Pixels(pixels.y),
                 };
-                return pointer(self, phase);
+                return pointer(self, PointerPhase::Scroll(scroll));
             }
             _ => return None,
         })
@@ -241,11 +259,13 @@ impl Input {
     }
 }
 
-fn key_modifiers(state: ModifiersState) -> KeyModifiers {
+fn key_modifiers(state: ModifiersState, right_alt: bool) -> KeyModifiers {
     KeyModifiers {
         shift: state.shift_key(),
         control: state.control_key(),
         alt: state.alt_key(),
+        right_alt: state.alt_key() && right_alt,
+        alt_consumed: false,
         super_key: state.super_key(),
         caps_lock: false,
         num_lock: false,

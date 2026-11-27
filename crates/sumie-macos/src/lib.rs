@@ -20,7 +20,7 @@ pub use winit::event_loop::ActiveEventLoop as WindowContext;
 pub use keyboard::{Key, Symbol};
 use readiness::{Bridge, Readiness};
 use termination::Quit;
-pub use window::{Platform, Pointer, double_click_interval};
+pub use window::{Platform, Pointer, PointerPhase, Scroll, double_click_interval};
 
 pub mod exit;
 mod keyboard;

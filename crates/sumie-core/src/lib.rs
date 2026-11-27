@@ -10,8 +10,6 @@
 //! use sumie_core::wgpu;
 //! ```
 
-use unicode_script::{Script, UnicodeScript};
-
 pub mod graphics;
 mod keys;
 mod link;
@@ -19,12 +17,13 @@ pub mod mouse;
 pub mod notify;
 pub mod scroll;
 mod selection;
+mod shortcuts;
 pub mod splits;
 mod tabs;
 pub use keys::{KeyCode, PhysicalKey};
 pub use link::LinkUri;
 pub use selection::{CellPosition, CellRange, Selection, SelectionPoint};
-use splits::{Axis, Direction};
+pub use shortcuts::{FontZoom, PaneAction, Shortcut, Shortcuts};
 pub use tabs::{TabAction, WindowTabs};
 
 /// Key action before encoding against the active terminal modes.
@@ -44,193 +43,43 @@ pub struct KeyModifiers {
     pub shift: bool,
     pub control: bool,
     pub alt: bool,
+    /// Alt is the right-hand key. On macOS only left Option is Meta.
+    pub right_alt: bool,
+    /// The layout used Alt to type the key's text (right Option on macOS), so the encoder does
+    /// not apply it again.
+    pub alt_consumed: bool,
     pub super_key: bool,
     pub caps_lock: bool,
     pub num_lock: bool,
 }
 
-#[derive(Default)]
-pub struct Shortcuts {
-    consumed: Vec<PhysicalKey>,
-}
-
-#[derive(Clone, Copy)]
-pub enum Shortcut {
-    Copy,
-    Paste,
-    Search,
-    Tab(TabAction),
-    Pane(PaneAction),
-    Zoom(FontZoom),
-    /// Scroll the history one page, up or down.
-    ScrollPage {
-        up: bool,
-    },
-    Consume,
-}
-
+/// The conventions the shortcut table and pointer gestures follow. The binary chooses one for
+/// the platform it runs on; both stay testable on either host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PaneAction {
-    Split(Axis),
-    Focus(Direction),
-    Resize(Direction),
-    Zoom,
+pub enum Platform {
+    /// Ctrl+Shift is the primary modifier; Alt+digit selects tabs; a drag release copies.
+    Linux,
+    /// Command is the primary modifier and never reaches a PTY; Option is not a shortcut
+    /// modifier; a drag release does not copy.
+    MacOS,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FontZoom {
-    Increase,
-    Decrease,
-    Reset,
-}
-
-impl Shortcuts {
-    /// Keep a modal key's repeats and release out of the PTY after the modal closes.
-    pub fn capture(&mut self, physical: PhysicalKey) {
-        if !self.consumed.contains(&physical) {
-            self.consumed.push(physical);
+impl Platform {
+    /// Whether the modifiers turn a left press into a link gesture: Ctrl on Linux, Command on
+    /// macOS.
+    #[must_use]
+    pub const fn link_modifier(self, modifiers: KeyModifiers) -> bool {
+        match self {
+            Self::Linux => modifiers.control,
+            Self::MacOS => modifiers.super_key,
         }
     }
 
-    /// Match before encoding. A captured press owns its repeats and release even
-    /// if the user releases a modifier first or the layout changes.
-    /// Directional pane bindings are reserved only in tabs with splits, and Shift+PageUp and
-    /// Shift+PageDown only on the primary screen; the alternate screen has no history.
-    ///
-    /// # Errors
-    ///
-    /// Returns the error of `primary_screen`, which runs only for those two keys.
-    pub fn match_key<E>(
-        &mut self,
-        physical: PhysicalKey,
-        symbol: Option<char>,
-        modifiers: KeyModifiers,
-        action: KeyAction,
-        has_splits: bool,
-        primary_screen: impl FnOnce() -> Result<bool, E>,
-    ) -> Result<Option<Shortcut>, E> {
-        if let Some(index) = self.consumed.iter().position(|&held| held == physical) {
-            if !matches!(action, KeyAction::Repeat) {
-                self.consumed.swap_remove(index);
-            }
-            if !matches!(action, KeyAction::Press) {
-                return Ok(Some(Shortcut::Consume));
-            }
-        }
-        if !matches!(action, KeyAction::Press) || modifiers.super_key {
-            return Ok(None);
-        }
-        let shortcut = match (modifiers.control, modifiers.alt, modifiers.shift) {
-            (true, false, shift) => control_shortcut(physical, symbol, shift),
-            (true, true, shift) if has_splits => directional_shortcut(physical, shift),
-            (false, true, false) => alt_tab_shortcut(physical, symbol).map(Shortcut::Tab),
-            (false, false, true) => match page_shortcut(physical) {
-                Some(page) if primary_screen()? => Some(page),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(shortcut) = shortcut else {
-            return Ok(None);
-        };
-        self.consumed.push(physical);
-        Ok(Some(shortcut))
-    }
-}
-
-fn control_shortcut(physical: PhysicalKey, symbol: Option<char>, shift: bool) -> Option<Shortcut> {
-    use KeyCode as K;
-    use PhysicalKey::Code;
-
-    match symbol {
-        Some('=' | '+') => return Some(Shortcut::Zoom(FontZoom::Increase)),
-        Some('-') => return Some(Shortcut::Zoom(FontZoom::Decrease)),
-        Some('0') => return Some(Shortcut::Zoom(FontZoom::Reset)),
-        _ => (),
-    }
-
-    let action = match (physical, shift) {
-        (Code(K::Tab | K::PageDown), false) => TabAction::Cycle(1),
-        (Code(K::Tab), true) | (Code(K::PageUp), false) => TabAction::Cycle(-1),
-        (Code(K::PageUp), true) => TabAction::MoveLeft,
-        (Code(K::PageDown), true) => TabAction::MoveRight,
-        (_, false) => return None,
-        (_, true) => {
-            // An unbound Latin key must not invoke a binding from its QWERTY position.
-            let key = match symbol {
-                Some(ch)
-                    if ch.is_ascii() || !ch.is_alphabetic() || ch.script() == Script::Latin =>
-                {
-                    Some(ch)
-                }
-                _ => match physical {
-                    Code(K::KeyC) => Some('c'),
-                    Code(K::KeyE) => Some('e'),
-                    Code(K::KeyF) => Some('f'),
-                    Code(K::KeyO) => Some('o'),
-                    Code(K::KeyV) => Some('v'),
-                    Code(K::KeyT) => Some('t'),
-                    Code(K::KeyW) => Some('w'),
-                    Code(K::KeyZ) => Some('z'),
-                    _ => None,
-                },
-            };
-            match key?.to_ascii_lowercase() {
-                'c' => return Some(Shortcut::Copy),
-                'e' => return Some(Shortcut::Pane(PaneAction::Split(Axis::Horizontal))),
-                'f' => return Some(Shortcut::Search),
-                'o' => return Some(Shortcut::Pane(PaneAction::Split(Axis::Vertical))),
-                'v' => return Some(Shortcut::Paste),
-                't' => TabAction::Open,
-                'w' => TabAction::Close,
-                'z' => return Some(Shortcut::Pane(PaneAction::Zoom)),
-                _ => return None,
-            }
-        }
-    };
-    Some(Shortcut::Tab(action))
-}
-
-fn page_shortcut(physical: PhysicalKey) -> Option<Shortcut> {
-    match physical {
-        PhysicalKey::Code(KeyCode::PageUp) => Some(Shortcut::ScrollPage { up: true }),
-        PhysicalKey::Code(KeyCode::PageDown) => Some(Shortcut::ScrollPage { up: false }),
-        _ => None,
-    }
-}
-
-fn directional_shortcut(physical: PhysicalKey, resize: bool) -> Option<Shortcut> {
-    let direction = match physical {
-        PhysicalKey::Code(KeyCode::ArrowUp) => Direction::Up,
-        PhysicalKey::Code(KeyCode::ArrowLeft) => Direction::Left,
-        PhysicalKey::Code(KeyCode::ArrowRight) => Direction::Right,
-        PhysicalKey::Code(KeyCode::ArrowDown) => Direction::Down,
-        _ => return None,
-    };
-    Some(Shortcut::Pane(if resize {
-        PaneAction::Resize(direction)
-    } else {
-        PaneAction::Focus(direction)
-    }))
-}
-
-fn alt_tab_shortcut(physical: PhysicalKey, symbol: Option<char>) -> Option<TabAction> {
-    let digit = match physical {
-        PhysicalKey::Code(KeyCode::Digit1) => 1,
-        PhysicalKey::Code(KeyCode::Digit2) => 2,
-        PhysicalKey::Code(KeyCode::Digit3) => 3,
-        PhysicalKey::Code(KeyCode::Digit4) => 4,
-        PhysicalKey::Code(KeyCode::Digit5) => 5,
-        PhysicalKey::Code(KeyCode::Digit6) => 6,
-        PhysicalKey::Code(KeyCode::Digit7) => 7,
-        PhysicalKey::Code(KeyCode::Digit8) => 8,
-        PhysicalKey::Code(KeyCode::Digit9) => 9,
-        _ => symbol?.to_digit(10)?,
-    };
-    match digit {
-        1..=8 => Some(TabAction::Select((digit - 1) as usize)),
-        9 => Some(TabAction::Last),
-        _ => None,
+    /// Whether releasing a selection drag copies it: Linux mirrors the X11 habit, macOS copies
+    /// only on Cmd+C.
+    #[must_use]
+    pub const fn copies_on_release(self) -> bool {
+        matches!(self, Self::Linux)
     }
 }
 
@@ -296,56 +145,4 @@ pub trait Pane {
     /// # Errors
     /// Returns an error if the terminal cannot report its active screen.
     fn primary_screen(&self) -> Result<bool, Self::Error>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{KeyAction, KeyCode as K, KeyModifiers, PhysicalKey, Shortcuts};
-
-    #[test]
-    fn super_never_matches_a_shortcut() {
-        let ctrl = KeyModifiers {
-            control: true,
-            ..KeyModifiers::default()
-        };
-        let ctrl_shift = KeyModifiers {
-            shift: true,
-            ..ctrl
-        };
-        let ctrl_alt = KeyModifiers { alt: true, ..ctrl };
-        let alt = KeyModifiers {
-            alt: true,
-            ..KeyModifiers::default()
-        };
-        let shift = KeyModifiers {
-            shift: true,
-            ..KeyModifiers::default()
-        };
-        // Each chord matches without Super: by layout character, by the non-Latin
-        // fallback, by alias, by tab digit, by split direction and by page key.
-        for (code, symbol, modifiers) in [
-            (K::KeyC, Some('C'), ctrl_shift),
-            (K::KeyZ, Some('W'), ctrl_shift),
-            (K::KeyC, Some('С'), ctrl_shift),
-            (K::Tab, None, ctrl),
-            (K::Equal, Some('='), ctrl),
-            (K::Digit1, Some('1'), alt),
-            (K::ArrowLeft, None, ctrl_alt),
-            (K::PageUp, None, shift),
-        ] {
-            let physical = PhysicalKey::Code(code);
-            let held = KeyModifiers {
-                super_key: true,
-                ..modifiers
-            };
-            let mut shortcuts = Shortcuts::default();
-            let primary = || Ok::<_, ()>(true);
-            let matched =
-                shortcuts.match_key(physical, symbol, held, KeyAction::Press, true, primary);
-            assert!(matches!(matched, Ok(None)), "Super matched {code:?}");
-            let matched =
-                shortcuts.match_key(physical, symbol, modifiers, KeyAction::Press, true, primary);
-            assert!(matches!(matched, Ok(Some(_))), "{code:?} did not match");
-        }
-    }
 }

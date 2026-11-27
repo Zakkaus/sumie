@@ -11,12 +11,18 @@ pub enum KeyAction {
     Repeat = 2,
 }
 
+/// `GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT` and its `left` value. Terminal state cannot
+/// supply it, and `set_from_terminal` resets it.
+const MACOS_OPTION_AS_ALT: c_int = 7;
+static OPTION_AS_ALT_LEFT: c_int = 2;
+
 /// A mode-independent input event for libghostty-vt's key encoder.
 pub struct KeyEvent<'a> {
     /// A Ghostty physical key code (`GhosttyKey`, 0 for unidentified).
     pub key: u8,
     pub action: KeyAction,
-    /// A `GhosttyMods` mask (shift, control, alt, super, caps lock, num lock).
+    /// A `GhosttyMods` mask (shift, control, alt, super, caps lock, num lock, and the side
+    /// bits). On macOS only a left Alt (Option) is Meta; Ghostty ignores the side elsewhere.
     pub modifiers: u16,
     pub consumed_modifiers: u16,
     pub unshifted: Option<char>,
@@ -89,11 +95,17 @@ impl KeyEncoder {
     /// Returns an error for an invalid key code or a native encoding failure.
     pub fn encode(&mut self, terminal: &Terminal, key: &KeyEvent<'_>) -> Result<&[u8], Error> {
         let mut written = 0;
-        // SAFETY: All handles are live and the output slice is writable for its full length.
+        // SAFETY: All handles are live, the option value is a static `GhosttyOptionAsAlt`, and the
+        // output slice is writable for its full length.
         unsafe {
             check(ffi::ghostty_key_encoder_set_from_terminal(
                 self.raw,
                 terminal.raw,
+            ))?;
+            check(ffi::ghostty_key_encoder_set(
+                self.raw,
+                MACOS_OPTION_AS_ALT,
+                (&raw const OPTION_AS_ALT_LEFT).cast(),
             ))?;
             check(ffi::ghostty_key_event_set_key(
                 self.event,

@@ -4,9 +4,9 @@
 
 use std::{collections::VecDeque, os::fd::BorrowedFd, time::Instant};
 
-use sumie_core::{KeyAction, mouse::MousePhase, notify::Notification};
+use sumie_core::{mouse::MousePhase, notify::Notification};
 use sumie_macos::{
-    Platform, Pointer, Symbol,
+    Platform, Pointer, PointerPhase, Scroll, Symbol,
     readiness::{Interest, Key, Readiness},
 };
 
@@ -30,6 +30,7 @@ use crate::{
 const SLOT: Key = Key::new(u64::MAX, Interest::Timer);
 /// Trackpad points per wheel notch, as Wayland counts logical units.
 const POINTS_PER_NOTCH: f64 = 10.0;
+const VALUE120_PER_NOTCH: f64 = 120.0;
 
 /// What the window did since it opened, for the runner probe and the logs.
 #[derive(Clone, Copy, Default)]
@@ -239,13 +240,9 @@ impl MacWindow {
         });
     }
 
+    /// Command keys go to the shared shortcut table, which keeps them out of the PTY; the
+    /// menu has already taken its own key equivalents, such as Quit.
     fn key(&mut self, key: sumie_macos::Key) {
-        // Command keys belong to the menu and, from M1b-2, to the shared shortcut table; until
-        // then none reaches a PTY. A release still goes through, so a key pressed before
-        // Command keeps its release.
-        if key.command() && !matches!(key.action, KeyAction::Release) {
-            return;
-        }
         self.batch.push_back(Event::Key {
             physical: key.physical,
             logical: logical_key(key.symbol),
@@ -257,10 +254,8 @@ impl MacWindow {
 
     fn pointer(&self, pointer: Pointer) -> PointerEvent {
         let phase = match pointer.phase {
-            MousePhase::Touch(pixels) => {
-                MousePhase::Touch(pixels / self.platform.scale() * (120.0 / POINTS_PER_NOTCH))
-            }
-            phase => phase,
+            PointerPhase::Mouse(phase) => phase,
+            PointerPhase::Scroll(scroll) => wheel_phase(scroll, self.platform.scale()),
         };
         PointerEvent {
             phase,
@@ -273,6 +268,19 @@ impl MacWindow {
         if let Err(error) = self.readiness.set_deadline(SLOT, until) {
             tracing::error!(%error, "could not arm the frame slot wake");
         }
+    }
+}
+
+/// The one conversion of winit's scrolling into the shared value120 units, where positive
+/// scrolls down: a line is a notch, and a trackpad moves a notch per ten points, as Wayland
+/// counts logical units. Fractions stay for the core's remainder.
+fn wheel_phase(scroll: Scroll, scale: f64) -> MousePhase {
+    match scroll {
+        Scroll::Lines(lines) => MousePhase::Wheel(-lines * VALUE120_PER_NOTCH),
+        Scroll::Pixels(pixels) => {
+            MousePhase::Touch(-pixels / scale * (VALUE120_PER_NOTCH / POINTS_PER_NOTCH))
+        }
+        Scroll::Ended => MousePhase::TouchEnd,
     }
 }
 
@@ -457,5 +465,34 @@ impl PaneWatches for MacWindow {
 
     fn retire_pane(&mut self, id: u64) {
         self.watches.retire_pane(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wheel_deltas_convert_once_and_keep_their_fractions() {
+        for (scroll, scale, expected) in [
+            (Scroll::Lines(1.0), 2.0, MousePhase::Wheel(-120.0)),
+            (Scroll::Lines(-0.25), 2.0, MousePhase::Wheel(30.0)),
+            // 5 points at 2x is half a notch; at 1x the same backing pixels are a full one.
+            (Scroll::Pixels(-10.0), 2.0, MousePhase::Touch(60.0)),
+            (Scroll::Pixels(-10.0), 1.0, MousePhase::Touch(120.0)),
+            (Scroll::Pixels(1.5), 1.5, MousePhase::Touch(-12.0)),
+        ] {
+            let got = wheel_phase(scroll, scale);
+            let same = match (got, expected) {
+                (MousePhase::Wheel(a), MousePhase::Wheel(b))
+                | (MousePhase::Touch(a), MousePhase::Touch(b)) => (a - b).abs() < 1e-9,
+                _ => false,
+            };
+            assert!(same, "{scroll:?} at {scale}");
+        }
+        assert!(matches!(
+            wheel_phase(Scroll::Ended, 2.0),
+            MousePhase::TouchEnd
+        ));
     }
 }

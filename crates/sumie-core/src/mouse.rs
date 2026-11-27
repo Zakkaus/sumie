@@ -1,4 +1,4 @@
-use crate::{CellPosition, KeyModifiers};
+use crate::{CellPosition, KeyModifiers, Platform};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Button {
@@ -30,7 +30,8 @@ pub struct MouseEvent {
     /// Whether the pointer actually hit a visible cell rather than clamping to one.
     pub over_grid: bool,
     pub modifiers: KeyModifiers,
-    /// Whether this Ctrl+left press found a link or this release hit the captured target.
+    /// Whether this link-modifier left press found a link or this release hit the captured
+    /// target.
     pub link: bool,
 }
 
@@ -51,9 +52,15 @@ pub enum SelectionUnit {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectStep {
     Begin(SelectionUnit),
-    DragFromLink(CellPosition),
+    /// A cell selection that starts where an earlier press landed: a link press or, on macOS,
+    /// a left press held back from mouse tracking.
+    DragFrom(CellPosition),
     Drag(SelectionUnit),
-    Finish(SelectionUnit),
+    /// The drag ended; `copy` is the platform's choice to copy it now.
+    Finish {
+        unit: SelectionUnit,
+        copy: bool,
+    },
     Clear,
 }
 
@@ -72,6 +79,8 @@ pub enum Dispatch {
     OpenLink,
     Press(Button),
     Release(Button),
+    /// A held-back left press ended in its cell: report the press and the release together.
+    Click(Button),
     Motion(Option<Button>),
     Wheel(WheelRoute, i32),
 }
@@ -102,8 +111,12 @@ impl Wheel {
 }
 
 pub struct MouseState {
+    platform: Platform,
     selecting: Option<(SelectionUnit, CellPosition)>,
     link_press: Option<(CellPosition, Option<[u32; 2]>)>,
+    /// macOS under mouse tracking: a left press not yet reported. Leaving its cell makes it a
+    /// selection; releasing in it makes it a click.
+    held_back: Option<CellPosition>,
     last_click: Option<(u32, CellPosition, KeyModifiers, SelectionUnit)>,
     click_interval: u32,
     // Only buttons whose press was routed to the application belong in motion reports.
@@ -111,20 +124,21 @@ pub struct MouseState {
     wheel: Wheel,
 }
 
-impl Default for MouseState {
-    fn default() -> Self {
+impl MouseState {
+    #[must_use]
+    pub fn new(platform: Platform) -> Self {
         Self {
+            platform,
             selecting: None,
             link_press: None,
+            held_back: None,
             last_click: None,
             click_interval: 500,
             held: [None; 3],
             wheel: Wheel::default(),
         }
     }
-}
 
-impl MouseState {
     pub fn set_click_interval(&mut self, millis: u32) {
         self.click_interval = millis;
     }
@@ -146,6 +160,7 @@ impl MouseState {
     pub fn reset_gestures(&mut self) {
         self.selecting = None;
         self.link_press = None;
+        self.held_back = None;
         self.reset_clicks();
         self.wheel = Wheel::default();
     }
@@ -153,6 +168,17 @@ impl MouseState {
     #[must_use]
     pub fn awaiting_link_release(&self) -> bool {
         self.link_press.is_some()
+    }
+
+    /// The modifiers a button report carries. On macOS Option hands the gesture to the
+    /// program, so it is not part of the report.
+    #[must_use]
+    pub const fn report_modifiers(&self, mut modifiers: KeyModifiers) -> KeyModifiers {
+        if matches!(self.platform, Platform::MacOS) {
+            modifiers.alt = false;
+            modifiers.right_alt = false;
+        }
+        modifiers
     }
 
     /// Track a `Dispatch::Press` after its report has been queued to the PTY.
@@ -195,24 +221,21 @@ impl MouseState {
                     Dispatch::Wheel(route, steps)
                 }
             }
-            MousePhase::Press(Button::Left, _) if event.modifiers.control && event.link => {
-                self.reset_clicks();
-                self.link_press = Some((event.cell, Some(event.pixel.map(f32::to_bits))));
-                Dispatch::Ignore
-            }
-            MousePhase::Press(button, time) => self.press(
-                button,
-                time,
-                event,
-                modes.tracking && !event.modifiers.shift,
-            ),
+            MousePhase::Press(button, time) => self.route_press(button, time, event, modes),
             MousePhase::Release(button) => self.release(button, event),
-            MousePhase::Motion if self.link_press.is_some() || self.selecting.is_some() => {
+            MousePhase::Motion
+                if self.link_press.is_some()
+                    || self.selecting.is_some()
+                    || self.held_back.is_some() =>
+            {
                 self.drag(event)
             }
-            // Shift only chooses the route before a drag starts.
+            // On Linux Shift only chooses the route before a drag starts.
             MousePhase::Motion
-                if modes.tracking && (self.any_button() || !event.modifiers.shift) =>
+                if modes.tracking
+                    && (self.any_button()
+                        || self.platform == Platform::MacOS
+                        || !event.modifiers.shift) =>
             {
                 Dispatch::Motion(self.held[0])
             }
@@ -230,6 +253,39 @@ impl MouseState {
         }
     }
 
+    /// A link press waits for its release. On macOS a left press under tracking waits to
+    /// become a click or a selection, unless Option hands it to the program; on Linux Shift
+    /// selects instead.
+    fn route_press(
+        &mut self,
+        button: Button,
+        time: u32,
+        event: MouseEvent,
+        modes: MouseModes,
+    ) -> Dispatch {
+        let left = button == Button::Left;
+        if left && self.platform.link_modifier(event.modifiers) && event.link {
+            self.reset_clicks();
+            self.link_press = Some((event.cell, Some(event.pixel.map(f32::to_bits))));
+            return Dispatch::Ignore;
+        }
+        let report = match self.platform {
+            Platform::Linux => modes.tracking && !event.modifiers.shift,
+            Platform::MacOS
+                if left && modes.tracking && !event.modifiers.alt && event.over_grid =>
+            {
+                if self.held.contains(&Some(button)) {
+                    return Dispatch::Ignore;
+                }
+                self.reset_clicks();
+                self.held_back = Some(event.cell);
+                return Dispatch::Ignore;
+            }
+            Platform::MacOS => modes.tracking,
+        };
+        self.press(button, time, event, report)
+    }
+
     fn release(&mut self, button: Button, event: MouseEvent) -> Dispatch {
         if button == Button::Left {
             if let Some((origin, pixel)) = self.link_press.take() {
@@ -242,8 +298,14 @@ impl MouseState {
                     Dispatch::Ignore
                 };
             }
+            if self.held_back.take().is_some() {
+                return Dispatch::Click(Button::Left);
+            }
             if let Some((unit, _)) = self.selecting.take() {
-                return Dispatch::Select(SelectStep::Finish(unit));
+                return Dispatch::Select(SelectStep::Finish {
+                    unit,
+                    copy: self.platform.copies_on_release(),
+                });
             }
         }
         if let Some(i) = self.held.iter().position(|&b| b == Some(button)) {
@@ -280,6 +342,14 @@ impl MouseState {
 
     fn drag(&mut self, event: MouseEvent) -> Dispatch {
         let cell = event.cell;
+        if let Some(origin) = self.held_back {
+            if cell == origin {
+                return Dispatch::Ignore;
+            }
+            self.held_back = None;
+            self.selecting = Some((SelectionUnit::Cell, cell));
+            return Dispatch::Select(SelectStep::DragFrom(origin));
+        }
         if let Some((origin, pixel)) = &mut self.link_press {
             if cell == *origin {
                 if *pixel != Some(event.pixel.map(f32::to_bits)) {
@@ -290,7 +360,7 @@ impl MouseState {
             let origin = *origin;
             self.link_press = None;
             self.selecting = Some((SelectionUnit::Cell, cell));
-            return Dispatch::Select(SelectStep::DragFromLink(origin));
+            return Dispatch::Select(SelectStep::DragFrom(origin));
         }
         let (unit, previous) = self.selecting.unwrap();
         if cell == previous {
@@ -302,148 +372,4 @@ impl MouseState {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn routes_mouse_by_mode_and_gesture() {
-        use WheelRoute::{Arrows, History, Report};
-        for (tracking, alternate, alternate_scroll, wheel) in [
-            (false, false, false, History),
-            (false, false, true, History),
-            (false, true, false, History),
-            (false, true, true, Arrows),
-            (true, false, false, Report),
-            (true, false, true, Report),
-            (true, true, false, Report),
-            (true, true, true, Report),
-        ] {
-            let modes = MouseModes {
-                tracking,
-                alternate,
-                alternate_scroll,
-            };
-            for shift in [false, true] {
-                assert_gestures(modes, wheel, shift);
-            }
-        }
-    }
-
-    fn assert_gestures(modes: MouseModes, wheel: WheelRoute, shift: bool) {
-        use MousePhase::{Motion, Press, Release};
-        use SelectStep::{Begin, Drag, Finish};
-        use SelectionUnit::{Cell, Line, Word};
-
-        let mut state = MouseState::default();
-        state.set_click_interval(150);
-        let button = Button::Left;
-        let tracking_input = modes.tracking && !shift;
-        let route = |selection, report| {
-            if tracking_input {
-                report
-            } else {
-                Dispatch::Select(selection)
-            }
-        };
-        let mut send = |phase, column, modifiers, expected| {
-            let event = MouseEvent {
-                phase,
-                cell: CellPosition { row: 0, column },
-                pixel: [0.0; 2],
-                over_grid: true,
-                modifiers,
-                link: false,
-            };
-            let dispatch = state.dispatch(event, modes);
-            assert_eq!(dispatch, expected, "column={column}, shift={shift}");
-            if let Dispatch::Press(button) = dispatch {
-                state.press_reported(button);
-            }
-        };
-        let steps = if modes.tracking { 1 } else { 3 };
-        let hover = if tracking_input {
-            Dispatch::Motion(None)
-        } else {
-            Dispatch::Ignore
-        };
-        let plain = KeyModifiers {
-            shift,
-            ..KeyModifiers::default()
-        };
-        let wheel_dispatch = Dispatch::Wheel(wheel, steps);
-        send(MousePhase::Wheel(120.0), 0, plain, wheel_dispatch);
-        send(Motion, 0, plain, hover);
-        for (time, column, unit, drag_to, hover_via, control) in [
-            (0, 0, Cell, None, None, false),
-            (100, 0, Word, None, None, false),
-            (200, 0, Line, Some(1), None, false),
-            (300, 0, Cell, None, None, false),
-            (400, 0, Word, Some(1), None, false),
-            (450, 1, Cell, Some(2), None, false),
-            (500, 0, Cell, None, None, false),
-            (600, 1, Cell, None, None, false),
-            (751, 1, Cell, None, None, false),
-            (800, 1, Cell, None, Some(0), false),
-            (850, 1, Cell, None, None, true),
-        ] {
-            let mut modifiers = KeyModifiers { control, ..plain };
-            if let Some(via) = hover_via {
-                send(Motion, via, modifiers, hover);
-                send(Motion, column, modifiers, hover);
-            }
-            let press = route(Begin(unit), Dispatch::Press(button));
-            let release = route(Finish(unit), Dispatch::Release(button));
-            send(Press(button, time), column, modifiers, press);
-            if let Some(end) = drag_to {
-                modifiers.shift = false;
-                let drag = route(Drag(unit), Dispatch::Motion(Some(button)));
-                send(Motion, end, modifiers, drag);
-            }
-            let end = drag_to.unwrap_or(column);
-            send(Release(button), end, modifiers, release);
-        }
-    }
-
-    #[test]
-    fn viewer_consuming_release_cancels_the_selection_drag() {
-        let mut state = MouseState::default();
-        let modes = MouseModes {
-            tracking: false,
-            alternate: false,
-            alternate_scroll: false,
-        };
-        let event = |phase, column| MouseEvent {
-            phase,
-            cell: CellPosition { row: 0, column },
-            pixel: [0.0; 2],
-            over_grid: true,
-            modifiers: KeyModifiers::default(),
-            link: false,
-        };
-        assert!(matches!(
-            state.dispatch(event(MousePhase::Press(Button::Left, 0), 0), modes),
-            Dispatch::Select(SelectStep::Begin(SelectionUnit::Cell))
-        ));
-        state.reset_gestures();
-        assert_eq!(
-            state.dispatch(event(MousePhase::Motion, 1), modes),
-            Dispatch::Ignore
-        );
-    }
-
-    #[test]
-    fn accumulates_value120() {
-        use WheelRoute::{History, Report};
-        let mut wheel = Wheel::default();
-        for (route, delta, expected) in [
-            (History, -15., 0),
-            (History, -30., -1),
-            (History, 85., 2),
-            (History, 39., 0),
-            (Report, 81., 0),
-            (Report, 159., 2),
-        ] {
-            assert_eq!(wheel.steps(delta, route), expected);
-        }
-    }
-}
+mod tests;

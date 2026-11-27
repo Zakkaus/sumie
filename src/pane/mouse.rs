@@ -33,7 +33,7 @@ impl Mouse {
         let mut encoder = MouseEncoder::new()?;
         encoder.sync(terminal)?;
         Ok(Self {
-            state: MouseState::default(),
+            state: MouseState::new(crate::platform::POLICY),
             encoder,
             modes: modes(terminal)?,
             last_report: None,
@@ -68,7 +68,7 @@ impl Mouse {
         MouseReport {
             action,
             button,
-            modifiers: modifier_bits(event.modifiers),
+            modifiers: modifier_bits(self.state.report_modifiers(event.modifiers)),
             position: event.pixel,
             cell: self.cell,
             grid: self.grid,
@@ -166,6 +166,7 @@ impl LocalPane {
             Dispatch::OpenLink => return Ok(PaneEffect::OpenLink),
             Dispatch::Press(b) => (MouseAction::Press, Some(b)),
             Dispatch::Release(b) => (MouseAction::Release, Some(b)),
+            Dispatch::Click(b) => return self.click(event, b),
             Dispatch::Motion(b) => (MouseAction::Motion, b),
             Dispatch::Wheel(route, steps) => return self.wheel(event, route, steps),
         };
@@ -177,6 +178,23 @@ impl LocalPane {
             if let (MouseAction::Press, Some(button)) = (action, button) {
                 self.mouse.state.press_reported(button);
             }
+        }
+        Ok(PaneEffect::None)
+    }
+
+    /// Report a held-back press and its release as one click, queued in one write.
+    fn click(&mut self, event: MouseEvent, button: Button) -> Result<PaneEffect> {
+        let button = Some(native_button(button));
+        let mut bytes = self
+            .mouse
+            .encoder
+            .encode(self.mouse.report(event, MouseAction::Press, button))?
+            .to_vec();
+        let release = self.mouse.report(event, MouseAction::Release, button);
+        bytes.extend_from_slice(self.mouse.encoder.encode(release)?);
+        if !bytes.is_empty() {
+            self.pty.enqueue_input(&bytes)?;
+            self.mouse.last_report = Some(event);
         }
         Ok(PaneEffect::None)
     }

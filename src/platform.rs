@@ -4,6 +4,13 @@ mod watches;
 pub(crate) use events::*;
 pub(crate) use watches::{ExitWatches, PaneWatches, Ready, TimerSource};
 
+/// The shortcut and gesture conventions of the platform this binary runs on.
+pub(crate) const POLICY: sumie_core::Platform = if cfg!(target_os = "macos") {
+    sumie_core::Platform::MacOS
+} else {
+    sumie_core::Platform::Linux
+};
+
 pub(crate) enum CursorIcon {
     Default,
     Text,

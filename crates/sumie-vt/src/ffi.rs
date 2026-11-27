@@ -394,6 +394,11 @@ unsafe extern "C" {
     pub fn ghostty_key_encoder_new(allocator: *const Allocator, out: *mut KeyEncoder) -> c_int;
     pub fn ghostty_key_encoder_free(encoder: KeyEncoder);
     pub fn ghostty_key_encoder_set_from_terminal(encoder: KeyEncoder, terminal: Terminal) -> c_int;
+    pub fn ghostty_key_encoder_set(
+        encoder: KeyEncoder,
+        option: c_int,
+        value: *const c_void,
+    ) -> c_int;
     pub fn ghostty_key_encoder_encode(
         encoder: KeyEncoder,
         event: KeyEvent,

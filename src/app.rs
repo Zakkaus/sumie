@@ -169,7 +169,7 @@ impl PaneState {
         Ok(())
     }
 
-    /// Returns true only on release of a completed selection.
+    /// Returns true only on release of a completed selection that the platform copies.
     fn select(&mut self, step: SelectStep, hit: CellPosition) -> Result<bool> {
         self.update_snapshot()?;
         let old = self.selection.range();
@@ -200,13 +200,13 @@ impl PaneState {
                 self.selection
                     .press(hit, group, unit != SelectionUnit::Cell);
             }
-            SelectStep::DragFromLink(origin) => {
+            SelectStep::DragFrom(origin) => {
                 self.selection.press(origin, None, false);
                 self.selection.drag(hit, |from, toward| {
                     resolve(from, toward, SelectionUnit::Cell)
                 })?;
             }
-            SelectStep::Drag(unit) | SelectStep::Finish(unit) => {
+            SelectStep::Drag(unit) | SelectStep::Finish { unit, .. } => {
                 self.selection
                     .drag(hit, |from, toward| resolve(from, toward, unit))?;
             }
@@ -223,7 +223,10 @@ impl PaneState {
                 self.selected_text.clear();
             }
         }
-        Ok(matches!(step, SelectStep::Finish(_)) && self.selection.release().is_some())
+        let SelectStep::Finish { copy, .. } = step else {
+            return Ok(false);
+        };
+        Ok(self.selection.release().is_some() && copy)
     }
 
     fn clear_selection(&mut self) {

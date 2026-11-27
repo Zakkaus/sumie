@@ -1,6 +1,10 @@
 //! Converts winit key events. The physical position becomes the M1a [`PhysicalKey`]; the
 //! layout's symbol and the typed text stay separate, so a press, its repeats and its release
 //! share one identity even if the layout changes while the key is held.
+//!
+//! The window sets `OptionAsAlt::OnlyLeft`: left Option is Meta, so winit reports the text
+//! without Option and Alt stays set for the encoder. Right Option is the layout's compose key:
+//! its characters and dead keys stay, and Alt is marked as consumed by the text.
 
 use sumie_core::{KeyAction, KeyCode as K, KeyModifiers, PhysicalKey};
 use winit::{
@@ -66,18 +70,10 @@ impl Key {
             action,
         }
     }
-
-    /// Whether Command is held: the key belongs to the menu or, from M1b-2, to the shortcut
-    /// table.
-    #[must_use]
-    pub const fn command(&self) -> bool {
-        self.modifiers.super_key
-            || matches!(self.physical, PhysicalKey::Code(K::MetaLeft | K::MetaRight))
-    }
 }
 
 /// The text a press typed, without `AppKit`'s function-key characters, and the modifiers
-/// that still apply to it.
+/// that apply to it.
 fn typed(text: Option<&str>, mut modifiers: KeyModifiers) -> (Option<String>, KeyModifiers) {
     let text = text
         .map(|text| {
@@ -86,15 +82,13 @@ fn typed(text: Option<&str>, mut modifiers: KeyModifiers) -> (Option<String>, Ke
                 .collect::<String>()
         })
         .filter(|text| !text.is_empty());
-    // Option is the layout's compose key until M1b-2 maps left Option to Meta: a character it
-    // typed is the input, not Alt plus a key, so it neither prefixes ESC nor matches an Alt
-    // shortcut.
-    if text
-        .as_deref()
-        .is_some_and(|text| !text.chars().any(char::is_control))
-    {
-        modifiers.alt = false;
-    }
+    // A character right Option typed is the input, not Alt plus a key: Alt stays reported but
+    // consumed, so it neither prefixes ESC nor counts as Meta.
+    modifiers.alt_consumed = modifiers.alt
+        && modifiers.right_alt
+        && text
+            .as_deref()
+            .is_some_and(|text| !text.chars().any(char::is_control));
     (text, modifiers)
 }
 
@@ -297,23 +291,33 @@ mod tests {
     }
 
     #[test]
-    fn option_text_is_input_but_option_on_a_function_or_control_key_stays_alt() {
-        let option = KeyModifiers {
+    fn right_option_text_consumes_alt_but_left_option_and_function_keys_keep_it() {
+        let left = KeyModifiers {
             alt: true,
             ..KeyModifiers::default()
+        };
+        let right = KeyModifiers {
+            right_alt: true,
+            ..left
+        };
+        let consumed = KeyModifiers {
+            alt_consumed: true,
+            ..right
         };
         let control = KeyModifiers {
             control: true,
             ..KeyModifiers::default()
         };
         for (text, modifiers, expected) in [
-            (Some("å"), option, (Some("å"), KeyModifiers::default())),
+            // winit already typed left Option's key without it: Meta+a.
+            (Some("a"), left, (Some("a"), left)),
+            (Some("å"), right, (Some("å"), consumed)),
             // Option+Left: AppKit's arrow character is not text.
-            (Some("\u{f702}"), option, (None, option)),
-            (Some("\x7f"), option, (Some("\x7f"), option)),
+            (Some("\u{f702}"), right, (None, right)),
+            (Some("\x7f"), right, (Some("\x7f"), right)),
             (Some("\x03"), control, (Some("\x03"), control)),
             // A dead key types nothing yet.
-            (None, option, (None, option)),
+            (None, right, (None, right)),
         ] {
             let (text, modifiers) = typed(text, modifiers);
             assert_eq!(text.as_deref(), expected.0);

@@ -5,7 +5,7 @@ use sumie_core::{
 use sumie_vt::Terminal;
 
 use super::{PaneState, Result, Session, WindowOps};
-use crate::platform::{CursorIcon, Event, Modifiers, PointerPhase, Position};
+use crate::platform::{CursorIcon, Event, Modifiers, POLICY, PointerPhase, Position};
 use crate::view::LinkHighlight;
 
 #[derive(Default)]
@@ -138,6 +138,12 @@ impl Hover {
     }
 
     pub(super) fn open(uri: LinkUri) {
+        // The runner's checks never start a browser: they read this line instead.
+        #[cfg(all(target_os = "macos", feature = "macos-ci"))]
+        if std::env::var_os("SUMIE_MACOS_CI_RUNNER").is_some() {
+            println!("runner opened {}", uri.as_str().len());
+            return;
+        }
         if let Err(error) = sumie_pty::open_url(uri) {
             tracing::warn!(%error, "could not start desktop opener worker");
         }
@@ -155,7 +161,7 @@ impl PaneState {
             return Ok(None);
         }
         match mouse.phase {
-            MousePhase::Press(Button::Left, _) if mouse.modifiers.control => {
+            MousePhase::Press(Button::Left, _) if POLICY.link_modifier(mouse.modifiers) => {
                 self.update_snapshot()?;
                 self.probe_link(hit(), host)?;
                 let uri = self.hover.uri();
@@ -222,7 +228,7 @@ impl Session {
             if hit.is_none() || !pane.snapshot_dirty {
                 pane.probe_link(hit, &self.host)?;
             }
-            pane.frame_dirty |= pane.hover.set_control(modifiers.control);
+            pane.frame_dirty |= pane.hover.set_control(POLICY.link_modifier(modifiers));
             link |= hit.is_some_and(|hit| {
                 pane.hover.uri().is_some()
                     && pane
@@ -232,7 +238,7 @@ impl Session {
                         .is_some_and(|checked| checked.hit == hit)
             });
         }
-        window.set_pointer_icon(if thumbnail || (link && modifiers.control) {
+        window.set_pointer_icon(if thumbnail || (link && POLICY.link_modifier(modifiers)) {
             CursorIcon::Pointer
         } else if link {
             CursorIcon::Text

@@ -358,7 +358,7 @@ fn padding_breaks_click_counts_but_clamps_an_active_selection() {
     let left_padding = grid.x - 1;
     let right_padding = grid.x + grid.width;
     let release = Release(Left);
-    let mut state = MouseState::default();
+    let mut state = MouseState::new(sumie_core::Platform::Linux);
     let modes = MouseModes {
         tracking: false,
         alternate: false,
@@ -377,7 +377,8 @@ fn padding_breaks_click_counts_but_clamps_an_active_selection() {
         (4, left_padding, None),
     ] {
         assert_eq!(select(Press(Left, time), x), unit.map(SelectStep::Begin));
-        assert_eq!(select(release, x), unit.map(SelectStep::Finish));
+        let finish = |unit| SelectStep::Finish { unit, copy: true };
+        assert_eq!(select(release, x), unit.map(finish));
     }
     let cell = SelectionUnit::Cell;
     assert_eq!(
@@ -388,7 +389,10 @@ fn padding_breaks_click_counts_but_clamps_an_active_selection() {
     assert_eq!(select(Motion, right_padding), Some(SelectStep::Drag(cell)));
     assert_eq!(
         select(release, right_padding),
-        Some(SelectStep::Finish(cell))
+        Some(SelectStep::Finish {
+            unit: cell,
+            copy: true
+        })
     );
 }
 

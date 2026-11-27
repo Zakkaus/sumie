@@ -143,7 +143,7 @@ impl Pane for LocalPane {
                 let event = KeyEvent {
                     key: physical.ghostty_key(),
                     modifiers: modifier_bits(modifiers),
-                    consumed_modifiers: 0,
+                    consumed_modifiers: consumed_bits(modifiers),
                     action: match action {
                         KeyAction::Press => sumie_vt::KeyAction::Press,
                         KeyAction::Repeat => sumie_vt::KeyAction::Repeat,
@@ -222,6 +222,7 @@ impl Pane for LocalPane {
     }
 }
 
+/// `GhosttyMods`: the six modifiers in bits 0 to 5, then `GHOSTTY_MODS_ALT_SIDE` (right).
 fn modifier_bits(modifiers: KeyModifiers) -> u16 {
     [
         modifiers.shift,
@@ -235,5 +236,10 @@ fn modifier_bits(modifiers: KeyModifiers) -> u16 {
     .enumerate()
     .fold(0, |bits, (index, active)| {
         bits | (u16::from(active) << index)
-    })
+    }) | (u16::from(modifiers.alt && modifiers.right_alt) << 8)
+}
+
+/// The modifiers the layout already applied to the key's text: right Option on macOS.
+fn consumed_bits(modifiers: KeyModifiers) -> u16 {
+    u16::from(modifiers.alt && modifiers.alt_consumed) << 2
 }

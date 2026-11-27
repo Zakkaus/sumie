@@ -54,13 +54,24 @@ pub(crate) struct HeldKey {
     reported: bool,
 }
 
-#[derive(Default)]
 pub(crate) struct Routing {
     shortcuts: Shortcuts,
     pub(crate) generation: u64,
     terminal_presses: Vec<HeldKey>,
     repeating_search_key: Option<PhysicalKey>,
     search_presses: [Option<SearchTarget>; 3],
+}
+
+impl Default for Routing {
+    fn default() -> Self {
+        Self {
+            shortcuts: Shortcuts::new(crate::platform::POLICY),
+            generation: 0,
+            terminal_presses: Vec::new(),
+            repeating_search_key: None,
+            search_presses: [None; 3],
+        }
+    }
 }
 
 impl Routing {
