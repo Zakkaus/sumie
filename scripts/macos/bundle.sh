@@ -110,7 +110,7 @@ if [ "$make_dmg" = true ]; then
     stage=$(mktemp -d)
     cp -R "$app" "$stage/sumie.app"
     ln -s /Applications "$stage/Applications"
-    hdiutil create -volname sumie -srcfolder "$stage" -ov -format UDZO "$dmg"
+    hdiutil create -volname sumie -srcfolder "$stage" -ov -format UDZO "$dmg" >&2
     rm -rf "$stage"
     printf '%s\n' "$dmg"
 else
