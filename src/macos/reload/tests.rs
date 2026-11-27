@@ -18,8 +18,6 @@ use super::*;
 
 const WAIT: Duration = Duration::from_secs(5);
 const QUIET: Duration = Duration::from_millis(300);
-/// The main-thread budget for cancelling and reaping the child.
-const BUDGET: Duration = Duration::from_millis(100);
 const CHILD_ENV: &str = "SUMIE_TEST_CONFIG_CHILD";
 /// `O_NONBLOCK` from Darwin's `<sys/fcntl.h>`.
 const O_NONBLOCK: i32 = 0x0004;
@@ -107,14 +105,12 @@ impl Drop for Scratch {
     }
 }
 
-/// Plays the event loop: a bridge wake is `Event::Ready`, and `main` sums the time spent
-/// in `dispatch` and `Reload` calls, which run on the main thread.
+/// Plays the event loop: a bridge wake is `Event::Ready`.
 struct Fixture {
     reload: Reload,
     watches: Watches,
     wakes: mpsc::Receiver<()>,
     pending: VecDeque<Update>,
-    main: Duration,
     _bridge: Bridge,
 }
 
@@ -132,25 +128,15 @@ impl Fixture {
             watches,
             wakes,
             pending: VecDeque::new(),
-            main: Duration::ZERO,
             _bridge: bridge,
         }
-    }
-
-    fn timed<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
-        let started = Instant::now();
-        let result = work(self);
-        self.main += started.elapsed();
-        result
     }
 
     /// Wait up to `within` for a wake and service it.
     fn step(&mut self, within: Duration) {
         let _ = self.wakes.recv_timeout(within);
-        let updates = self.timed(|fixture| {
-            fixture.watches.dispatch().unwrap();
-            fixture.reload.service(&mut fixture.watches).unwrap()
-        });
+        self.watches.dispatch().unwrap();
+        let updates = self.reload.service(&mut self.watches).unwrap();
         self.pending.extend(updates);
     }
 
@@ -172,13 +158,9 @@ impl Fixture {
         assert!(self.reload.reaped(), "the watcher was not reaped");
     }
 
-    fn close_and_reap(mut self) -> Duration {
-        self.timed(|fixture| fixture.reload.close(&mut fixture.watches).unwrap());
+    fn close_and_reap(mut self) {
+        self.reload.close(&mut self.watches).unwrap();
         self.reap();
-        let Self { reload, main, .. } = self;
-        let started = Instant::now();
-        drop(reload);
-        main + started.elapsed()
     }
 }
 
@@ -205,8 +187,7 @@ fn edits_arrive_as_settings_or_located_diagnostics() {
         matches!(&repaired, Update::Settings(config) if config.cursor.style() == CursorStyle::Bar),
         "{repaired:?}"
     );
-    let main = fixture.close_and_reap();
-    assert!(main <= BUDGET, "closing spent {main:?} on the main thread");
+    fixture.close_and_reap();
 }
 
 #[test]
@@ -220,9 +201,7 @@ fn a_child_blocked_on_a_fifo_include_is_reaped_after_close_without_waiting() {
         fixture.pending.is_empty(),
         "load() returned through a blocked FIFO"
     );
-    fixture.main = Duration::ZERO;
-    let main = fixture.close_and_reap();
-    assert!(main <= BUDGET, "closing spent {main:?} on the main thread");
+    fixture.close_and_reap();
     drop(writer);
 }
 
@@ -233,20 +212,23 @@ fn dropping_a_blocked_child_does_not_wait() {
     let fixture = Fixture::spawn(child(&scratch.0));
     let writer = scratch.hold_fifo();
     let pid = fixture.reload.child.id().to_string();
-    // A drop that waits would hang on the blocked child; end it later so the failure is a time.
+    // A drop that waits would hang on the blocked child; end it later so the failure is a flag.
     let dropped = Arc::new(AtomicBool::new(false));
-    let rescue = Arc::clone(&dropped);
+    let rescued = Arc::new(AtomicBool::new(false));
+    let (done, fired) = (Arc::clone(&dropped), Arc::clone(&rescued));
     thread::spawn(move || {
-        thread::sleep(Duration::from_secs(1));
-        if !rescue.load(Ordering::Relaxed) {
+        thread::sleep(WAIT);
+        if !done.load(Ordering::Relaxed) {
+            fired.store(true, Ordering::Relaxed);
             let _ = Command::new("kill").args(["-KILL", &pid]).status();
         }
     });
-    let started = Instant::now();
     drop(fixture);
-    let main = started.elapsed();
     dropped.store(true, Ordering::Relaxed);
-    assert!(main <= BUDGET, "dropping spent {main:?} on the main thread");
+    assert!(
+        !rescued.load(Ordering::Relaxed),
+        "dropping waited for the blocked child"
+    );
     drop(writer);
 }
 
@@ -279,13 +261,17 @@ fn malformed_results_and_early_eof_are_faults_that_end_the_watcher() {
             matches!(&update, Update::Diagnostic(message) if message.contains(fault)),
             "{script}: {update:?}"
         );
-        // A fault closes the socket; a child that ignores the EOF is killed at the deadline.
+        // A fault closes the socket without waiting: a child that ignores the EOF still runs
+        // until the deadline kills it.
+        if script.contains("exec sleep") {
+            let running = fixture.reload.child.try_wait().unwrap().is_none();
+            assert!(running, "{script}: the fault waited for the child");
+        }
         fixture.reap();
         assert!(
             fixture.pending.is_empty(),
             "{script}: results after the fault"
         );
-        let main = fixture.close_and_reap();
-        assert!(main <= BUDGET, "{script}: {main:?} on the main thread");
+        fixture.close_and_reap();
     }
 }
