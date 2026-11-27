@@ -34,7 +34,7 @@ pub enum KeyAction {
     Release,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "modifiers are independent flags"
@@ -43,7 +43,8 @@ pub struct KeyModifiers {
     pub shift: bool,
     pub control: bool,
     pub alt: bool,
-    /// Alt is the right-hand key. On macOS only left Option is Meta.
+    /// Alt is the right-hand key, or on macOS an Option without a known side: only a known
+    /// left Option is Meta there.
     pub right_alt: bool,
     /// The layout used Alt to type the key's text (right Option on macOS), so the encoder does
     /// not apply it again.
@@ -73,6 +74,13 @@ impl Platform {
             Self::Linux => modifiers.control,
             Self::MacOS => modifiers.super_key,
         }
+    }
+
+    /// Whether a link press survives motion that stays on its link: on macOS a Cmd+click opens
+    /// wherever on the same link it is released; on Linux any motion cancels it.
+    #[must_use]
+    pub const fn link_survives_motion(self) -> bool {
+        matches!(self, Self::MacOS)
     }
 
     /// Whether releasing a selection drag copies it: Linux mirrors the X11 habit, macOS copies

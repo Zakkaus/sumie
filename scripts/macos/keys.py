@@ -15,14 +15,17 @@ Starts the terminal runner like frames.py, then runs keyrec.py in its shell and 
            loss reports once (winit also sends ModifiersChanged(empty)), and refocus once.
   command  Under Kitty flags 11, which report every key and release: Command itself, Cmd+C
            (a shortcut with nothing to copy) and Cmd+K (unbound) send nothing for their press,
-           repeat or release, even when Command is lifted before the key; a still types.
+           repeat or release, even when Command is lifted before the key. a pressed before
+           Command sends its press and release, but not the repeat it makes with Command down.
   option   Left Option is Meta once: a and 1 give 1b61 1b31 (1 does not select a tab). Right
-           Option types the layout's characters: a gives c3a5 (å on Latin layouts), and 1 one
-           character without ESC (¡ on US, 1 on some layouts), not a tab switch.
+           Option, and an Option flag without a side, type the layout's characters: a gives
+           c3a5 (å on Latin layouts), and 1 one character without ESC (¡ on US, 1 on some
+           layouts), not a tab switch.
   links    With https://a.example/one and https://bb.example/two on row 0: Cmd+click on the
-           first opens it; a plain click, and a Cmd press dragged onto the second and back to
-           its own cell, open nothing; Cmd+click on the second opens it. The runner's opener stub prints the URI's
-           length, so no browser starts; no mouse bytes reach the program.
+           first opens it; a plain click opens nothing; a Cmd press dragged along the first opens
+           it; one dragged onto the second and back opens nothing; Cmd+click on the second opens
+           it. The runner's opener stub prints the URI's length, so no browser starts; no mouse
+           bytes reach the program.
   tracking Mode 1002 with SGR reports: a click in one cell gives its press and release; a drag
            to another cell selects and reports nothing; a left Option drag reaches the program
            as press, motion and release without the Alt bit.
@@ -190,7 +193,7 @@ def case_focus(keys):
 
 
 def case_command(keys):
-    keys.start("command", "kitty")
+    out = keys.start("command", "kitty")
     keys.key(COMMAND, "down", "command")
     for code in (C, K):
         keys.key(code, "down", "command")
@@ -199,50 +202,70 @@ def case_command(keys):
     # Command lifted before K: K's release still belongs to the shortcut table.
     keys.key(COMMAND, "up")
     keys.key(K, "up")
-    keys.tap(A)
-    expect("command", keys.stop("command"), KITTY_A)
+    expect("command chords", keys.recorded(out), "")
+    keys.key(A, "down")
+    keys.key(COMMAND, "down", "command")
+    keys.key(A, "repeat", "command")
+    keys.key(COMMAND, "up")
+    keys.key(A, "up")
+    expect("a held into Command", keys.stop("command"), KITTY_A)
 
 
 def case_option(keys):
-    keys.start("option", "plain")
-    for side, code in ((LEFT_OPTION, "loption"), (RIGHT_OPTION, "roption")):
+    out = keys.start("option", "plain")
+    meta, composed = "1b611b31", "c3a5"
+    typed = ""
+    # An Option flag without a side bit is not known to be left Option.
+    for name, side, code in (("left Option", LEFT_OPTION, "loption"), ("right Option", RIGHT_OPTION, "roption"),
+                             ("Option without a side", LEFT_OPTION, "option")):
         keys.key(side, "down", code)
         keys.tap(A, code)
         keys.tap(DIGIT1, code)
         keys.key(side, "up")
-    got = keys.stop("option")
-    meta, composed = "1b611b31", "c3a5"
-    rest = bytes.fromhex(got[len(meta) + len(composed):]) if got.startswith(meta + composed) else b""
-    try:
-        digit = rest.decode()
-    except UnicodeDecodeError:
-        digit = ""
-    if len(digit) != 1 or digit == "\x1b":
-        raise Violation(f"keys: option: recorded {got or 'nothing'} instead of {meta}{composed} and one "
-                        "character for right Option+1")
-    print(f"keys: option: left Option {meta}, right Option {composed} and {rest.hex()}")
+        got = keys.recorded(out)[len(typed):]
+        typed += got
+        if name == "left Option":
+            expect(f"option: {name}", got, meta)
+            continue
+        rest = bytes.fromhex(got[len(composed):]) if got.startswith(composed) else b""
+        try:
+            digit = rest.decode()
+        except UnicodeDecodeError:
+            digit = ""
+        if len(digit) != 1 or digit == "\x1b":
+            raise Violation(f"keys: option: {name}: recorded {got or 'nothing'} instead of {composed} and one "
+                            "character for Option+1")
+        print(f"keys: option: {name}: {composed} and {rest.hex()}")
+    keys.stop("option")
 
 
 def case_links(keys):
     shown = "printf '\\033[3J\\033[2J\\033[H%s  %s\\n' " + " ".join(LINKS) + "; "
     keys.start("links", "plain", before=shown)
     first, second = (3, 0), (len(LINKS[0]) + 4, 0)
-    since = time.monotonic()
-    keys.key(COMMAND, "down", "command")
-    keys.click(first, "command")
-    keys.key(COMMAND, "up")
-    keys.click(first)
-    keys.key(COMMAND, "down", "command")
-    keys.drag_path([first, second, first], "command")
-    keys.click(second, "command")
-    keys.key(COMMAND, "up")
-    time.sleep(SETTLE)
-    opened = [int(fields[2]) for _, fields in keys.runner.matching("runner", "opened", since=since)]
-    want = [len(LINKS[0]), len(LINKS[1])]
-    if opened != want:
-        raise Violation(f"keys: links: opened URIs of lengths {opened or 'none'} instead of {want}: only a "
-                        "Command press and release on the same link opens it")
-    print(f"keys: links: opened {want}; a plain click and a drag off the link and back opened nothing")
+    along = (first[0] + 3, 0)
+
+    def command(gesture):
+        keys.key(COMMAND, "down", "command")
+        gesture("command")
+        keys.key(COMMAND, "up")
+
+    for name, gesture, want in (
+            ("Cmd+click on the first", lambda: command(lambda mods: keys.click(first, mods)), [len(LINKS[0])]),
+            ("a plain click on the first", lambda: keys.click(first), []),
+            ("a Cmd drag along the first", lambda: command(lambda mods: keys.drag_path([first, along], mods)),
+             [len(LINKS[0])]),
+            ("a Cmd drag onto the second and back",
+             lambda: command(lambda mods: keys.drag_path([first, second, first], mods)), []),
+            ("Cmd+click on the second", lambda: command(lambda mods: keys.click(second, mods)), [len(LINKS[1])])):
+        since = time.monotonic()
+        gesture()
+        time.sleep(SETTLE)
+        opened = [int(fields[2]) for _, fields in keys.runner.matching("runner", "opened", since=since)]
+        if opened != want:
+            raise Violation(f"keys: links: {name} opened URIs of lengths {opened or 'none'} instead of "
+                            f"{want or 'none'}")
+        print(f"keys: links: {name} opened {want or 'nothing'}")
     expect("links bytes", keys.stop("links"), "")
 
 

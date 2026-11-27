@@ -198,10 +198,11 @@ impl Input {
             WindowEvent::RedrawRequested => Event::RedrawRequested,
             WindowEvent::CloseRequested => Event::CloseRequested,
             WindowEvent::ModifiersChanged(modifiers) => {
-                // With both held winit already typed the key without Option: left wins.
-                let right_alt = modifiers.ralt_state() == ModifiersKeyState::Pressed
-                    && modifiers.lalt_state() != ModifiersKeyState::Pressed;
-                self.modifiers = key_modifiers(modifiers.state(), right_alt);
+                // Only a known left Option is Meta, as winit's `OptionAsAlt::OnlyLeft` decides:
+                // an Option flag without a side bit keeps the layout's characters, and with
+                // both held winit already typed the key without Option.
+                let left_alt = modifiers.lalt_state() == ModifiersKeyState::Pressed;
+                self.modifiers = key_modifiers(modifiers.state(), left_alt);
                 Event::ModifiersChanged(self.modifiers)
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -259,12 +260,12 @@ impl Input {
     }
 }
 
-fn key_modifiers(state: ModifiersState, right_alt: bool) -> KeyModifiers {
+fn key_modifiers(state: ModifiersState, left_alt: bool) -> KeyModifiers {
     KeyModifiers {
         shift: state.shift_key(),
         control: state.control_key(),
         alt: state.alt_key(),
-        right_alt: state.alt_key() && right_alt,
+        right_alt: state.alt_key() && !left_alt,
         alt_consumed: false,
         super_key: state.super_key(),
         caps_lock: false,

@@ -17,6 +17,8 @@ pub(super) struct Mouse {
     link_press: Option<LinkUri>,
     grid: [u32; 2],
     cell: [u32; 2],
+    /// The encoded reports of one write, kept to reuse its allocation.
+    bytes: Vec<u8>,
 }
 
 fn modes(terminal: &Terminal) -> Result<MouseModes> {
@@ -40,6 +42,7 @@ impl Mouse {
             link_press: None,
             grid: grid.map(u32::from),
             cell,
+            bytes: Vec::new(),
         })
     }
 
@@ -105,6 +108,10 @@ impl LocalPane {
         self.mouse.link_press = uri.cloned();
     }
 
+    pub(crate) fn pressed_link(&self) -> Option<&LinkUri> {
+        self.mouse.link_press.as_ref()
+    }
+
     pub(crate) fn take_pressed_link(&mut self) -> Option<LinkUri> {
         self.mouse.link_press.take()
     }
@@ -166,37 +173,45 @@ impl LocalPane {
             Dispatch::OpenLink => return Ok(PaneEffect::OpenLink),
             Dispatch::Press(b) => (MouseAction::Press, Some(b)),
             Dispatch::Release(b) => (MouseAction::Release, Some(b)),
-            Dispatch::Click(b) => return self.click(event, b),
+            // A held-back press and its release, as one click.
+            Dispatch::Click(press) => {
+                let left = Some(Button::Left);
+                self.send_reports(&[
+                    (press, MouseAction::Press, left),
+                    (event, MouseAction::Release, left),
+                ])?;
+                return Ok(PaneEffect::None);
+            }
             Dispatch::Motion(b) => (MouseAction::Motion, b),
             Dispatch::Wheel(route, steps) => return self.wheel(event, route, steps),
         };
-        let report = self.mouse.report(event, action, button.map(native_button));
-        let bytes = self.mouse.encoder.encode(report)?;
-        if !bytes.is_empty() {
-            self.pty.enqueue_input(bytes)?;
-            self.mouse.last_report = Some(event);
-            if let (MouseAction::Press, Some(button)) = (action, button) {
-                self.mouse.state.press_reported(button);
-            }
+        if self.send_reports(&[(event, action, button)])?
+            && let (MouseAction::Press, Some(button)) = (action, button)
+        {
+            self.mouse.state.press_reported(button);
         }
         Ok(PaneEffect::None)
     }
 
-    /// Report a held-back press and its release as one click, queued in one write.
-    fn click(&mut self, event: MouseEvent, button: Button) -> Result<PaneEffect> {
-        let button = Some(native_button(button));
-        let mut bytes = self
-            .mouse
-            .encoder
-            .encode(self.mouse.report(event, MouseAction::Press, button))?
-            .to_vec();
-        let release = self.mouse.report(event, MouseAction::Release, button);
-        bytes.extend_from_slice(self.mouse.encoder.encode(release)?);
-        if !bytes.is_empty() {
-            self.pty.enqueue_input(&bytes)?;
-            self.mouse.last_report = Some(event);
+    /// Encode the reports in order and queue them in one write, so a click never splits.
+    /// Returns whether the program's mode reported anything.
+    fn send_reports(
+        &mut self,
+        reports: &[(MouseEvent, MouseAction, Option<Button>)],
+    ) -> Result<bool> {
+        let mouse = &mut self.mouse;
+        mouse.bytes.clear();
+        for &(event, action, button) in reports {
+            let report = mouse.report(event, action, button.map(native_button));
+            let bytes = mouse.encoder.encode(report)?;
+            mouse.bytes.extend_from_slice(bytes);
         }
-        Ok(PaneEffect::None)
+        if mouse.bytes.is_empty() {
+            return Ok(false);
+        }
+        self.pty.enqueue_input(&mouse.bytes)?;
+        mouse.last_report = reports.last().map(|&(event, ..)| event);
+        Ok(true)
     }
 
     fn wheel(

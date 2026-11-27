@@ -136,19 +136,38 @@ def macos_controls():
                            "                    return Ok(Effect::None);\n"
                            "                }\n"
                            "                Some(Shortcut::Consume) => (),\n"),
-              "keys: command: recorded")
+              "keys: command chords: recorded")
+        probe("repeat a key held into Command with it", "macos-keys", "crates/sumie-core/src/shortcuts.rs",
+              replace_once("            return Ok(command_repeat.then_some(Shortcut::Consume));\n",
+                           "            return Ok(command_repeat.then_some(Shortcut::Consume).filter(|_| false));\n"),
+              "keys: a held into Command: recorded")
         probe("right Option sent as Meta", "macos-keys", "crates/sumie-macos/src/window.rs",
-              replace_once("        right_alt: state.alt_key() && right_alt,\n",
-                           "        right_alt: state.alt_key() && right_alt && false,\n"),
-              "keys: option: recorded")
+              replace_once("        right_alt: state.alt_key() && !left_alt,\n",
+                           "        right_alt: state.alt_key() && !left_alt && false,\n"),
+              "keys: option: right Option: recorded")
+        probe("Option without a side sent as Meta", "macos-keys", "crates/sumie-macos/src/window.rs",
+              replace_once("let left_alt = modifiers.lalt_state() == ModifiersKeyState::Pressed;",
+                           "let left_alt = modifiers.ralt_state() != ModifiersKeyState::Pressed;"),
+              "keys: option: Option without a side: recorded")
+        # The unused macos_shortcut is only a warning, so the build runs and left Option+1
+        # selects a tab instead of typing ESC 1.
         probe("Linux Alt+digit tab aliases on macOS", "macos-keys", "crates/sumie-core/src/shortcuts.rs",
               replace_once("            Platform::MacOS => macos_shortcut(physical, modifiers, has_splits),\n",
                            "            Platform::MacOS => linux_shortcut(physical, symbol, modifiers, has_splits),\n"),
-              "keys: option: recorded")
+              "keys: option: left Option: recorded 1b61 instead of 1b611b31")
         probe("open a link released after a drag off it", "macos-keys", "crates/sumie-core/src/mouse.rs",
               replace_once("            self.link_press = None;\n            self.selecting = Some((SelectionUnit::Cell, cell));\n",
                            "            self.selecting = Some((SelectionUnit::Cell, cell));\n"),
-              "keys: links: opened")
+              "keys: links: a Cmd drag onto the second and back opened URIs of lengths [21]")
+        probe("cancel a Cmd+click that moved along its link", "macos-keys", "crates/sumie-core/src/lib.rs",
+              replace_once("        matches!(self, Self::MacOS)\n", "        false\n"),
+              "keys: links: a Cmd drag along the first opened URIs of lengths none")
+        probe("a tracking drag into the padding beside its cell is a click", "test", "crates/sumie-core/src/mouse.rs",
+              replace_once("    event.over_grid && event.cell == cell\n", "    event.cell == cell\n"),
+              "test mouse::tests::a_held_back_press_is_a_click_only_inside_its_cell ... FAILED")
+        probe("a held-back click after another button's press and release", "test", "crates/sumie-core/src/mouse.rs",
+              replace_once("        if !left {\n            self.held_back = None;\n        }\n", ""),
+              "test mouse::tests::another_button_drops_a_held_back_press ... FAILED")
         probe("report a tracking press before it becomes a click or a drag", "macos-keys",
               "crates/sumie-core/src/mouse.rs",
               replace_once("                if left && modes.tracking && !event.modifiers.alt && event.over_grid =>\n",

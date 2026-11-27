@@ -37,11 +37,11 @@ def input_controls():
                            "return Ok(Effect::None);"),
               "test input::tests::shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one"
               " ... FAILED")
+        # The primary screen still scrolls, so only the alternate screen's rows can fail.
         probe("Shift+PageUp scrolls the alternate screen", "test", "crates/sumie-core/src/shortcuts.rs",
               replace_once("Some(Shortcut::ScrollPage { up }) if primary_screen()? =>",
-                           "Some(Shortcut::ScrollPage { up }) if !primary_screen()? =>"),
-              "test input::tests::shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one"
-              " ... FAILED")
+                           "Some(Shortcut::ScrollPage { up }) if primary_screen().map(|_| true)? =>"),
+              "Shift+PageUp on the alternate screen")
         probe("a focusing click reaches the pane", "test", "src/app/pane_input.rs",
               replace_once("        !(button == Button::Left && moved_focus)\n", "        true\n"),
               "test app::pane_input::tests::a_left_click_that_moves_focus_stays_out_of_the_pane ... FAILED")

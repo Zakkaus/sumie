@@ -8,6 +8,7 @@ pub enum Button {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum MousePhase {
     /// The platform press timestamp in milliseconds (wrapping).
     Press(Button, u32),
@@ -23,6 +24,7 @@ pub enum MousePhase {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct MouseEvent {
     pub phase: MousePhase,
     pub cell: CellPosition,
@@ -72,15 +74,16 @@ pub enum WheelRoute {
 }
 
 #[derive(Clone, Copy)]
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum Dispatch {
     Ignore,
     Select(SelectStep),
     OpenLink,
     Press(Button),
     Release(Button),
-    /// A held-back left press ended in its cell: report the press and the release together.
-    Click(Button),
+    /// A held-back left press, carried here, ended in its cell: report it and the release
+    /// together.
+    Click(MouseEvent),
     Motion(Option<Button>),
     Wheel(WheelRoute, i32),
 }
@@ -115,8 +118,8 @@ pub struct MouseState {
     selecting: Option<(SelectionUnit, CellPosition)>,
     link_press: Option<(CellPosition, Option<[u32; 2]>)>,
     /// macOS under mouse tracking: a left press not yet reported. Leaving its cell makes it a
-    /// selection; releasing in it makes it a click.
-    held_back: Option<CellPosition>,
+    /// selection; releasing in it makes it a click; another button drops it.
+    held_back: Option<MouseEvent>,
     last_click: Option<(u32, CellPosition, KeyModifiers, SelectionUnit)>,
     click_interval: u32,
     // Only buttons whose press was routed to the application belong in motion reports.
@@ -264,6 +267,10 @@ impl MouseState {
         modes: MouseModes,
     ) -> Dispatch {
         let left = button == Button::Left;
+        // Another button drops a held-back left press: its click would follow this press.
+        if !left {
+            self.held_back = None;
+        }
         if left && self.platform.link_modifier(event.modifiers) && event.link {
             self.reset_clicks();
             self.link_press = Some((event.cell, Some(event.pixel.map(f32::to_bits))));
@@ -278,7 +285,7 @@ impl MouseState {
                     return Dispatch::Ignore;
                 }
                 self.reset_clicks();
-                self.held_back = Some(event.cell);
+                self.held_back = Some(event);
                 return Dispatch::Ignore;
             }
             Platform::MacOS => modes.tracking,
@@ -289,17 +296,19 @@ impl MouseState {
     fn release(&mut self, button: Button, event: MouseEvent) -> Dispatch {
         if button == Button::Left {
             if let Some((origin, pixel)) = self.link_press.take() {
-                return if event.link
-                    && event.cell == origin
-                    && pixel == Some(event.pixel.map(f32::to_bits))
-                {
+                let unmoved = event.cell == origin && pixel == Some(event.pixel.map(f32::to_bits));
+                return if event.link && (self.platform.link_survives_motion() || unmoved) {
                     Dispatch::OpenLink
                 } else {
                     Dispatch::Ignore
                 };
             }
-            if self.held_back.take().is_some() {
-                return Dispatch::Click(Button::Left);
+            if let Some(press) = self.held_back.take() {
+                return if in_cell(event, press.cell) {
+                    Dispatch::Click(press)
+                } else {
+                    Dispatch::Ignore
+                };
             }
             if let Some((unit, _)) = self.selecting.take() {
                 return Dispatch::Select(SelectStep::Finish {
@@ -342,16 +351,21 @@ impl MouseState {
 
     fn drag(&mut self, event: MouseEvent) -> Dispatch {
         let cell = event.cell;
-        if let Some(origin) = self.held_back {
-            if cell == origin {
+        if let Some(press) = self.held_back {
+            if in_cell(event, press.cell) {
                 return Dispatch::Ignore;
             }
             self.held_back = None;
             self.selecting = Some((SelectionUnit::Cell, cell));
-            return Dispatch::Select(SelectStep::DragFrom(origin));
+            return Dispatch::Select(SelectStep::DragFrom(press.cell));
         }
         if let Some((origin, pixel)) = &mut self.link_press {
-            if cell == *origin {
+            let on_link = if self.platform.link_survives_motion() {
+                event.link
+            } else {
+                cell == *origin
+            };
+            if on_link {
                 if *pixel != Some(event.pixel.map(f32::to_bits)) {
                     *pixel = None;
                 }
@@ -369,6 +383,12 @@ impl MouseState {
         self.selecting = Some((unit, cell));
         Dispatch::Select(SelectStep::Drag(unit))
     }
+}
+
+/// Whether the pointer is in `cell` itself, not in the padding a clamped position shares
+/// with an edge cell.
+fn in_cell(event: MouseEvent, cell: CellPosition) -> bool {
+    event.over_grid && event.cell == cell
 }
 
 #[cfg(test)]

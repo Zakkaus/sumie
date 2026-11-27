@@ -167,6 +167,8 @@ fn shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one() {
             ..Recorder::default()
         };
         let mut routing = Routing::default();
+        let chord = if modifiers.shift { "Shift+" } else { "" };
+        let screen = if alternate { "alternate" } else { "primary" };
         for action in [Press, Repeat, Release] {
             let event = Event::Key {
                 physical: PhysicalKey::Code(code),
@@ -177,7 +179,11 @@ fn shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one() {
             };
             let effect = route((1, 0), &mut pane, &mut routing, false, event, false).unwrap();
             let scrolled = page.is_some() && matches!(action, Press);
-            assert_eq!(effect == super::Effect::ViewportChanged, scrolled);
+            assert_eq!(
+                effect == super::Effect::ViewportChanged,
+                scrolled,
+                "{chord}{code:?} on the {screen} screen"
+            );
         }
         if let Some(up) = page {
             assert_eq!(pane.pages, [up], "{code:?}");

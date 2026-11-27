@@ -159,7 +159,13 @@ fn mac_drag_selects_without_copying_and_tracking_tells_a_click_from_a_drag() {
         // Under tracking a press waits; released in its cell it is one click.
         (Press(left, 1000), 3, plain, true, Dispatch::Ignore),
         (Motion, 3, plain, true, Dispatch::Ignore),
-        (Release(left), 3, plain, true, Dispatch::Click(left)),
+        (
+            Release(left),
+            3,
+            plain,
+            true,
+            Dispatch::Click(mac_event(Press(left, 1000), 3, plain)),
+        ),
         // Leaving the cell makes it a selection from the press cell; nothing is reported.
         (Press(left, 2000), 3, plain, true, Dispatch::Ignore),
         (Motion, 5, plain, true, from),
@@ -189,8 +195,129 @@ fn mac_drag_selects_without_copying_and_tracking_tells_a_click_from_a_drag() {
         }
     }
     // Option is not part of the program's reports.
-    assert!(state.report_modifiers(option) == plain);
-    assert!(MouseState::new(Platform::Linux).report_modifiers(option) == option);
+    assert_eq!(state.report_modifiers(option), plain);
+    assert_eq!(
+        MouseState::new(Platform::Linux).report_modifiers(option),
+        option
+    );
+}
+
+fn held_back_steps(steps: &[(MouseEvent, Dispatch)]) {
+    let modes = MouseModes {
+        tracking: true,
+        alternate: false,
+        alternate_scroll: false,
+    };
+    let mut state = MouseState::new(Platform::MacOS);
+    for (step, &(event, expected)) in steps.iter().enumerate() {
+        let dispatch = state.dispatch(event, modes);
+        assert_eq!(dispatch, expected, "step {step}");
+        if let Dispatch::Press(button) = dispatch {
+            state.press_reported(button);
+        }
+    }
+}
+
+fn mac_at(phase: MousePhase, pixel: f32, over_grid: bool) -> MouseEvent {
+    MouseEvent {
+        pixel: [pixel, 0.0],
+        over_grid,
+        ..mac_event(phase, 9, KeyModifiers::default())
+    }
+}
+
+#[test]
+fn a_held_back_press_is_a_click_only_inside_its_cell() {
+    use MousePhase::{Motion, Press, Release};
+    let press = mac_at(Press(Button::Left, 0), 95.0, true);
+    let from = Dispatch::Select(SelectStep::DragFrom(CellPosition { row: 0, column: 9 }));
+    let finish = Dispatch::Select(SelectStep::Finish {
+        unit: SelectionUnit::Cell,
+        copy: false,
+    });
+    held_back_steps(&[
+        // The click reports the press where it landed, not where it was released.
+        (press, Dispatch::Ignore),
+        (
+            mac_at(Release(Button::Left), 98.0, true),
+            Dispatch::Click(press),
+        ),
+        // The padding past the last column clamps to it, but is outside the cell.
+        (press, Dispatch::Ignore),
+        (mac_at(Motion, 104.0, false), from),
+        (mac_at(Release(Button::Left), 104.0, false), finish),
+        (press, Dispatch::Ignore),
+        (
+            mac_at(Release(Button::Left), 104.0, false),
+            Dispatch::Ignore,
+        ),
+    ]);
+}
+
+#[test]
+fn another_button_drops_a_held_back_press() {
+    use MousePhase::{Press, Release};
+    let (left, right) = (Button::Left, Button::Right);
+    // Right pressed and released while left is held: no left click follows them.
+    held_back_steps(&[
+        (mac_at(Press(left, 0), 95.0, true), Dispatch::Ignore),
+        (mac_at(Press(right, 10), 95.0, true), Dispatch::Press(right)),
+        (mac_at(Release(right), 95.0, true), Dispatch::Release(right)),
+        (mac_at(Release(left), 95.0, true), Dispatch::Ignore),
+    ]);
+}
+
+#[test]
+fn a_mac_link_opens_where_its_press_moved_on_it_but_linux_needs_a_still_press() {
+    use MousePhase::{Motion, Press, Release};
+    let modes = MouseModes {
+        tracking: false,
+        alternate: false,
+        alternate_scroll: false,
+    };
+    for (platform, modifiers, opens) in [
+        (
+            Platform::MacOS,
+            KeyModifiers {
+                super_key: true,
+                ..KeyModifiers::default()
+            },
+            true,
+        ),
+        (
+            Platform::Linux,
+            KeyModifiers {
+                control: true,
+                ..KeyModifiers::default()
+            },
+            false,
+        ),
+    ] {
+        let mut state = MouseState::new(platform);
+        let mut send = |phase, column, pixel: f32| {
+            let event = MouseEvent {
+                pixel: [pixel, 0.0],
+                link: true,
+                ..mac_event(phase, column, modifiers)
+            };
+            state.dispatch(event, modes)
+        };
+        // A move within the press cell.
+        send(Press(Button::Left, 0), 1, 10.0);
+        send(Motion, 1, 12.0);
+        let open = send(Release(Button::Left), 1, 12.0) == Dispatch::OpenLink;
+        assert_eq!(open, opens, "{platform:?} within the cell");
+        // A move to another cell of the same link: Linux selects from the press.
+        send(Press(Button::Left, 1000), 1, 10.0);
+        let moved = send(Motion, 2, 20.0);
+        assert_eq!(
+            moved == Dispatch::Ignore,
+            opens,
+            "{platform:?} onto the next cell"
+        );
+        let open = send(Release(Button::Left), 2, 20.0) == Dispatch::OpenLink;
+        assert_eq!(open, opens, "{platform:?} on the next cell");
+    }
 }
 
 #[test]

@@ -64,7 +64,8 @@ impl Shortcuts {
     /// if the user releases a modifier first or the layout changes.
     /// Directional pane bindings are reserved only in tabs with splits, and Shift+PageUp and
     /// Shift+PageDown only on the primary screen; the alternate screen has no history.
-    /// On macOS every Command chord is consumed, matched or not, and so are the Command keys.
+    /// On macOS every Command chord is consumed, matched or not, and so are the Command keys
+    /// and the repeats a key held before Command makes while Command is down.
     ///
     /// # Errors
     ///
@@ -87,7 +88,11 @@ impl Shortcuts {
             }
         }
         if !matches!(action, KeyAction::Press) {
-            return Ok(None);
+            // A key held before Command repeats with it; Command still never reaches a PTY.
+            let command_repeat = self.platform == Platform::MacOS
+                && modifiers.super_key
+                && matches!(action, KeyAction::Repeat);
+            return Ok(command_repeat.then_some(Shortcut::Consume));
         }
         let shortcut = match self.platform {
             Platform::Linux if modifiers.super_key => return Ok(None),
@@ -159,10 +164,9 @@ fn command_shortcut(
     }
     if !modifiers.shift
         && has_splits
-        && let Some(Shortcut::Pane(PaneAction::Focus(direction))) =
-            directional_shortcut(physical, false)
+        && let Some(focus) = directional_shortcut(physical, false)
     {
-        return Some(Shortcut::Pane(PaneAction::Focus(direction)));
+        return Some(focus);
     }
     let key = command_position(physical).or_else(|| symbol.map(|ch| ch.to_ascii_lowercase()))?;
     let shortcut = match (key, modifiers.shift) {
@@ -490,6 +494,42 @@ mod tests {
         ] {
             let matched = shortcuts.match_key(key, Some('c'), modifiers, action, false, primary);
             assert_eq!(label(matched.unwrap()), expected);
+        }
+    }
+
+    #[test]
+    fn a_key_held_into_command_repeats_only_without_it() {
+        let command = KeyModifiers {
+            super_key: true,
+            ..KeyModifiers::default()
+        };
+        let primary = || Ok::<_, ()>(true);
+        let key = PhysicalKey::Code(K::KeyA);
+        for (step, (platform, action, modifiers, expected)) in [
+            (
+                Platform::MacOS,
+                KeyAction::Press,
+                KeyModifiers::default(),
+                "none",
+            ),
+            (Platform::MacOS, KeyAction::Repeat, command, "consume"),
+            (
+                Platform::MacOS,
+                KeyAction::Repeat,
+                KeyModifiers::default(),
+                "none",
+            ),
+            // The release still pairs with the press the program saw.
+            (Platform::MacOS, KeyAction::Release, command, "none"),
+            // Linux keeps Super out of the table, not out of the PTY.
+            (Platform::Linux, KeyAction::Repeat, command, "none"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut shortcuts = Shortcuts::new(platform);
+            let matched = shortcuts.match_key(key, Some('a'), modifiers, action, false, primary);
+            assert_eq!(label(matched.unwrap()), expected, "step {step}");
         }
     }
 }

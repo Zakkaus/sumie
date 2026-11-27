@@ -168,6 +168,13 @@ impl PaneState {
                 mouse.link = uri.is_some();
                 self.pane.capture_link(uri);
             }
+            // A macOS link press holds while the pointer stays on its link.
+            MousePhase::Motion
+                if POLICY.link_survives_motion() && self.pane.pressed_link().is_some() =>
+            {
+                self.probe_link(hit(), host)?;
+                mouse.link = self.hover.uri() == self.pane.pressed_link();
+            }
             MousePhase::Release(Button::Left) => {
                 if let Some(uri) = self.pane.take_pressed_link()
                     && let Some(hit) = hit()
