@@ -5,11 +5,13 @@
 //        pbfixture clear NAME
 //        pbfixture count NAME        (the change count; NAME `general` is the general board,
 //                                     whose contents this tool never reads or writes)
-//        pbfixture provide NAME MS   (the string from stdin, promised lazily: each request
-//                                     prints `asked`, then waits MS milliseconds before it
-//                                     provides the data, or forever for -1. Prints `ready`
-//                                     once the promise is on the board; the check kills it.)
+//        pbfixture provide NAME WAIT (the string from stdin, promised lazily: each request
+//                                     prints `asked`, then waits before it provides the data:
+//                                     WAIT milliseconds, forever for -1, or until SIGUSR1 for
+//                                     `signal`. Prints `ready` once the promise is on the
+//                                     board; the check kills it.)
 #import <AppKit/AppKit.h>
+#include <signal.h>
 
 static NSString *const kType = @"public.utf8-plain-text";
 
@@ -18,13 +20,21 @@ static NSString *const kType = @"public.utf8-plain-text";
 @interface Provider : NSObject
 @property(copy) NSString *text;
 @property long long delay;
+@property BOOL onSignal;
 @end
 
 @implementation Provider
 - (void)pasteboard:(NSPasteboard *)board provideDataForType:(NSString *)type {
     printf("asked\n");
     fflush(stdout);
-    if (self.delay < 0) {
+    if (self.onSignal) {
+        // main blocks SIGUSR1, so one sent before this wait stays pending for it.
+        sigset_t set;
+        sigemptyset(&set);
+        sigaddset(&set, SIGUSR1);
+        int received;
+        sigwait(&set, &received);
+    } else if (self.delay < 0) {
         for (;;) {
             sleep(1000);
         }
@@ -84,7 +94,12 @@ int main(int argc, const char *argv[]) {
         if ([command isEqualToString:@"provide"] && argc == 4) {
             Provider *provider = [Provider new];
             provider.text = readStdin();
+            provider.onSignal = strcmp(argv[3], "signal") == 0;
             provider.delay = atoll(argv[3]);
+            sigset_t set;
+            sigemptyset(&set);
+            sigaddset(&set, SIGUSR1);
+            pthread_sigmask(SIG_BLOCK, &set, NULL);
             [board declareTypes:@[ kType ] owner:provider];
             printf("ready\n");
             fflush(stdout);

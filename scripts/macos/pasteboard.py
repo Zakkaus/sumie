@@ -13,8 +13,8 @@ violation, 2 if it cannot check. Contents never appear in its output.
              still arrives.
   oversized  A string over 1 MiB sends nothing; in mode 2004, one whose framing makes it
              1 MiB + 1 sends nothing, and one that fills the 1 MiB FIFO exactly arrives whole.
-  stale      A paste whose provider answers after search opened and closed sends nothing;
-             the paste requested after it arrives once.
+  stale      A paste whose provider answers after search opened and closed, and after the
+             next paste was requested, sends nothing; that next paste arrives once.
   stalled    A provider that never answers: nothing arrives, pings stay <= 100 ms, and within
              6.2 s of the request no helper is left; then a paste arrives again.
   copy       A mouse drag over row 0 selects it and its release leaves the sentinel; Cmd+C
@@ -28,6 +28,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -40,7 +41,7 @@ from keys import COMMAND, Keys, Violation  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 LIMIT = 1 << 20
-C, V, F, ESCAPE = 0x08, 0x09, 0x03, 0x35
+C, V, F, B, ESCAPE = 0x08, 0x09, 0x03, 0x0B, 0x35
 CONTENT = "sumie 墨 paste\tend"
 START, END = "1b5b3230307e", "1b5b3230317e"
 HELPER_TIMEOUT = 5.0
@@ -74,8 +75,9 @@ class Board:
     def general_count(self):
         return int(self.run("count", board="general").stdout)
 
-    def provide(self, text, delay_ms):
-        process = subprocess.Popen([self.tool, "provide", self.name, str(delay_ms)], stdin=subprocess.PIPE,
+    def provide(self, text, wait):
+        """Promise `text`; each request waits `wait` ms, forever for -1, or for SIGUSR1 for `signal`."""
+        process = subprocess.Popen([self.tool, "provide", self.name, str(wait)], stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE)
         process.stdin.write(text.encode())
         process.stdin.close()
@@ -167,16 +169,22 @@ def case_oversized(check):
 
 def case_stale(check):
     out = check.keys.start("stale", "paste")
-    provider = check.board.provide("stale paste", 1500)
+    provider = check.board.provide("stale paste", "signal")
     try:
         check.paste()
         if provider.stdout.readline().strip() != b"asked":
             raise CannotCheck("the provider was not asked")
-        # A new recipient generation: search opens and closes before the provider answers.
+        # A new recipient generation: search opens and closes, then the next paste is requested.
         check.chord(F)
         check.keys.tap(ESCAPE)
         check.paste()
-        got = check.await_recorded(out, 2 * len(framed("stale paste")), timeout=4.0)
+        # The session handles keys in order, so once b reaches the shell the paste before it has
+        # been requested for the new recipient; only then does the provider answer the first.
+        check.keys.tap(B)
+        if check.await_recorded(out, len("62")) != "62":
+            raise CannotCheck("b did not reach the shell after the second paste")
+        provider.send_signal(signal.SIGUSR1)
+        got = check.await_recorded(out, len("62") + 2 * len(framed("stale paste")), timeout=4.0)[len("62"):]
     finally:
         provider.kill()
         provider.wait()
