@@ -45,18 +45,10 @@ fn drawable_excludes_noncharacters_unassigned_and_private_use() {
 #[test]
 fn undrawable_misses_skip_the_system_wide_step() {
     let mut fonts = FontSystem::new("Menlo", 20.0, 1.0, FontOptions::default()).unwrap();
+    // Counted only: the step never reaches Core Text, so the count alone shows whether it ran.
     fonts.discovery.system_wide_counted_only = true;
-    // Load the cascade first: only the cost of each miss is under test.
-    let _ = fonts.face_for('\u{fdd0}', FontStyle::default());
-    for ch in ['\u{10ffff}', '\u{378}', '\u{e000}'] {
-        let start = Instant::now();
+    for ch in ['\u{fdd0}', '\u{10ffff}', '\u{378}', '\u{e000}'] {
         let _ = fonts.face_for(ch, FontStyle::default());
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed < Duration::from_millis(50),
-            "U+{:04X}: {elapsed:?}",
-            u32::from(ch)
-        );
     }
     assert_eq!(fonts.discovery.system_wide_lookups, 0);
 }
