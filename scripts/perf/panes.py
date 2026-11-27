@@ -1,3 +1,4 @@
+from collections import Counter
 import os
 from pathlib import Path
 import signal
@@ -55,11 +56,54 @@ def drm_kib(pid):
     return total
 
 
-def sample(pid):
+def fd_snapshot(proc, numbers):
+    snapshot = []
+    for fd in numbers:
+        try:
+            target = os.readlink(proc / 'fd' / fd)
+        except FileNotFoundError:
+            target = '<closed during snapshot>'
+        try:
+            info = (proc / 'fdinfo' / fd).read_text(errors='replace')
+        except FileNotFoundError:
+            info = ''
+        snapshot.append((target, info))
+    return snapshot
+
+
+def fd_diff(before, after):
+    # Descriptor numbers are reused; compare target identities and their multiplicities.
+    # Ignore mutable fdinfo fields such as the offset, event count and DRM memory usage.
+    fields = {'mnt_id', 'ino', 'tty-index', 'eventfd-id', 'Pid', 'drm-driver', 'drm-client-id', 'exp_name'}
+
+    def counts(snapshot):
+        result = Counter()
+        for target, info in snapshot:
+            stable = tuple(sorted((key, value.strip()) for key, _, value in
+                                  (line.partition(':') for line in info.splitlines()) if key in fields))
+            result[target, stable] += 1
+        return result
+
+    def describe(diff):
+        entries = []
+        for (target, info), count in sorted(diff.items()):
+            details = ', '.join(f'{key}={value}' for key, value in info)
+            entries.append(f'{count}x {target}' + (f' ({details})' if details else ''))
+        return '; '.join(entries) or 'none'
+
+    old, new = counts(before), counts(after)
+    return f'; added fds: {describe(new - old)}; removed fds: {describe(old - new)}'
+
+
+def sample(pid, *, snapshot_fds=False):
     status = dict(line.split(':', 1) for line in Path(f'/proc/{pid}/status').read_text().splitlines())
     kids = children(pid)
+    proc = Path(f'/proc/{pid}')
+    numbers = os.listdir(proc / 'fd')
     return {
-        'fds': len(os.listdir(f'/proc/{pid}/fd')),
+        'fds': len(numbers),
+        'fd_numbers': numbers,
+        'fd_snapshot': fd_snapshot(proc, numbers) if snapshot_fds else None,
         'threads': len(os.listdir(f'/proc/{pid}/task')),
         'children': len(kids),
         'zombies': sum(state(kid) == 'Z' for kid in kids),
@@ -96,14 +140,20 @@ class Run:
         if self.client.poll() is not None:
             raise RuntimeError(f'sumie exited with status {self.client.returncode}')
 
-    def settled(self, baseline):
-        now = sample(self.client.pid)
-        return (now['fds'] <= baseline['fds'] and now['threads'] <= baseline['threads']
-                and now['children'] <= baseline['children'] and now['zombies'] == 0)
-
     def settle(self, baseline):
         self.alive()
-        return wait_for(lambda: self.settled(baseline), SETTLE_S)
+        now = None
+
+        def settled():
+            nonlocal now
+            now = sample(self.client.pid)
+            return (now['fds'] <= baseline['fds'] and now['threads'] <= baseline['threads']
+                    and now['children'] <= baseline['children'] and now['zombies'] == 0)
+
+        took = wait_for(settled, SETTLE_S)
+        if took is None and now['fds'] > baseline['fds']:
+            now['fd_snapshot'] = fd_snapshot(Path(f'/proc/{self.client.pid}'), now['fd_numbers'])
+        return now, took
 
     def pane_cycle(self):
         base = len(children(self.client.pid))
@@ -128,13 +178,14 @@ class Run:
         for number in range(1, CYCLES + 1):
             cycle()
             if number % CHECKPOINT == 0 or number == CYCLES:
-                took = self.settle(baseline)
-                rows.append((f'{name} {number}', sample(self.client.pid), took))
+                now, took = self.settle(baseline)
+                rows.append((f'{name} {number}', now, took))
         for label, row, took in rows[first:]:
             for key, noun in (('fds', 'fd'), ('threads', 'thread'), ('children', 'child')):
                 if row[key] > baseline[key]:
+                    detail = fd_diff(baseline['fd_snapshot'], row['fd_snapshot']) if key == 'fds' else ''
                     self.errors.append(f'{label}: {noun} count above baseline: {row[key]} > '
-                                       f'{baseline[key]} after {SETTLE_S} s of quiescence')
+                                       f'{baseline[key]} after {SETTLE_S} s of quiescence{detail}')
             if row['zombies']:
                 self.errors.append(f'{label}: {row["zombies"]} zombie children after quiescence')
         last = rows[-1][1]
@@ -181,7 +232,8 @@ class Run:
             raise RuntimeError('a split did not start the HUP-ignoring shell within 5 s')
         (shell,) = children(pid) - base
         try:
-            self.type("trap '' HUP; sleep 1000\n")
+            # Keep sleep in the shell's group so the pane's SIGKILL also reaches it.
+            self.type("set +m; trap '' HUP; sleep 1000\n")
             if wait_for(lambda: children_of(shell, 'sleep'), 5) is None:
                 raise RuntimeError('the HUP-ignoring shell did not start sleep within 5 s')
             time.sleep(0.5)
@@ -193,7 +245,7 @@ class Run:
             gone = wait_for(lambda: state(shell) is None, REAP_S)
             end = time.monotonic_ns()
         finally:
-            # The control with the escalation removed leaves the group alive; never keep it.
+            # If escalation never ran, kill the whole fixture group after timing it.
             if state(shell) is not None:
                 os.killpg(shell, signal.SIGKILL)
                 wait_for(lambda: state(shell) is None, 2)
@@ -267,17 +319,19 @@ def main():
         for _ in range(3):
             run.tab_cycle()
         time.sleep(1.0)
-        baseline = sample(client.pid)
+        baseline = sample(client.pid, snapshot_fds=True)
         run.cycles('panes', run.pane_cycle, baseline, rows)
         run.cycles('tabs', run.tab_cycle, baseline, rows)
         table(baseline, rows)
         run.ignoring_hup()
-        if run.settle(baseline) is None:
-            now = sample(client.pid)
+        now, took = run.settle(baseline)
+        if took is None:
+            detail = (fd_diff(baseline['fd_snapshot'], now['fd_snapshot'])
+                      if now['fds'] > baseline['fds'] else '')
             run.errors.append(
                 f'hup: not quiescent after the close: fds {now["fds"]} (baseline {baseline["fds"]}), '
                 f'threads {now["threads"]} ({baseline["threads"]}), children {now["children"]} '
-                f'({baseline["children"]}), zombies {now["zombies"]}')
+                f'({baseline["children"]}), zombies {now["zombies"]}{detail}')
     finally:
         stop(client)
     for error in run.errors:
