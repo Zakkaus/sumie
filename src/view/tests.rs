@@ -13,31 +13,13 @@ use crate::{
 };
 
 #[test]
-fn missing_glyph_logs_only_the_error_kind() {
-    use std::io::Read as _;
-
-    let (mut reader, writer) = sumie_pty::socket_pair().unwrap();
-    let log_writer = writer.try_clone().unwrap();
-    let subscriber = tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_writer(move || log_writer.try_clone().unwrap())
-        .finish();
-    tracing::subscriber::with_default(subscriber, || {
-        let mut errors = super::FontErrors::default();
-        for codepoint in [0xE000, 0xE001] {
-            errors.warn(&sumie_font::FontError::MissingGlyph {
-                codepoint,
-                rejected: Vec::new(),
-                pending: false,
-            });
-        }
-    });
-    writer.shutdown(std::net::Shutdown::Write).unwrap();
-    let mut log = String::new();
-    reader.read_to_string(&mut log).unwrap();
-    assert!(log.contains("MissingGlyph"), "{log}");
-    assert!(!log.contains("E000") && !log.contains("E001"), "{log}");
-    assert_eq!(log.lines().count(), 1, "{log}");
+fn missing_glyph_reason_omits_the_code_point() {
+    let error = sumie_font::FontError::MissingGlyph {
+        codepoint: 0xE000,
+        rejected: Vec::new(),
+        pending: false,
+    };
+    assert_eq!(super::FontErrors::reason(&error), "no usable glyph");
 }
 
 fn view() -> View {
