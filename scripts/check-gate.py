@@ -431,7 +431,7 @@ def main():
         "clippy": ("clippy", "--locked", "--workspace", "--all-targets", "--message-format=json", "--", "-D", "warnings"),
         "clippy-macos-ci": ("clippy", "--locked", "--workspace", "--all-targets", "--features", "macos-ci",
                             "--message-format=json", "--", "-D", "warnings"),
-        "test": ("test", "--locked", "--workspace", "--message-format=json"),
+        "test": ("test", "--locked", "--workspace", "--no-fail-fast", "--message-format=json"),
         "font-test": ("test", "--locked", "-p", "sumie-font", "--message-format=json"),
         "locale-test": ("test", "--locked", "-p", "sumie-locale", "--message-format=json"),
         "settings-test": ("test", "--locked", "-p", "sumie-settings", "--message-format=json"),
