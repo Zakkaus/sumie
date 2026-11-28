@@ -1,0 +1,13 @@
+[package]
+name = "sumie-locale"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sumie-config = { path = "../sumie-config" }
+toml.workspace = true
+
+[lints]
+workspace = true
