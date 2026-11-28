@@ -182,8 +182,11 @@ def trigger(runner, tool, action):
         point = subprocess.run([tool, "closebutton", pid], capture_output=True, text=True).stdout.split()
         if len(point) != 2:
             raise CannotCheck("no close button through AX")
+        if subprocess.run([tool, "front", pid], capture_output=True, text=True).stdout.strip() != pid:
+            raise CannotCheck("the runner did not become frontmost")
         sent = time.monotonic()
-        subprocess.run([tool, "click", *point], check=True)
+        if subprocess.run([tool, "clickown", pid, *point], capture_output=True).returncode:
+            raise CannotCheck("another window covers the close button")
     elif action == "quit" and route in ("cmdq", "ax", "dock"):
         if route == "cmdq" and subprocess.run([tool, "front", pid], capture_output=True, text=True).stdout.strip() != pid:
             raise CannotCheck("the runner did not become frontmost")

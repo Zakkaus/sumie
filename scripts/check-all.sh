@@ -15,7 +15,7 @@ macos_window=
 if [ "$(uname -s)" = Darwin ]; then
     macos_ci=clippy-macos-ci
     macos_window='macos-wake macos-keys macos-shell macos-pasteboard macos-ime macos-resize macos-idle macos-flood macos-timeout macos-throughput macos-loading
-        macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit macos-cycles'
+        macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit macos-routes macos-cycles'
 fi
 # The pane cycle gate drives a private KWin, so only a Linux host with KWin can run it.
 linux_panes=

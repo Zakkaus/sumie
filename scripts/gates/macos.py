@@ -22,6 +22,9 @@ LIFETIME_GATES = {"macos-close": ("close",), "macos-repeat": ("repeat",),
                   "macos-stuck": ("stuck", "stuck-system"), "macos-exit": ("exit",),
                   "macos-cycles": ("cycles",)}
 LIFETIME_TIMEOUT = 120
+# Close and Quit the way a person does; scripts/macos/routes.py needs Accessibility, so hosts
+# without it set SUMIE_QUIT_ROUTES=skip.
+ROUTE_CASES = ("close-button", "cmd-q", "menu-quit", "dock-quit", "minimized")
 # 200 cycles, each sampled with vmmap after its reap: about 4 minutes on an M-series Mac.
 CYCLES_TIMEOUT = 900
 
@@ -131,6 +134,25 @@ def check_macos_pasteboard():
     except subprocess.TimeoutExpired:
         print("macos-pasteboard: the check timed out", file=sys.stderr)
         return 1
+
+
+def check_macos_routes():
+    """Close button, Cmd+Q, menu, Dock and repeated Quit while minimized; see scripts/macos/routes.py."""
+    if sys.platform != "darwin":
+        raise CannotCheck("the close and Quit routes need the macOS window server")
+    if os.environ.get("SUMIE_QUIT_ROUTES") == "skip":
+        print("macos-routes: skipped (SUMIE_QUIT_ROUTES=skip: no Accessibility on this host)")
+        return 0
+    binary = runner_binary()
+    codes = []
+    for case in ROUTE_CASES:
+        try:
+            codes.append(subprocess.run([sys.executable, ROOT / "scripts/macos/routes.py", case, binary],
+                                        timeout=LIFETIME_TIMEOUT).returncode)
+        except subprocess.TimeoutExpired:
+            print(f"macos-routes: {case}: the case timed out", file=sys.stderr)
+            codes.append(1)
+    return 2 if 2 in codes else int(any(codes))
 
 
 def check_macos_lifetime(cases):

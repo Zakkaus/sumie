@@ -85,6 +85,8 @@ jobs:
           echo 'SUMIE_TIMING=record' >> "$GITHUB_ENV"
           # Hosted runners have no Pinyin input source; macos-ime runs its protocol cases only.
           echo 'SUMIE_IME_NATIVE=skip' >> "$GITHUB_ENV"
+          # Nor Accessibility, which macos-routes needs to press the close button, menu and Dock.
+          echo 'SUMIE_QUIT_ROUTES=skip' >> "$GITHUB_ENV"
       - run: scripts/check-all.sh
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
