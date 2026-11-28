@@ -103,29 +103,15 @@ impl FontErrors {
         if !self.kinds.insert(discriminant(error)) {
             return;
         }
-        let reason = match error {
-            #[cfg(target_os = "macos")]
-            FontError::MissingFontUrl(_) => "MissingFontUrl",
-            FontError::FontconfigInit => "FontconfigInit",
-            #[cfg(target_os = "linux")]
-            FontError::Fontconfig(_) => "Fontconfig",
-            FontError::InvalidFamily => "InvalidFamily",
-            FontError::InvalidSize => "InvalidSize",
-            FontError::InvalidWeight => "InvalidWeight",
-            FontError::ReadFont { .. } => "ReadFont",
-            FontError::InvalidFont(_) => "InvalidFont",
-            FontError::MissingMetrics => "MissingMetrics",
-            FontError::MissingGlyph { .. } => "MissingGlyph",
-            FontError::InvalidWidths => "InvalidWidths",
-            FontError::RunTooLong => "RunTooLong",
-            FontError::Shape(_) => "Shape",
-            FontError::UnknownFace => "UnknownFace",
-            FontError::UnsupportedGlyph => "UnsupportedGlyph",
-            FontError::Outline(_) => "Outline",
-            FontError::HintedOutline(_) => "HintedOutline",
-            FontError::AtlasFull => "AtlasFull",
-        };
+        let reason = Self::reason(error);
         tracing::warn!(reason, "could not draw terminal glyphs");
+    }
+
+    fn reason(error: &FontError) -> String {
+        match error {
+            FontError::MissingGlyph { .. } => "no usable glyph".to_owned(),
+            _ => error.to_string(),
+        }
     }
 }
 
