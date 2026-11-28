@@ -43,7 +43,7 @@
 "setting.scrollback-limit.label" = "捲動記錄上限"
 "setting.scrollback-limit.help" = "捲動記錄的容量上限，以位元組估算。降低上限可能立即捨棄記錄。設為 0 可清除並停用捲動記錄。"
 "setting.font.family.label" = "字型家族"
-"setting.font.family.help" = "選擇已安裝的字型家族，用於終端機文字。"
+"setting.font.family.help" = "選擇已安裝的字型家族，用於終端機文字。在 macOS 上，未安裝的字型家族會改用 Menlo。"
 "setting.font.size.label" = "字級"
 "setting.font.size.help" = "調整文字大小，以 96 DPI 下的點數為單位。"
 "setting.font.weight.label" = "字重"

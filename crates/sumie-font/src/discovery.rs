@@ -179,6 +179,11 @@ impl Discovery {
         })
     }
 
+    /// Fontconfig's own rules pick the face for a family that is not installed.
+    pub const fn substituted(&self) -> bool {
+        false
+    }
+
     pub fn find(&mut self, codepoint: Option<char>, style: FontStyle) -> Result<Match, FontError> {
         let request = Request::new(self.weight, style);
         if let Some(ch) = codepoint.filter(|&ch| is_private_use(ch))

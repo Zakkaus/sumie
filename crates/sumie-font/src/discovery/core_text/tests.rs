@@ -80,3 +80,55 @@ fn a_slow_system_wide_lookup_is_pending_after_the_wait() {
         assert!(matched.family.contains(char::is_alphabetic), "{ch}");
     }
 }
+
+/// Distinct advances of a few narrow and wide characters in the primary face.
+fn primary_advances(fonts: &FontSystem) -> Vec<f32> {
+    let face = &fonts.faces[0];
+    let mut advances: Vec<f32> = "il.MW0"
+        .chars()
+        .map(|ch| {
+            let glyph = face.font.charmap().map_unicode(ch).unwrap();
+            face.font
+                .glyph_metrics()
+                .scaled_f32(face.ppem)
+                .h_advance(glyph)
+        })
+        .collect();
+    advances.sort_by(f32::total_cmp);
+    advances.dedup();
+    advances
+}
+
+#[test]
+fn a_missing_family_falls_back_to_a_monospaced_face() {
+    // Core Text's own substitute for a name it cannot find is Helvetica, which is proportional.
+    let fonts = FontSystem::new("Sumie Missing Family", 20.0, 1.0, FontOptions::default()).unwrap();
+    assert!(fonts.substituted());
+    assert_eq!(
+        primary_advances(&fonts).len(),
+        1,
+        "{:?}",
+        fonts.family(fonts.primary_face())
+    );
+}
+
+#[test]
+fn installed_and_generic_families_are_not_substituted() {
+    for (family, matched, monospaced) in [
+        ("Menlo", "Menlo", true),
+        ("menlo", "Menlo", true),
+        ("Menlo-Bold", "Menlo", true),
+        ("Helvetica", "Helvetica", false),
+        ("monospace", "Menlo", true),
+        ("sans-serif", "Helvetica", false),
+    ] {
+        let fonts = FontSystem::new(family, 20.0, 1.0, FontOptions::default()).unwrap();
+        assert!(!fonts.substituted(), "{family}");
+        assert_eq!(
+            fonts.family(fonts.primary_face()),
+            Some(matched),
+            "{family}"
+        );
+        assert_eq!(primary_advances(&fonts).len() == 1, monospaced, "{family}");
+    }
+}

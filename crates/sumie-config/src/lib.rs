@@ -202,7 +202,8 @@ fn contrast(ratio: f64) -> Result<f64, Problem> {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Font {
-    /// Choose a different installed font family for the terminal grid.
+    /// Choose a different installed font family for the terminal grid. On macOS, a family that
+    /// is not installed falls back to Menlo.
     #[schemars(with = "String", default = "default_family", title = "Family")]
     family: Option<String>,
     /// Adjust text size for readability, in points at 96 DPI.
