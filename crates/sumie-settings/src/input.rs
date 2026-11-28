@@ -18,32 +18,18 @@ pub(crate) enum Key {
     Esc,
     Interrupt,
     Char(char),
-    Pasted(char),
     Chord(Chord),
-    Click {
-        column: usize,
-        row: usize,
-    },
-    Wheel {
-        column: usize,
-        row: usize,
-        down: bool,
-    },
+    Click { column: usize, row: usize },
 }
 
 #[derive(Default)]
 pub(crate) struct Decoder {
     bytes: Vec<u8>,
-    // None outside a paste, otherwise the number of bytes of the closing delimiter seen.
-    paste_end: Option<usize>,
     pub(crate) recording: bool,
 }
 
 impl Decoder {
     pub(crate) fn push(&mut self, byte: u8) -> Option<Key> {
-        if let Some(matched) = self.paste_end {
-            return self.paste_byte(byte, matched);
-        }
         match (self.bytes.first(), byte) {
             (None, 27) => {
                 self.bytes.push(byte);
@@ -57,32 +43,6 @@ impl Decoder {
             (None, 0..=31) => None,
             (Some(27), _) => self.escape_byte(byte),
             _ => self.text_byte(byte),
-        }
-    }
-
-    fn paste_byte(&mut self, byte: u8, matched: usize) -> Option<Key> {
-        const END: &[u8] = b"\x1b[201~";
-        if byte == END[matched] {
-            if matched == 0 {
-                self.bytes.clear();
-            }
-            self.paste_end = (matched + 1 < END.len()).then_some(matched + 1);
-            return None;
-        }
-        self.paste_end = Some(usize::from(byte == 27));
-        match byte {
-            b'\r' | b'\n' | b'\t' => {
-                self.bytes.clear();
-                Some(Key::Pasted(' '))
-            }
-            0..=31 | 127 => {
-                self.bytes.clear();
-                None
-            }
-            _ => self.text_byte(byte).map(|key| match key {
-                Key::Char(c) => Key::Pasted(c),
-                other => other,
-            }),
         }
     }
 
@@ -129,11 +89,6 @@ impl Decoder {
             b"\x1b[3~" => Key::Delete,
             b"\x1b[5~" => Key::PageUp,
             b"\x1b[6~" => Key::PageDown,
-            b"\x1b[200~" => {
-                self.bytes.clear();
-                self.paste_end = Some(0);
-                return None;
-            }
             sequence => {
                 let key = sgr_mouse(sequence)
                     .or_else(|| self.recording.then(|| reported_chord(sequence)).flatten());
@@ -172,15 +127,7 @@ fn sgr_mouse(sequence: &[u8]) -> Option<Key> {
     let (column, row) = coordinates.split_once(';')?;
     let column = column.parse::<usize>().ok()?.checked_sub(1)?;
     let row = row.parse::<usize>().ok()?.checked_sub(1)?;
-    match button.parse::<u8>().ok()? & !0b0001_1100 {
-        0 => Some(Key::Click { column, row }),
-        button @ (64 | 65) => Some(Key::Wheel {
-            column,
-            row,
-            down: button == 65,
-        }),
-        _ => None,
-    }
+    (button.parse::<u8>().ok()? & !0b0001_1100 == 0).then_some(Key::Click { column, row })
 }
 
 fn reported_chord(sequence: &[u8]) -> Option<Key> {
@@ -266,7 +213,7 @@ impl Line {
             Key::Right => self.cursor = next(),
             Key::Home => self.cursor = 0,
             Key::End => self.cursor = self.text.len(),
-            Key::Char(ch) | Key::Pasted(ch) if !ch.is_control() => {
+            Key::Char(ch) if !ch.is_control() => {
                 self.text.insert(self.cursor, ch);
                 self.cursor += ch.len_utf8();
                 return true;

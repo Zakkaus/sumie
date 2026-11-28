@@ -1,8 +1,17 @@
-use super::{EN, Language, Locale};
+use std::collections::BTreeSet;
+
+use super::{EN, Language, Locale, choice_key, help_key, label_key};
 use sumie_config::{Kind, settings};
 
 #[test]
-fn reports_missing_keys_by_locale_and_rejects_unknown_keys() {
+fn zh_tw_translates_every_message_and_setting_without_unknown_keys() {
+    let mut keys: BTreeSet<_> = EN.keys().cloned().collect();
+    for info in settings() {
+        keys.extend([label_key(&info), help_key(&info)]);
+        if let Kind::Choice(choices) = &info.kind {
+            keys.extend(choices.iter().map(|choice| choice_key(&info, choice)));
+        }
+    }
     for (tag, locale) in [
         ("en", Locale::En),
         ("zh-TW", Locale::ZhTw),
@@ -10,16 +19,17 @@ fn reports_missing_keys_by_locale_and_rejects_unknown_keys() {
         ("ja", Locale::Ja),
     ] {
         let catalog = locale.catalog();
-        let missing: Vec<_> = EN
-            .keys()
+        let missing: Vec<_> = keys
+            .iter()
             .filter(|key| !catalog.is_some_and(|catalog| catalog.contains_key(*key)))
             .collect();
         println!("{tag}: missing {}: {missing:?}", missing.len());
+        assert!(
+            locale != Locale::ZhTw || missing.is_empty(),
+            "{tag}: missing {missing:?}"
+        );
         if let Some(catalog) = catalog {
-            let unknown: Vec<_> = catalog
-                .keys()
-                .filter(|key| !EN.contains_key(*key))
-                .collect();
+            let unknown: Vec<_> = catalog.keys().filter(|key| !keys.contains(*key)).collect();
             assert!(unknown.is_empty(), "{tag}: unknown keys: {unknown:?}");
             assert!(
                 catalog.values().all(|text| !text.is_empty()),
@@ -35,30 +45,6 @@ fn missing_translation_uses_english() {
     assert_eq!(Locale::Ja.get("ui.default"), Some("Default"));
     assert_eq!(Locale::ZhTw.get("ui.default"), Some("預設值"));
     assert_eq!(Locale::ZhTw.get("undefined"), None);
-}
-
-#[test]
-fn english_settings_text_matches_schema() {
-    for info in settings() {
-        assert_eq!(
-            Locale::En.text(&format!("setting.{}.label", info.path)),
-            info.label
-        );
-        let help = if matches!(info.kind, Kind::Binding(_)) {
-            "setting.keybinds.help".to_owned()
-        } else {
-            format!("setting.{}.help", info.path)
-        };
-        assert_eq!(Locale::En.text(&help), info.description);
-        if let Kind::Choice(choices) = info.kind {
-            for choice in choices {
-                assert_eq!(
-                    Locale::En.text(&format!("choice.{}.{}", info.path, choice.value)),
-                    choice.label
-                );
-            }
-        }
-    }
 }
 
 #[test]

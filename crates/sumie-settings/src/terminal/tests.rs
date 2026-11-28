@@ -1,6 +1,4 @@
 use std::{
-    fs::File,
-    io,
     os::fd::OwnedFd,
     process::{self, Child, Command, Stdio},
     time::{Duration, Instant},
@@ -9,17 +7,15 @@ use std::{
 use nix::{pty::openpty, sys::termios::tcgetattr};
 use rustix::{
     event::{PollFd, PollFlags, Timespec, poll},
-    io::{Errno, FdFlags, fcntl_dupfd_cloexec, fcntl_setfd},
+    io::{FdFlags, fcntl_dupfd_cloexec, fcntl_setfd},
     process::{Pid, Signal, kill_process},
-    stdio::dup2_stdout,
 };
 
 use super::{ENTER, LEAVE, Terminal, run};
-use crate::{log::Log, model::Model};
+use crate::model::Model;
 
 const CASE: &str = "SUMIE_TEST_TERMINAL_EXIT";
 const PANIC: &str = "settings terminal panic probe";
-const ERROR: &str = "settings terminal entry failed";
 
 #[test]
 #[ignore = "run by the PTY exit tests"]
@@ -29,21 +25,9 @@ fn child_session() {
             let _terminal = Terminal::enter().unwrap();
             panic!("{PANIC}");
         }
-        Ok("error") => {
-            let stdout = fcntl_dupfd_cloexec(io::stdout(), 0).unwrap();
-            dup2_stdout(File::open("/dev/null").unwrap()).unwrap();
-            let result = Terminal::enter();
-            dup2_stdout(stdout).unwrap();
-            assert_eq!(
-                result.err().and_then(|error| error.raw_os_error()),
-                Some(Errno::BADF.raw_os_error()),
-            );
-            eprintln!("{ERROR}");
-        }
         Ok("signal") => {
             let path = std::env::temp_dir().join(format!("sumie-pty-{}.toml", process::id()));
-            let mut model = Model::new(path, Log::default());
-            process::exit(i32::from(run(&mut model).unwrap()));
+            run(&mut Model::new(path)).unwrap();
         }
         _ => panic!("missing PTY test case"),
     }
@@ -106,16 +90,6 @@ fn pty() -> nix::pty::OpenptyResult {
 }
 
 #[test]
-fn restores_after_error() {
-    let pty = pty();
-    let original = tcgetattr(&pty.slave).unwrap();
-    let mut child = spawn("error", &pty.slave);
-    read_until(&pty.master, &mut Vec::new(), ERROR.as_bytes());
-    assert!(child.0.wait().unwrap().success());
-    assert_eq!(tcgetattr(&pty.slave).unwrap(), original);
-}
-
-#[test]
 fn restores_before_panic_diagnostic() {
     let pty = pty();
     let original = tcgetattr(&pty.slave).unwrap();
@@ -136,8 +110,8 @@ fn restores_before_panic_diagnostic() {
 }
 
 #[test]
-fn restores_and_reports_signal_status() {
-    for (signal, expected) in [(Signal::INT, 130), (Signal::TERM, 143), (Signal::HUP, 129)] {
+fn restores_after_signal() {
+    for signal in [Signal::INT, Signal::TERM, Signal::HUP] {
         let pty = pty();
         let original = tcgetattr(&pty.slave).unwrap();
         let mut child = spawn("signal", &pty.slave);
@@ -146,10 +120,7 @@ fn restores_and_reports_signal_status() {
         assert_ne!(tcgetattr(&pty.slave).unwrap(), original);
         kill_process(Pid::from_child(&child.0), signal).unwrap();
         read_until(&pty.master, &mut output, LEAVE);
-        for mode in [b"\x1b[?1006l", b"\x1b[?1000l"] {
-            assert!(output.windows(mode.len()).any(|report| report == mode));
-        }
-        assert_eq!(child.0.wait().unwrap().code(), Some(expected));
+        assert!(child.0.wait().unwrap().success());
         assert_eq!(tcgetattr(&pty.slave).unwrap(), original);
     }
 }

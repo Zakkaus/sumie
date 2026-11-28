@@ -6,7 +6,7 @@ use std::{
 };
 
 use toml::{Table, Value};
-use toml_edit::{Document, Item, TableLike};
+use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::{
     Error, Problem,
@@ -231,17 +231,11 @@ fn edited(bytes: &[u8], key: &str, value: Option<&Value>) -> io::Result<String> 
         io::Error::new(io::ErrorKind::InvalidData, error.to_string())
     };
     let text = std::str::from_utf8(bytes).map_err(|error| invalid(&error))?;
-    let document = Document::parse(text).map_err(|error| invalid(&error))?;
+    let mut document: DocumentMut = text.parse().map_err(|error| invalid(&error))?;
+    let root = document.as_table_mut();
     let (parent, name) = key
         .split_once('.')
         .map_or((None, key), |(parent, name)| (Some(parent), name));
-    if value.is_none()
-        && let Some(text) = remove_assignment(&document, parent, name)
-    {
-        return Ok(text);
-    }
-    let mut document = document.into_mut();
-    let root = document.as_table_mut();
     if let Some(value) = value {
         let table = match parent {
             Some(parent) => root
@@ -269,90 +263,6 @@ fn edited(bytes: &[u8], key: &str, value: Option<&Value>) -> io::Result<String> 
         table.remove(name);
     }
     Ok(document.to_string())
-}
-
-// Remove the assignment but leave its comments, including those inside an array.
-fn remove_assignment(
-    document: &Document<&str>,
-    parent: Option<&str>,
-    name: &str,
-) -> Option<String> {
-    let (inline, table): (bool, &dyn TableLike) = match parent {
-        Some(parent) => {
-            let item = document.get(parent)?;
-            (item.is_inline_table(), item.as_table_like()?)
-        }
-        None => (false, document.as_table()),
-    };
-    let (key, item) = table.get_key_value(name)?;
-    let value = item.as_value()?;
-    let text = document.raw();
-    let key_start = key.span()?.start;
-    let value_end = value.span()?.end;
-    let mut output = String::with_capacity(text.len());
-    if inline {
-        let suffix_end = value
-            .decor()
-            .suffix()
-            .and_then(toml_edit::RawString::span)
-            .map_or(value_end, |span| span.end);
-        let suffix = &text[suffix_end..];
-        if let Some(after_comma) = suffix.strip_prefix(',') {
-            output.push_str(&text[..key_start]);
-            keep_array_comments(&mut output, text, value);
-            output.push_str(&text[value_end..suffix_end]);
-            output.push_str(after_comma);
-        } else {
-            // Last field: its leading trivia starts just after the previous separator.
-            let prefix_start = key
-                .leaf_decor()
-                .prefix()
-                .and_then(toml_edit::RawString::span)
-                .map_or(key_start, |span| span.start);
-            let prefix = &text[..prefix_start];
-            output.push_str(prefix.strip_suffix(',').unwrap_or(prefix));
-            output.push_str(&text[prefix_start..key_start]);
-            keep_array_comments(&mut output, text, value);
-            output.push_str(&text[value_end..]);
-        }
-        return Some(output);
-    }
-    let start = text[..key_start].rfind('\n').map_or(0, |index| index + 1);
-    let end = text[value_end..]
-        .find('\n')
-        .map_or(text.len(), |index| value_end + index + 1);
-    output.push_str(&text[..start]);
-    keep_array_comments(&mut output, text, value);
-    let trailing = text[value_end..end].trim_start_matches([' ', '\t']);
-    if trailing.starts_with('#') {
-        let indent = text[start..]
-            .bytes()
-            .take_while(|b| matches!(b, b' ' | b'\t'))
-            .count();
-        output.push_str(&text[start..start + indent]);
-        output.push_str(trailing);
-    }
-    output.push_str(&text[end..]);
-    Some(output)
-}
-
-fn keep_array_comments(output: &mut String, text: &str, value: &toml_edit::Value) {
-    let Some(array) = value.as_array() else {
-        return;
-    };
-    for trivia in array
-        .iter()
-        .flat_map(|item| [item.decor().prefix(), item.decor().suffix()])
-        .flatten()
-        .chain([array.trailing()])
-        .filter_map(toml_edit::RawString::span)
-    {
-        for line in text[trivia].split_inclusive('\n') {
-            if line.trim_start_matches([' ', '\t']).starts_with('#') {
-                output.push_str(line);
-            }
-        }
-    }
 }
 
 fn to_edit(value: &Value) -> toml_edit::Value {

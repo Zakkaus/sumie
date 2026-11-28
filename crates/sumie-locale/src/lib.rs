@@ -4,7 +4,7 @@
 
 use std::{collections::BTreeMap, sync::LazyLock};
 
-use sumie_config::Language;
+use sumie_config::{Choice, Kind, Language, SettingInfo};
 
 type Catalog = BTreeMap<String, String>;
 static EN: LazyLock<Catalog> = LazyLock::new(|| catalog(include_str!("../locales/en.toml")));
@@ -88,6 +88,24 @@ impl Locale {
             .map(String::as_str)
     }
 
+    /// A setting's label, or its English schema title when the catalog has no translation.
+    #[must_use]
+    pub fn setting_label(self, info: &SettingInfo) -> &str {
+        self.get(&label_key(info)).unwrap_or(&info.label)
+    }
+
+    /// A setting's help, or its English schema description.
+    #[must_use]
+    pub fn setting_help(self, info: &SettingInfo) -> &str {
+        self.get(&help_key(info)).unwrap_or(&info.description)
+    }
+
+    /// A choice's label, or its English schema title.
+    #[must_use]
+    pub fn choice_label<'a>(self, info: &SettingInfo, choice: &'a Choice) -> &'a str {
+        self.get(&choice_key(info, choice)).unwrap_or(&choice.label)
+    }
+
     /// Look up a required message. The key is never used as display text.
     ///
     /// # Panics
@@ -97,6 +115,22 @@ impl Locale {
         self.get(key)
             .unwrap_or_else(|| panic!("missing source message: {key}"))
     }
+}
+
+fn label_key(info: &SettingInfo) -> String {
+    format!("setting.{}.label", info.path)
+}
+
+fn help_key(info: &SettingInfo) -> String {
+    if matches!(info.kind, Kind::Binding(_)) {
+        "setting.keybinds.help".into()
+    } else {
+        format!("setting.{}.help", info.path)
+    }
+}
+
+fn choice_key(info: &SettingInfo, choice: &Choice) -> String {
+    format!("choice.{}.{}", info.path, choice.value)
 }
 
 #[cfg(test)]

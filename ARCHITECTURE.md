@@ -29,13 +29,13 @@ Two edges are deliberately closed:
 
 ## Settings terminal UI
 
-`main` calls `sumie_settings::run` before any window, worker thread or GUI logger starts. It owns stdin, stdout and signal registrations on that thread until it returns. The terminal adapter uses rustix for termios, size and polling, and `signal-hook` for self-pipe notification. The scope guard restores termios and leaves the alternate screen on return; the panic hook restores both before forwarding the diagnostic. Hangup, interrupt, and termination exit with `128 + signal` after cleanup. Bracketed paste treats pasted line breaks as spaces rather than Enter.
+`main` calls `sumie_settings::run` before any window, worker thread or GUI logger starts. It owns stdin, stdout and signal registrations on that thread until it returns. The terminal adapter uses rustix for termios, size and polling, and `signal-hook` for self-pipe notification. The scope guard restores termios and leaves the alternate screen on return; the panic hook restores both before forwarding the diagnostic. Hangup, interrupt, and termination restore the terminal and exit normally.
 
 `sumie-config::EditValues` supplies each visible value and the snapshot of the file that defines it, using the same include traversal as write-back conflict detection. The editor calls `sumie-config::save` synchronously on that snapshot, then rereads the settings. Reset removes only the winning assignment, exposing an earlier include or the built-in default. The GUI picks up writes through its existing hot reload; no IPC is involved. Typed-invalid values from parseable files can be edited subject to the same write validation. Files with syntax or include errors must be repaired before the writer can validate changes.
 
 The in-memory screen uses `unicode-width` and `unicode-segmentation` for cell widths and grapheme boundaries. Its text slots truncate before terminal output. The workspace test gate includes PTY cleanup checks. The settings negative controls check for termios restoration, English fallback, and immediate persistence.
 
-The core shortcut catalog supplies the editable actions and platform defaults. Configuration carries explicit overrides only. The TUI records a single chord and checks it against other overrides and active defaults, including aliases. While recording in a settings tab, Kitty keyboard event reporting lets the app route shortcut presses to the child instead of dispatching them. The terminal guard restores keyboard reporting and SGR mouse modes before leaving the alternate screen.
+The core shortcut catalog supplies the editable actions and platform defaults. Configuration carries explicit overrides only. The TUI records a single chord and checks it against the other actions' overrides and defaults. While recording in a settings tab, Kitty keyboard event reporting lets the app route shortcut presses to the child instead of dispatching them. The terminal guard restores keyboard reporting and SGR mouse modes before leaving the alternate screen.
 
 ## Tabbed Linux window
 
