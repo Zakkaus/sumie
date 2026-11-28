@@ -388,4 +388,31 @@ mod tests {
             matches!(terminal.drain_events().next(), Some(Event::Title(title)) if title == "前title後")
         );
     }
+
+    #[test]
+    fn csi_title_stack_restores_saved_titles() {
+        let mut terminal = Terminal::new(5, 2).unwrap();
+        for (bytes, expected) in [
+            (
+                b"\x1b[22;0t\x1b]2;outer\x07\x1b[22;2".as_slice(),
+                Some("outer"),
+            ),
+            (
+                b"t\x1b]2;inner\x07\x1b[22;2;8t\x1b]2;current\x07\x1b[23;2;8t".as_slice(),
+                Some("inner"),
+            ),
+            (b"\x1b[23;1t".as_slice(), None),
+            (b"\x1b[23;2t".as_slice(), Some("outer")),
+            (b"\x1b[23;0t".as_slice(), Some("")),
+            (b"\x1b[23;0t".as_slice(), None),
+            (b"\x1b[22;2t\x1bc\x1b[23;2t".as_slice(), None),
+        ] {
+            terminal.write(bytes);
+            let title = terminal.drain_events().find_map(|event| match event {
+                Event::Title(title) => Some(title),
+                _ => None,
+            });
+            assert_eq!(title.as_deref(), expected);
+        }
+    }
 }

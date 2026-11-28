@@ -160,6 +160,24 @@ fn install_screen_bridge(source: &Path) {
         "comptime { @import(\"sumie_selection.zig\").install(); }\n",
         "comptime { @import(\"sumie_screen.zig\").install(); }\n",
     );
+    let native = source.join("src/terminal/Terminal.zig");
+    insert_once(
+        &native,
+        "title: std.ArrayList(u8),\n",
+        "sumie_titles: @import(\"../sumie_screen.zig\").TitleStack = .{},\n",
+    );
+    let deinit = "    self.title.deinit(alloc);\n";
+    insert_once(&native, deinit, "    self.sumie_titles.clear(alloc);\n");
+    replace_once(
+        &source.join("src/terminal/stream_terminal.zig"),
+        &[(
+            "            // Have no terminal-modifying effect\n            .title_push,\n            .title_pop,\n            => {},",
+            r#"            .title_push => try @import("../sumie_screen.zig").TitleStack.save(self.terminal, value),
+            .title_pop => if (try @import("../sumie_screen.zig").TitleStack.restore(self.terminal, value)) {
+                if (self.effects.title_changed) |func| func(self);
+            },"#,
+        )],
+    );
 }
 
 fn install_thumbnail_policy(source: &Path) {
@@ -400,7 +418,7 @@ fn install_screen_clear_epoch(source: &Path) {
     insert_once(
         &terminal,
         "pub fn fullReset(self: *Terminal) void {\n",
-        "    self.sumie_screen_clear_epoch +%= 1;\n",
+        "    self.sumie_screen_clear_epoch +%= 1;\n    self.sumie_titles.clear(self.gpa());\n",
     );
 }
 

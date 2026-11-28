@@ -152,6 +152,23 @@ mod tests {
     use super::{CellStyle, Terminal, Underline};
 
     #[test]
+    fn osc104_restores_extended_palette_default_after_reload() {
+        let mut terminal = Terminal::new(5, 2).unwrap();
+        terminal.write(b"\x1b[38;5;196mX");
+        let original = terminal.snapshot().unwrap()[0][0].foreground;
+        terminal.write(b"\x1b]4;196;rgb:12/34/56\x07");
+        terminal
+            .set_colors([255; 3], [0; 3], None, &[[0; 3]; 16])
+            .unwrap();
+        assert_eq!(
+            terminal.snapshot().unwrap()[0][0].foreground,
+            [0x12, 0x34, 0x56]
+        );
+        terminal.write(b"\x1b]104;196\x07");
+        assert_eq!(terminal.snapshot().unwrap()[0][0].foreground, original);
+    }
+
+    #[test]
     fn snapshot_keeps_cell_style() {
         let mut terminal = Terminal::new(8, 1).unwrap();
         terminal.write(b"\x1b[1;2;3;9;53m\x1b[4:3m\x1b[58:2::1:2:3mA\x1b[8mB\x1b[0m");
