@@ -87,8 +87,10 @@ pub enum Command {
     Fail,
     /// Block the main thread for a minute: a stuck stage for the watchdog.
     Stall,
-    /// Close the terminal window, then open a new one in the same process.
+    /// Close the terminal window and drain it, staying in the same process without a window.
     Cycle,
+    /// Open the next terminal window after a `cycle`.
+    Open,
     Invalid,
     /// Not a controller command: the readiness bridge's wake.
     Wake,
@@ -132,6 +134,7 @@ impl Command {
             "fail" => Self::Fail,
             "stall" => Self::Stall,
             "cycle" => Self::Cycle,
+            "open" => Self::Open,
             line => {
                 if let Some(text) = line.strip_prefix("type ") {
                     return Self::Type(format!("{text}\r"));

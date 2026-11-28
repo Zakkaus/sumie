@@ -1,7 +1,7 @@
 //! The terminal driver under the runner's controller: pings, typed text, window steps and
 //! counters, and one line per present for the frame-slot checks. For the close and Quit
 //! checks it also requests Quit, injects a fatal error or a stalled main thread, and closes
-//! and reopens its window in one process.
+//! its window and opens the next in one process (`cycle`, then `open`).
 
 use std::{
     ops::ControlFlow,
@@ -31,7 +31,7 @@ const STALL: Duration = Duration::from_secs(60);
 struct Control {
     /// Set while a report waits for the session.
     report: Option<Instant>,
-    /// The closing window reopens once drained.
+    /// The closing window's driver is replaced once drained; `open` shows the next window.
     cycle: bool,
     cycles: u64,
     presented: u64,
@@ -45,7 +45,10 @@ pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
     let mut control = Control::default();
     let result = native::run(|context, readiness, event| {
         let flow = match event {
-            Event::Resumed if matches!(driver.state, State::Starting) => {
+            // A `cycle` leaves the driver starting until `open`.
+            Event::Resumed | Event::RunnerCommand(Command::Open)
+                if matches!(driver.state, State::Starting) =>
+            {
                 open(&mut driver, context, readiness, started)?;
                 return Ok(ControlFlow::Continue(()));
             }
@@ -79,7 +82,6 @@ pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
             control.presented = 0;
             control.cycles += 1;
             println!("runner cycled {}", control.cycles);
-            open(&mut driver, context, readiness, started)?;
             return Ok(ControlFlow::Continue(()));
         }
         Ok(flow)

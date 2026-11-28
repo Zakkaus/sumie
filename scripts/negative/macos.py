@@ -316,6 +316,22 @@ def macos_controls():
               replace_once("Event::Quit(Quit::Ordinary)) if open.app.is_some()",
                            "Event::Quit(_)) if open.app.is_some()"),
               "system: no reply within 4 s of the system quit")
+        releasing = "        self.termination.stage(Stage::Releasing, 1);\n"
+        for name, leak, marker in (
+            ("leak a descriptor at each close", 'std::mem::forget(std::fs::File::open("/dev/null")?);',
+             "cycles: fds "),
+            ("leak a thread at each close", "std::thread::spawn(|| loop { std::thread::park(); });",
+             "cycles: threads "),
+            ("leave a zombie at each close", 'std::mem::forget(std::process::Command::new("/usr/bin/true").spawn()?);',
+             "cycles: zombies "),
+        ):
+            probe(name, "macos-cycles", "src/macos/driver.rs",
+                  replace_once(releasing, f"{releasing}        {leak}\n"), marker)
+        probe("keep the GPU after each close", "macos-cycles", "src/app/frame_steps.rs",
+              replace_once("    pub(crate) fn into_session(self) -> Option<Session> {\n        self.session\n",
+                           "    pub(crate) fn into_session(self) -> Option<Session> {\n"
+                           "        std::mem::forget(self.gpu);\n        self.session\n"),
+              "cycles: io")
         probe("answer Cancel to a system quit", "macos-system", "crates/sumie-macos/src/lib.rs",
               replace_once("                context.finish_quit();\n",
                            "                context.run_after_handler(|| {\n"
