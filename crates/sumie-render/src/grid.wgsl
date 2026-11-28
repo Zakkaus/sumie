@@ -6,6 +6,7 @@ struct Frame {
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var coverage_atlas: texture_2d<f32>;
+@group(0) @binding(2) var color_atlas: texture_2d<f32>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -63,6 +64,12 @@ fn vertex(
     var out: VertexOut;
     out.position = vec4<f32>(clip.x, -clip.y, 0.0, 1.0);
     out.glyph = u32(atlas_origin.x != 0xffffffffu);
+    if out.glyph != 0u && (atlas_origin.y & 0x80000000u) != 0u {
+        out.glyph = 2u;
+        out.atlas_position = vec2<f32>((atlas_origin & vec2<u32>(0x7fffffffu)) + offset);
+        out.color.a = color.a;
+        return out;
+    }
     var fg = linear_rgb(color.rgb);
     if out.glyph != 0u {
         // The desktop color is unknown; use the terminal's nominal RGB for translucent cells.
@@ -90,6 +97,11 @@ fn vertex(
 fn fragment(in: VertexOut) -> @location(0) vec4<f32> {
     if in.glyph == 0u {
         return in.color;
+    }
+    if in.glyph == 2u {
+        let pixel = textureLoad(color_atlas, vec2<i32>(in.atlas_position), 0);
+        let rgb = linear_rgb(pixel.rgb / max(pixel.a, 1.0 / 255.0));
+        return vec4<f32>(rgb * pixel.a, pixel.a) * in.color.a;
     }
     var alpha = textureLoad(coverage_atlas, vec2<i32>(in.atlas_position), 0).r;
     // Mild stem darkening: lifts partial edge pixels, leaves empty and full ones.

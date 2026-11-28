@@ -556,10 +556,21 @@ fn covers(matched: &Match, ch: char) -> bool {
     };
     face.head()
         .is_ok_and(|head| !head.flags().contains(Flags::LAST_RESORT_FONT))
-        && face
-            .charmap()
-            .map(ch)
-            .is_some_and(|glyph| face.outline_glyphs().get(glyph).is_some())
+        && face.charmap().map(ch).is_some_and(|glyph| {
+            face.outline_glyphs().get(glyph).is_some()
+                || (matched.color_name.is_some() && has_sbix(&face, glyph))
+        })
+}
+
+pub(super) fn has_sbix(face: &FontRef<'_>, glyph: skrifa::GlyphId) -> bool {
+    // Core Text decodes private image types too; only check that the strike has data.
+    face.sbix().is_ok_and(|table| {
+        table
+            .strikes()
+            .iter()
+            .flatten()
+            .any(|strike| strike.glyph_data(glyph).ok().flatten().is_some())
+    })
 }
 
 fn file_match(
@@ -585,6 +596,10 @@ fn file_match(
         path,
         index,
         request,
+        color_name: FontRef::from_index(&file.bytes, index)
+            .ok()
+            .filter(|face| face.sbix().is_ok())
+            .map(|_| name.to_string()),
         bytes: file.bytes.clone(),
     })
 }

@@ -5,7 +5,7 @@ pub struct AtlasRect {
     pub size: [u32; 2],
 }
 
-/// A tightly packed, row-major R8 coverage atlas. Dirty rectangles lie within its bounds.
+/// Tightly packed R8 coverage or premultiplied sRGB RGBA8. Dirty rectangles use pixels.
 #[derive(Clone, Copy)]
 pub struct AtlasUpload<'a> {
     pub width: u32,
@@ -22,14 +22,18 @@ pub(crate) fn extent([width, height]: [u32; 2]) -> wgpu::Extent3d {
     }
 }
 
-pub(crate) fn create(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
+pub(crate) fn create(
+    device: &wgpu::Device,
+    size: [u32; 2],
+    format: wgpu::TextureFormat,
+) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("sumie glyph coverage"),
+        label: Some("sumie glyph atlas"),
         size: extent(size),
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R8Unorm,
+        format,
         usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     })
@@ -46,9 +50,13 @@ pub(crate) fn write(
     }
     let [x, y] = rect.origin;
     let [width, height] = rect.size;
-    let stride = upload.width as usize;
-    let start = y as usize * stride + x as usize;
-    let end = start + (height as usize - 1) * stride + width as usize;
+    let channels = texture
+        .format()
+        .block_copy_size(None)
+        .expect("uncompressed atlas");
+    let stride = upload.width * channels;
+    let start = y as usize * stride as usize + (x * channels) as usize;
+    let end = start + (height as usize - 1) * stride as usize + (width * channels) as usize;
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
             texture,
@@ -59,7 +67,7 @@ pub(crate) fn write(
         &upload.bytes[start..end],
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(upload.width),
+            bytes_per_row: Some(stride),
             rows_per_image: None,
         },
         extent(rect.size),

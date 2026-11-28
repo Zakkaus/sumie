@@ -124,3 +124,62 @@ fn assert_link_hint(pixels: &[u8], pitch: usize, start: usize, w: usize, h: usiz
         }
     }
 }
+
+#[test]
+fn color_emoji_keeps_its_palette() {
+    let Some((device, queue)) = super::gpu_device(sumie_render::backends()) else {
+        return;
+    };
+    // Force the reviewed fontconfig match even on systems preferring monochrome emoji.
+    #[cfg(target_os = "linux")]
+    let config =
+        sumie_config::Config::from_json(br#"{"font":{"family":"Noto Color Emoji"}}"#).unwrap();
+    #[cfg(target_os = "macos")]
+    let config = sumie_config::Config::from_json(br#"{"font":{"family":"Menlo"}}"#).unwrap();
+    let font = FontSettings::from_config(config.font).unwrap();
+    let mut view = View::new(120, [220, 64], [220, 64], font, &config.colors, [0; 2]).unwrap();
+    let size = view.size();
+    let mut vt = Terminal::new(size.cols, size.rows).unwrap();
+    vt.write("\x1b[38;2;48;48;48;48;2;32;32;32m😀█".as_bytes());
+    view.build(&vt.render_snapshot().unwrap(), None, &[], None, true);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload_atlas(&view.atlas());
+    let target = renderer.create_offscreen(view.device);
+    let mut render = |contrast| {
+        renderer.set_minimum_contrast(contrast);
+        renderer.draw(&view.draw_list(true), &target);
+        super::readback(&device, &queue, target.texture())
+    };
+    let normal = render(1.0);
+    let contrasted = render(21.0);
+    let [w, h] = view.cell.map(|n| n as usize);
+    let mut colored = 0;
+    for (a, b) in normal
+        .chunks_exact(view.device[0] as usize * 4)
+        .zip(contrasted.chunks_exact(view.device[0] as usize * 4))
+        .take(h)
+    {
+        let (emoji, text) = a.split_at(2 * w * 4);
+        colored += emoji
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|[r, g, b, _]| r.abs_diff(*b) > 32 || g.abs_diff(*b) > 32)
+            .count();
+        assert_eq!(emoji, &b[..emoji.len()], "contrast recolored emoji");
+        assert_ne!(
+            text[0],
+            b[emoji.len()],
+            "contrast must still affect the adjacent block"
+        );
+        assert!(
+            text[..w * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|[r, g, b, _]| r == g && g == b),
+            "color escaped into the adjacent cell"
+        );
+    }
+    assert!(colored > w * h / 4, "emoji has no substantial colored ink");
+}
