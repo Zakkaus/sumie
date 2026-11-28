@@ -29,21 +29,33 @@ fn synchronized_output_holds_consecutive_frames_on_the_same_row() {
 }
 
 #[test]
-fn synchronized_output_resets_after_one_second_without_output() {
+fn synchronized_output_deadline_counts_from_mode_set() {
     use std::time::{Duration, Instant};
 
     let mut vt = Terminal::new(3, 1).unwrap();
     let before = Instant::now();
-    vt.write(b"A\x1b[?2026h\rB");
+    vt.write(b"A\x1b[?2026h");
     let at = vt.render_hold_deadline().unwrap();
     let second = Duration::from_secs(1);
     assert!((before + second..=Instant::now() + second).contains(&at));
+    vt.write(b"\rB");
+    assert_eq!(vt.render_hold_deadline(), Some(at));
     let just_before = at.checked_sub(Duration::from_nanos(1)).unwrap();
     assert!(!vt.expire_render_hold(just_before).unwrap());
     assert!(vt.expire_render_hold(at).unwrap());
     assert_eq!(vt.snapshot().unwrap()[0][0].text, "B");
     vt.write(b"\x1b[?2026h\rC"); // A fresh set must start another hold without a reset.
     assert_eq!(vt.snapshot().unwrap()[0][0].text, "B");
+}
+
+#[test]
+fn repeated_mode_set_keeps_the_held_frame_and_deadline() {
+    let mut vt = Terminal::new(3, 1).unwrap();
+    vt.write(b"A\x1b[?2026h\rB");
+    let at = vt.render_hold_deadline().unwrap();
+    vt.write(b"\x1b[?2026h\rC");
+    assert_eq!(vt.snapshot().unwrap()[0][0].text, "A");
+    assert_eq!(vt.render_hold_deadline(), Some(at));
 }
 
 #[test]
