@@ -207,11 +207,10 @@ fn queued_ime_commit_reaches_the_original_pane() {
 }
 
 fn draw_surface(session: &mut Session, window: &mut TestWindow, frame: SurfaceFrame) {
-    session.step_scroll(Instant::now()).unwrap();
     session.refresh_visible(None, window).unwrap();
-    session
-        .draw_frame(window, None, true, |_, _, _, _| Ok(frame))
-        .unwrap();
+    let target = super::super::DrawTarget::Frame(frame);
+    let options = crate::capture::Options::default();
+    session.draw(target, window, &options, None, true).unwrap();
 }
 
 const PRESENTED: SurfaceFrame = SurfaceFrame::Presented { suboptimal: false };
@@ -220,8 +219,7 @@ const PRESENTED: SurfaceFrame = SurfaceFrame::Presented { suboptimal: false };
 fn pointer_hits_use_the_old_scroll_offset_until_presented() {
     use sumie_core::mouse::MousePhase;
 
-    let mut window = TestWindow::default();
-    let mut session = session(&mut window, &sumie_config::Config::default());
+    let mut session = session(&mut TestWindow::default(), &sumie_config::Config::default());
     let rect = session.active().rect;
     let row_height = session.view.cell[1];
     let [pad_x, pad_y] = session.view.pane_padding();
@@ -230,28 +228,19 @@ fn pointer_hits_use_the_old_scroll_offset_until_presented() {
         f64::from(rect.y + pad_y + row_height - 1),
     );
     let terminal = &mut session.active_mut().pane.terminal;
-    for i in 0..40 {
-        terminal.write(format!("https://ex.test/{i}\r\n").as_bytes());
-    }
-    terminal.restore_viewport(10).unwrap();
-    draw_surface(&mut session, &mut window, PRESENTED);
-    session.active_mut().smooth_wheel(
-        MousePhase::Touch(12.0 * f64::from(row_height + 2)),
-        120,
-        Duration::ZERO,
-    );
-    for (frame, uri) in [
-        (SurfaceFrame::Timeout, "https://ex.test/10"),
-        (PRESENTED, "https://ex.test/12"),
-    ] {
-        draw_surface(&mut session, &mut window, frame);
-        let hit =
+    terminal.write(b"one\r\n".repeat(40).as_slice());
+    terminal.scroll_rows(-2).unwrap();
+    session
+        .active_mut()
+        .smooth_wheel(MousePhase::Touch(24.0), 120, Duration::ZERO);
+    session.step_scroll(Instant::now()).unwrap();
+    for (frame, row) in [(SurfaceFrame::Timeout, 0), (PRESENTED, 1)] {
+        session.present_pointer_hits(frame);
+        let (cell, _, _) =
             session
                 .view
-                .link_cell(near_row_end, rect, false, session.active().scroll.shown());
-        let pane = session.active_mut();
-        pane.probe_link(hit, "").unwrap();
-        assert_eq!(pane.hover.uri().unwrap().as_str(), uri);
+                .pointer_position(near_row_end, rect, session.active().scroll.shown());
+        assert_eq!(cell.row, row);
     }
 }
 
@@ -259,23 +248,14 @@ fn pointer_hits_use_the_old_scroll_offset_until_presented() {
 fn ime_rectangle_waits_for_presentation() {
     let mut window = TestWindow::default();
     let mut session = session(&mut window, &sumie_config::Config::default());
+    session.view.preedit = "中文".into();
     for (offset, frame, updates) in [
         (0, PRESENTED, 1),
         (3, SurfaceFrame::Timeout, 1),
         (3, PRESENTED, 2),
     ] {
-        session
-            .input(
-                Event::ImePreedit {
-                    text: "中文".into(),
-                    cursor: Some((offset, offset)),
-                    generation: 0,
-                },
-                &mut window,
-                false,
-                false,
-            )
-            .unwrap();
+        session.view.preedit_cursor = Some((offset, offset));
+        session.active_mut().frame_dirty = true;
         draw_surface(&mut session, &mut window, frame);
         assert_eq!(window.ime_rects.len(), updates);
     }

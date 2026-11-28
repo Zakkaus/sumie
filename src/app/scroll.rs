@@ -21,8 +21,6 @@ pub(super) struct PaneScroll {
     motion: Motion,
     /// Pixels the content is scrolled up from its row boundary.
     sub: f64,
-    /// Whole rows staged for the attempt; retained for retry if it does not present.
-    rows: i32,
     /// The offset of the frame last presented, which is what the pointer sees.
     shown: u32,
 }
@@ -45,19 +43,17 @@ impl PaneScroll {
 
     pub(super) fn show(&mut self) {
         self.shown = self.offset();
-        self.rows = 0;
     }
 
     /// Whether a frame is owed: the offset moved, or motion is still running.
     pub(super) fn pending(&self) -> bool {
-        self.motion.active() || self.rows != 0 || self.offset() != self.shown
+        self.motion.active() || self.offset() != self.shown
     }
 
     /// Another input moved the viewport; drop the offset and any motion.
     pub(super) fn reset(&mut self) {
         self.motion.stop();
         self.sub = 0.0;
-        self.rows = 0;
     }
 }
 
@@ -157,13 +153,13 @@ impl PaneState {
     }
 
     /// Advance the motion by `dt` seconds. Returns whether whole rows moved.
-    fn step_scroll(&mut self, dt: Option<f64>) -> Result<bool> {
-        let moved = dt.map_or(0.0, |dt| self.scroll.motion.step(dt));
-        if moved == 0.0 && self.scroll.rows == 0 {
+    fn step_scroll(&mut self, dt: f64) -> Result<bool> {
+        let moved = self.scroll.motion.step(dt);
+        if moved == 0.0 {
             return Ok(false);
         }
         let cell = f64::from(self.cell[1]);
-        let total = f64::from(self.scroll.rows).mul_add(cell, self.scroll.sub) + moved;
+        let total = self.scroll.sub + moved;
         let mut rows = (total / cell).floor();
         let mut sub = total - rows * cell;
         let (above, below) = self.pane.terminal.scroll_extent()?;
@@ -176,13 +172,11 @@ impl PaneState {
             self.scroll.motion.stop();
         }
         self.scroll.sub = sub;
-        #[expect(clippy::cast_possible_truncation, reason = "clamped to the history")]
-        let rows = rows as i32;
-        self.scroll.rows = rows;
-        if rows == 0 {
+        if rows == 0.0 {
             return Ok(false);
         }
-        self.pane.terminal.scroll_rows(rows)?;
+        #[expect(clippy::cast_possible_truncation, reason = "clamped to the history")]
+        self.pane.terminal.scroll_rows(rows as i32)?;
         self.snapshot_dirty = true;
         self.frame_dirty |= self.search.is_some() || self.selection.range().is_some();
         self.clear_selection();
@@ -205,15 +199,16 @@ impl Session {
     /// Advance every visible pane's scroll motion for the frame about to be drawn.
     pub(super) fn step_scroll(&mut self, now: Instant) -> Result<()> {
         let tab = self.tabs.active_mut().expect("live window");
-        let animating = tab.layout.panes.iter().any(|&(id, _)| {
-            let scroll = &tab.get(id).scroll;
-            scroll.motion.active() || scroll.rows != 0
-        });
+        let animating = tab
+            .layout
+            .panes
+            .iter()
+            .any(|&(id, _)| tab.get(id).scroll.motion.active());
         if !animating {
             self.clock.restart();
             return Ok(());
         }
-        let dt = self.frame_retry.is_none().then(|| self.clock.tick(now));
+        let dt = self.clock.tick(now);
         let mut moved = false;
         for i in 0..tab.layout.panes.len() {
             moved |= tab.get_mut(tab.layout.panes[i].0).step_scroll(dt)?;
@@ -237,17 +232,5 @@ impl Session {
         for i in 0..tab.layout.panes.len() {
             tab.get_mut(tab.layout.panes[i].0).scroll.show();
         }
-    }
-
-    pub(super) fn rollback_scroll(&mut self) -> Result<()> {
-        let tab = self.tabs.active_mut().expect("live window");
-        for i in 0..tab.layout.panes.len() {
-            let pane = tab.get_mut(tab.layout.panes[i].0);
-            if pane.scroll.rows != 0 {
-                pane.pane.terminal.scroll_rows(-pane.scroll.rows)?;
-                pane.snapshot_dirty = true;
-            }
-        }
-        Ok(())
     }
 }

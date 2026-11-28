@@ -461,7 +461,8 @@ impl Session {
                 pane.hide_viewer();
             }
             self.pointer.change_recipient();
-            self.pane_pointer = super::pane_input::Pointer::default();
+            let pointer = std::mem::take(&mut self.pane_pointer);
+            self.pane_pointer.visible_panes = pointer.visible_panes;
         } else {
             self.pane_pointer.reset();
         }
@@ -517,7 +518,8 @@ impl Session {
             let focused = tab.tree.focused();
             alerts.background = index != active_index;
             for pane in &mut tab.panes {
-                alerts.visible = window_visible && self.visible_panes.contains(&pane.id);
+                alerts.visible =
+                    window_visible && self.pane_pointer.visible_panes.contains(&pane.id);
                 let mut changed = false;
                 let watch_at = (index != active_index && !tab.activity).then_some(now);
                 let mut serviced = pane.service(

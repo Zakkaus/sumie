@@ -55,6 +55,7 @@ pub(super) struct Pointer {
     target: Option<Target>,
     held: [bool; 3],
     presented: Option<LayoutKey>,
+    pub(super) visible_panes: Vec<u64>,
     pressed_layout: Option<LayoutKey>,
     recover_frame: bool,
     /// The held left press only moved pane focus; its release stays out of the pane too.
@@ -65,6 +66,9 @@ pub(super) struct Pointer {
 impl Pointer {
     pub(super) fn present_layout(&mut self, tab: &PaneTab) {
         self.presented = Some(tab.layout_key());
+        self.visible_panes.clear();
+        self.visible_panes
+            .extend(tab.layout.panes.iter().map(|&(id, _)| id));
     }
 
     pub(super) fn layout_is_presented(&self, tab: &PaneTab) -> bool {
