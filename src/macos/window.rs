@@ -72,6 +72,7 @@ pub(super) struct MacWindow {
     readiness: Readiness,
     slot: FrameSlot,
     batch: VecDeque<Queued>,
+    #[cfg(feature = "macos-ci")]
     generation: u64,
     text_recipient: u64,
     composition: Composition,
@@ -98,6 +99,7 @@ impl MacWindow {
             slot: FrameSlot::new(platform.maximum_frames_per_second()),
             readiness,
             batch: VecDeque::new(),
+            #[cfg(feature = "macos-ci")]
             generation: 0,
             text_recipient: 0,
             composition: Composition::default(),
@@ -274,23 +276,18 @@ impl MacWindow {
             Queued::Ime(ime, source) => self.composition.ime(ime, source, &mut inputs),
             Queued::FocusLost => inputs.extend(self.composition.cancel()),
         }
-        events.extend(inputs.into_iter().filter_map(|input| match input {
-            Input::Key(key) => Some(key_event(key)),
+        events.extend(inputs.into_iter().map(|input| match input {
+            Input::Key(key) => key_event(key),
             Input::Preedit {
                 text,
                 cursor,
                 generation,
-            } => Some(Event::ImePreedit {
+            } => Event::ImePreedit {
                 text,
                 cursor,
                 generation,
-            }),
-            Input::Commit { text, generation } => {
-                (generation == self.generation).then_some(Event::ImeCommit {
-                    text,
-                    recipient: self.text_recipient,
-                })
-            }
+            },
+            Input::Commit { text, recipient } => Event::ImeCommit { text, recipient },
         }));
     }
 
@@ -434,13 +431,18 @@ impl WindowOps for MacWindow {
         }
     }
 
-    /// Cancel a composition of an older generation natively; its events keep their generation
-    /// until winit reports the cancel.
+    /// Cancel an older composition natively without retargeting its queued commit.
     fn set_input_generation(&mut self, generation: u64, recipient: u64) {
-        if self.composition.set_generation(generation) && self.ime.enabled && self.focused {
+        if self.composition.set_generation(generation, recipient)
+            && self.ime.enabled
+            && self.focused
+        {
             self.platform.cancel_composition();
         }
-        self.generation = generation;
+        #[cfg(feature = "macos-ci")]
+        {
+            self.generation = generation;
+        }
         self.text_recipient = recipient;
     }
 

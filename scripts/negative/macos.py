@@ -46,17 +46,18 @@ objc2::define_class!(
 def ime_controls():
     """Without a Pinyin input source macos-ime exits 2, so these report "could not run"."""
     ime = "crates/sumie-macos/src/ime.rs"
-    late = "ime: late: a late preedit and commit after the switch: recorded e68a8a"
+    late = "ime: late: queued commit reaches the original pane: recorded nothing instead of e68a8a"
     probe("commit sent twice", "macos-ime", ime,
-          replace_once("                if let Some((generation, _)) = self.owner.take() {\n"
+          replace_once("                if let Some((_, recipient, _)) = self.owner.take() {\n"
                        "                    out.push(Input::Commit",
-                       "                if let Some((generation, _)) = self.owner.clone() {\n"
+                       "                if let Some((_, recipient, _)) = self.owner.clone() {\n"
                        "                    out.push(Input::Commit"),
           "ime: commit: once, then not again without a composition: recorded e68a8ae68a8a")
     probe("late commit delivered to the new pane", "macos-ime", ime,
-          replace_once("        self.generation = generation;\n        self.owner\n",
-                       "        self.generation = generation;\n        if let Some((owner, _)) = &mut self.owner {\n"
-                       "            *owner = generation;\n        }\n        self.owner\n"),
+          replace_once("if let Some((_, recipient, _)) = self.owner.take() {\n"
+                       "                    out.push(Input::Commit { text, recipient });",
+                       "if self.owner.take().is_some() {\n"
+                       "                    out.push(Input::Commit { text, recipient: self.recipient });"),
           late)
     probe("late preedit binds the new pane", "macos-ime", ime,
           replace_once("        self.generation = generation;\n        self.owner\n",

@@ -1,10 +1,8 @@
 use std::collections::VecDeque;
 
 use smithay_client_toolkit::reexports::client::{
-    Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
-    protocol::{wl_callback::WlCallback, wl_seat::WlSeat},
+    Connection, Dispatch, Proxy, QueueHandle, delegate_noop, protocol::wl_seat::WlSeat,
 };
-use wayland_backend::client::ObjectId;
 use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3::ZwpTextInputManagerV3,
     zwp_text_input_v3::{self, ContentHint, ContentPurpose, ZwpTextInputV3},
@@ -34,7 +32,7 @@ struct ImeState {
     serial: u32,
     wait_for_match: bool,
     enabled_at: Option<u32>,
-    // Inclusive serial ranges from previous recipients that the compositor may not have seen yet.
+    // The last four recipients' inclusive serial ranges; older commits are dropped.
     previous_recipients: VecDeque<(u32, u32, u64)>,
     sent_rect: Option<CursorRect>,
     pending: Batch,
@@ -85,6 +83,14 @@ impl ImeState {
         }
         self.sent_rect = Some(rect);
         Some(rect)
+    }
+
+    fn remember_recipient(&mut self, enabled_at: u32, recipient: u64) {
+        if self.previous_recipients.len() == 4 {
+            self.previous_recipients.pop_front();
+        }
+        self.previous_recipients
+            .push_back((enabled_at, self.serial, recipient));
     }
 
     fn discard_before(&mut self, serial: u32) {
@@ -196,12 +202,7 @@ impl Drop for TextInput {
 }
 
 impl State {
-    pub(crate) fn set_input_generation(
-        &mut self,
-        generation: u64,
-        recipient: u64,
-        connection: &Connection,
-    ) {
+    pub(crate) fn set_input_generation(&mut self, generation: u64, recipient: u64) {
         if self.input_generation == generation {
             return;
         }
@@ -219,17 +220,11 @@ impl State {
             ime.state.pending = Batch::default();
             return;
         };
-        ime.state
-            .previous_recipients
-            .push_back((enabled_at, ime.state.serial, previous));
+        ime.state.remember_recipient(enabled_at, previous);
         let commit = ime.state.pending.commit.take();
         ime.disable();
         let commit_surface = ime.enable(None);
         ime.state.pending.commit = commit;
-        // After the compositor sees the new enable, it cannot send an older serial.
-        connection
-            .display()
-            .sync(&self.qh, (ime.proxy.id(), ime.state.serial));
         if commit_surface {
             self.commit_ime_surface();
         }
@@ -280,26 +275,6 @@ impl State {
             .and_then(|keyboard| keyboard.ime.as_mut())
         {
             ime.state.disable(self.input_generation, &mut self.events);
-        }
-    }
-}
-
-impl Dispatch<WlCallback, (ObjectId, u32)> for State {
-    fn event(
-        state: &mut Self,
-        _: &WlCallback,
-        _: <WlCallback as Proxy>::Event,
-        (id, serial): &(ObjectId, u32),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let Some(ime) = state
-            .keyboard
-            .as_mut()
-            .and_then(|keyboard| keyboard.ime.as_mut())
-            && ime.proxy.id() == *id
-        {
-            ime.state.discard_before(*serial);
         }
     }
 }
@@ -481,6 +456,31 @@ mod tests {
                 ));
             }
             assert!(events.is_empty());
+        }
+    }
+
+    #[test]
+    fn old_done_keeps_only_the_last_four_recipients() {
+        let mut ime = ImeState::default();
+        let mut events = VecDeque::new();
+        for recipient in 1..=5 {
+            ime.serial = 2 * recipient - 1;
+            ime.remember_recipient(ime.serial, u64::from(recipient));
+        }
+        ime.serial = 11;
+        ime.enabled_at = Some(11);
+        for recipient in 1..=6 {
+            ime.pending.commit = Some("字".into());
+            ime.done(2 * recipient - 1, 6, 6, &mut events);
+            if recipient == 1 {
+                assert!(events.is_empty());
+            } else {
+                assert!(matches!(
+                    events.pop_front(),
+                    Some(Event::ImeCommit { text, recipient: got })
+                        if text == "字" && got == u64::from(recipient)
+                ));
+            }
         }
     }
 
