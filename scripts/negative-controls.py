@@ -112,7 +112,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("forbidden module", "structure", CORE, append("mod /* nested /* comment */ */ r#helper {}\n"),
           f"names: {CORE}: forbidden module name helper")
     probe("literal tab tint", "structure", "crates/sumie-ui/src/palette.rs",
-          replace_once("black(u8::MAX), alpha", "black(u8::MAX), if is_light(luminance) { 10 } else { 56 }"),
+          lambda source: replace_once("tokens::TAB_SURFACE_DARK_ALPHA", "56")(
+              replace_once("tokens::TAB_SURFACE_LIGHT_ALPHA", "10")(source)),
           "ui tokens: crates/sumie-ui/src/palette.rs: numeric styling argument to tint_over")
     probe("forbidden crate name", "structure", RENDER_MANIFEST, append('[lib]\nname = "common"\n'),
           "names: forbidden crate name common")
@@ -206,6 +207,12 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("block.cursor.write(|instance| write(self.place(instance)));",
                            "let _ = block;")(source)),
           "test grid_tests::grid_on_selected_backend ... FAILED")
+    probe("skip painting the diagnostic banner", "test", "src/view/paint.rs",
+          replace_once("        if let Some(message) = banner {\n            self.draw_banner(snapshot, message);\n",
+                       "        if banner.is_some() {\n"
+                       "            self.pane.backgrounds\n"
+                       "                .resize(self.pane.grid[0] as usize, self.pane.default_background);\n"),
+          "missing diagnostic background")
     probe("oversized OSC 52 clipboard write", "test", "crates/sumie-vt/src/effects.rs",
           replace_once("if len > OUTPUT_LIMIT - self.clipboard_bytes {",
                        "if len > OUTPUT_LIMIT + 1 - self.clipboard_bytes {"),

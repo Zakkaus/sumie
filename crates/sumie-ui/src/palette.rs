@@ -62,12 +62,15 @@ impl TabPalette {
     #[must_use]
     pub fn new(background: Rgba, foreground: Rgba, mut yellow: Rgba, mut red: Rgba) -> Self {
         let luminance = relative_luminance(background);
-        let alpha = if is_light(luminance) {
-            tokens::TAB_SURFACE_LIGHT_ALPHA
-        } else {
-            tokens::TAB_SURFACE_DARK_ALPHA
-        };
-        let surface = tint_over(background, black(u8::MAX), alpha);
+        let surface = tint_over(
+            background,
+            black(u8::MAX),
+            if is_light(luminance) {
+                tokens::TAB_SURFACE_LIGHT_ALPHA
+            } else {
+                tokens::TAB_SURFACE_DARK_ALPHA
+            },
+        );
         let bar = relative_luminance(surface) + 0.05;
         let contrasts = |color| {
             let accent = relative_luminance(color) + 0.05;
