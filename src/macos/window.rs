@@ -1,12 +1,17 @@
 //! Binds the shared window operations to the `AppKit` window, its readiness bridge, the
 //! display-paced frame slot and the pasteboard helpers. Native events and finished pastes
-//! queue into one batch per run-loop turn.
+//! queue into one batch per run-loop turn; keys, modifiers, focus loss and input-method events
+//! pass the composition as they are delivered, after every input generation the session set
+//! for the events before them.
 
 use std::{collections::VecDeque, os::fd::BorrowedFd, time::Instant};
 
-use sumie_core::{mouse::MousePhase, notify::Notification};
+use native::{device_px, key_event, wheel_phase};
+use sumie_core::notify::Notification;
+#[cfg(feature = "macos-ci")]
+use sumie_macos::Symbol;
 use sumie_macos::{
-    Platform, Pointer, PointerPhase, Scroll, Symbol,
+    Platform, Pointer, PointerPhase,
     ime::{Composition, Ime, Input},
     readiness::{Interest, Key, Readiness},
 };
@@ -20,18 +25,17 @@ use crate::{
     Result,
     frame_window::FrameWindow,
     platform::{
-        CaretBounds, CursorIcon, Event, ExitWatches, LogicalKey, LogicalRect, PaneWatches,
-        PointerEvent, Position, Ready, WindowOps,
+        CaretBounds, CursorIcon, Event, ExitWatches, LogicalRect, PaneWatches, PointerEvent, Ready,
+        WindowOps,
     },
     view,
 };
 
+mod native;
+
 /// The frame slot's wake. Readiness timer IDs count up from 1, so this one never collides;
 /// the driver's deadline uses the next one down.
 const SLOT: Key = Key::new(u64::MAX, Interest::Timer);
-/// Trackpad points per wheel notch, as Wayland counts logical units.
-const POINTS_PER_NOTCH: f64 = 10.0;
-const VALUE120_PER_NOTCH: f64 = 120.0;
 
 /// What the window did since it opened, for the runner probe and the logs.
 #[derive(Clone, Copy, Default)]
@@ -41,12 +45,24 @@ pub(super) struct Stats {
     pub(super) timeouts: u64,
 }
 
+/// A batch entry; the native ones become events when delivered.
+enum Queued {
+    Event(Event),
+    Key(sumie_macos::Key),
+    /// An input-method event and the input source selected when it arrived.
+    Ime(Ime, Option<String>),
+    /// Ends the composition ahead of the focus event.
+    FocusLost,
+}
+
 #[derive(Default)]
 struct ImeWindow {
     /// Whether input methods compose while the window is key.
     enabled: bool,
-    /// The candidate window's last caret, in points.
+    /// The candidate window's caret, in points.
     area: Option<LogicalRect>,
+    /// A caret of a frame not yet known to be on screen.
+    pending: Option<LogicalRect>,
 }
 
 pub(super) struct MacWindow {
@@ -55,7 +71,7 @@ pub(super) struct MacWindow {
     platform: Platform,
     readiness: Readiness,
     slot: FrameSlot,
-    batch: VecDeque<Event>,
+    batch: VecDeque<Queued>,
     generation: u64,
     composition: Composition,
     ime: ImeWindow,
@@ -96,7 +112,7 @@ impl MacWindow {
             platform,
         };
         // The session starts at the first size, like a Wayland configure.
-        window.batch.push_back(Event::Configured {
+        window.push(Event::Configured {
             activated: window.focused,
             suspended: false,
         });
@@ -117,7 +133,7 @@ impl MacWindow {
     /// Queue finished pastes, stamped with their request's recipient, for this turn.
     pub(super) fn service_pasteboard(&mut self) -> Result<()> {
         for Pasted { text, recipient } in self.pasteboard.service(&mut self.watches)? {
-            self.batch.push_back(Event::ClipboardText {
+            self.push(Event::ClipboardText {
                 text,
                 generation: recipient,
             });
@@ -140,11 +156,11 @@ impl MacWindow {
                 if focused != self.focused {
                     self.focused = focused;
                     // Focus loss cancels the composition; it composes again once key.
-                    if !focused && let Some(input) = self.composition.cancel() {
-                        self.input(input);
+                    if !focused {
+                        self.batch.push_back(Queued::FocusLost);
                     }
                     self.platform.set_ime_allowed(self.ime.enabled && focused);
-                    self.batch.push_back(Event::KeyboardFocus(focused));
+                    self.push(Event::KeyboardFocus(focused));
                 }
                 self.configured();
             }
@@ -153,26 +169,20 @@ impl MacWindow {
                 self.end_backoff();
                 self.configured();
                 if !occluded {
-                    self.batch.push_back(Event::Exposed);
+                    self.push(Event::Exposed);
                 }
             }
-            Native::CloseRequested => self.batch.push_back(Event::CloseRequested),
-            Native::Key(key) => {
-                self.composition.key(&key);
-                self.key(key);
-            }
-            Native::ModifiersChanged(modifiers) => {
-                self.composition.set_modifiers(modifiers);
-                self.batch.push_back(Event::ModifiersChanged(modifiers));
-            }
+            Native::CloseRequested => self.push(Event::CloseRequested),
+            Native::Key(key) => self.batch.push_back(Queued::Key(key)),
+            Native::ModifiersChanged(modifiers) => self.push(Event::ModifiersChanged(modifiers)),
             Native::Ime(ime) => self.ime(ime),
-            Native::PointerEntered(pointer) => self.batch.push_back(Event::PointerEntered {
+            Native::PointerEntered(pointer) => self.push(Event::PointerEntered {
                 position: device_px(pointer.position),
                 modifiers: pointer.modifiers,
             }),
             Native::Pointer(pointer) => {
                 let event = self.pointer(pointer);
-                self.batch.push_back(Event::Pointer(event));
+                self.push(Event::Pointer(event));
             }
             _ => (),
         }
@@ -186,56 +196,103 @@ impl MacWindow {
         self.platform.set_ime_allowed(enabled && self.focused);
     }
 
-    /// Queue an input-method event for the composition that owns it.
+    /// Queue an input-method event for the composition that owns it when delivered.
     pub(super) fn ime(&mut self, ime: Ime) {
-        let mut inputs = Vec::new();
-        self.composition
-            .ime(ime, Platform::input_source(), &mut inputs);
-        for input in inputs {
-            self.input(input);
-        }
-    }
-
-    fn input(&mut self, input: Input) {
-        match input {
-            Input::Key(key) => self.key(key),
-            Input::Preedit {
-                text,
-                cursor,
-                generation,
-            } => self.batch.push_back(Event::ImePreedit {
-                text,
-                cursor,
-                generation,
-            }),
-            Input::Commit { text, generation } => {
-                self.batch.push_back(Event::ImeCommit { text, generation });
-            }
-        }
+        self.batch
+            .push_back(Queued::Ime(ime, Platform::input_source()));
     }
 
     /// Text for the focused pane, stamped with the current input generation: the runner's
     /// `type`, as if typed without an input method.
     #[cfg(feature = "macos-ci")]
     pub(super) fn commit_text(&mut self, text: String) {
-        self.batch.push_back(Event::ImeCommit {
+        self.push(Event::ImeCommit {
             text,
             generation: self.generation,
         });
+    }
+
+    /// Cmd+F, then a preedit of `text`, as one batch: the runner's `ime search`.
+    #[cfg(feature = "macos-ci")]
+    pub(super) fn search_then_preedit(&mut self, text: String) {
+        use sumie_core::{KeyAction, KeyCode, KeyModifiers, PhysicalKey};
+        let modifiers = KeyModifiers {
+            super_key: true,
+            ..KeyModifiers::default()
+        };
+        for (action, typed) in [
+            (KeyAction::Press, Some("f".into())),
+            (KeyAction::Release, None),
+        ] {
+            self.batch.push_back(Queued::Key(sumie_macos::Key {
+                physical: PhysicalKey::Code(KeyCode::KeyF),
+                symbol: Symbol::Character('f'),
+                text: typed,
+                modifiers,
+                action,
+            }));
+        }
+        let cursor = Some((text.len(), text.len()));
+        self.ime(Ime::Preedit { text, cursor });
+    }
+
+    #[cfg(feature = "macos-ci")]
+    pub(super) const fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub(super) fn deliver_events(
         &mut self,
         mut deliver: impl FnMut(Event, &mut Self) -> Result<bool>,
     ) -> Result<bool> {
-        while let Some(event) = self.batch.pop_front() {
-            let result = deliver(event, self);
-            if !matches!(result, Ok(false)) {
-                self.batch.clear();
-                return result;
+        let mut events = Vec::new();
+        while let Some(queued) = self.batch.pop_front() {
+            self.convert(queued, &mut events);
+            for event in events.drain(..) {
+                let result = deliver(event, self);
+                if !matches!(result, Ok(false)) {
+                    self.batch.clear();
+                    return result;
+                }
             }
         }
         Ok(false)
+    }
+
+    /// Pass a batch entry through the composition under the current input generation.
+    fn convert(&mut self, queued: Queued, events: &mut Vec<Event>) {
+        let mut inputs = Vec::new();
+        match queued {
+            Queued::Event(event) => {
+                if let Event::ModifiersChanged(modifiers) = event {
+                    self.composition.set_modifiers(modifiers);
+                }
+                events.push(event);
+            }
+            Queued::Key(key) => {
+                self.composition.key(&key);
+                inputs.push(Input::Key(key));
+            }
+            Queued::Ime(ime, source) => self.composition.ime(ime, source, &mut inputs),
+            Queued::FocusLost => inputs.extend(self.composition.cancel()),
+        }
+        events.extend(inputs.into_iter().map(|input| match input {
+            Input::Key(key) => key_event(key),
+            Input::Preedit {
+                text,
+                cursor,
+                generation,
+            } => Event::ImePreedit {
+                text,
+                cursor,
+                generation,
+            },
+            Input::Commit { text, generation } => Event::ImeCommit { text, generation },
+        }));
+    }
+
+    fn push(&mut self, event: Event) {
+        self.batch.push_back(Queued::Event(event));
     }
 
     pub(super) const fn refresh(&self) -> std::time::Duration {
@@ -266,7 +323,7 @@ impl MacWindow {
             reason = "a point extent of a backing size that fits u32"
         )]
         let logical = device.map(|px| (f64::from(px) / scale).round() as u32);
-        self.batch.push_back(Event::Resized {
+        self.push(Event::Resized {
             logical: logical.into(),
             device: device.into(),
             scale: scale120,
@@ -293,21 +350,9 @@ impl MacWindow {
     }
 
     fn configured(&mut self) {
-        self.batch.push_back(Event::Configured {
+        self.push(Event::Configured {
             activated: self.focused,
             suspended: self.occluded,
-        });
-    }
-
-    /// Command keys go to the shared shortcut table, which keeps them out of the PTY; the
-    /// menu has already taken its own key equivalents, such as Quit.
-    fn key(&mut self, key: sumie_macos::Key) {
-        self.batch.push_back(Event::Key {
-            physical: key.physical,
-            logical: logical_key(key.symbol),
-            utf8: key.text,
-            modifiers: key.modifiers,
-            action: key.action,
         });
     }
 
@@ -328,40 +373,6 @@ impl MacWindow {
             tracing::error!(%error, "could not arm the frame slot wake");
         }
     }
-}
-
-/// The one conversion of winit's scrolling into the shared value120 units, where positive
-/// scrolls down: a line is a notch, and a trackpad moves a notch per ten points, as Wayland
-/// counts logical units. Fractions stay for the core's remainder.
-fn wheel_phase(scroll: Scroll, scale: f64) -> MousePhase {
-    match scroll {
-        Scroll::Lines(lines) => MousePhase::Wheel(-lines * VALUE120_PER_NOTCH),
-        Scroll::Pixels(pixels) => {
-            MousePhase::Touch(-pixels / scale * (VALUE120_PER_NOTCH / POINTS_PER_NOTCH))
-        }
-        Scroll::Ended => MousePhase::TouchEnd,
-    }
-}
-
-const fn logical_key(symbol: Symbol) -> LogicalKey {
-    match symbol {
-        Symbol::Character(ch) => LogicalKey::Character(ch),
-        Symbol::Escape => LogicalKey::Escape,
-        Symbol::Enter => LogicalKey::Enter,
-        Symbol::NumpadEnter => LogicalKey::NumpadEnter,
-        Symbol::Backspace => LogicalKey::Backspace,
-        Symbol::Insert => LogicalKey::Insert,
-        Symbol::Home => LogicalKey::Home,
-        Symbol::End => LogicalKey::End,
-        Symbol::Left => LogicalKey::Left,
-        Symbol::Right => LogicalKey::Right,
-        Symbol::F3 => LogicalKey::F3,
-        Symbol::Other(ch) => LogicalKey::Other(ch),
-    }
-}
-
-const fn device_px([x, y]: [f64; 2]) -> Position {
-    Position::DevicePx(x, y)
 }
 
 impl FrameWindow for MacWindow {
@@ -397,8 +408,16 @@ impl WindowOps for MacWindow {
         }
     }
 
+    /// The candidate window moves with the frame that shows the caret there: one that timed
+    /// out leaves it at the caret still on screen.
     fn set_cursor_rectangle(&mut self, rect: LogicalRect) {
-        if self.ime.area.replace(rect) != Some(rect) {
+        self.ime.pending = Some(rect);
+    }
+
+    fn cursor_rectangle_presented(&mut self) {
+        if let Some(rect) = self.ime.pending.take()
+            && self.ime.area.replace(rect) != Some(rect)
+        {
             self.platform
                 .set_ime_cursor_area([rect.x, rect.y], [rect.width, rect.height]);
         }
@@ -412,8 +431,8 @@ impl WindowOps for MacWindow {
         }
     }
 
-    /// Fence the old recipient's composition, then cancel it natively: its late events have
-    /// no owner when they arrive.
+    /// Cancel a composition of an older generation natively; its events keep their generation
+    /// until winit reports the cancel.
     fn set_input_generation(&mut self, generation: u64) {
         if self.composition.set_generation(generation) && self.ime.enabled && self.focused {
             self.platform.cancel_composition();
@@ -534,34 +553,5 @@ impl PaneWatches for MacWindow {
 
     fn retire_pane(&mut self, id: u64) {
         self.watches.retire_pane(id);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wheel_deltas_convert_once_and_keep_their_fractions() {
-        for (scroll, scale, expected) in [
-            (Scroll::Lines(1.0), 2.0, MousePhase::Wheel(-120.0)),
-            (Scroll::Lines(-0.25), 2.0, MousePhase::Wheel(30.0)),
-            // 5 points at 2x is half a notch; at 1x the same backing pixels are a full one.
-            (Scroll::Pixels(-10.0), 2.0, MousePhase::Touch(60.0)),
-            (Scroll::Pixels(-10.0), 1.0, MousePhase::Touch(120.0)),
-            (Scroll::Pixels(1.5), 1.5, MousePhase::Touch(-12.0)),
-        ] {
-            let got = wheel_phase(scroll, scale);
-            let same = match (got, expected) {
-                (MousePhase::Wheel(a), MousePhase::Wheel(b))
-                | (MousePhase::Touch(a), MousePhase::Touch(b)) => (a - b).abs() < 1e-9,
-                _ => false,
-            };
-            assert!(same, "{scroll:?} at {scale}");
-        }
-        assert!(matches!(
-            wheel_phase(Scroll::Ended, 2.0),
-            MousePhase::TouchEnd
-        ));
     }
 }

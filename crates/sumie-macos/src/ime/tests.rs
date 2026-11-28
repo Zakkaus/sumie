@@ -82,14 +82,25 @@ fn a_composition_keeps_its_owner_through_the_empty_preedit_and_commits_once() {
 }
 
 #[test]
-fn a_new_generation_fences_the_old_composition() {
+fn a_new_generation_fences_the_old_composition_until_it_ends() {
     let mut composition = Composition::default();
-    composition.set_generation(1);
+    // Without a composition there is nothing to cancel.
+    assert!(!composition.set_generation(1));
     feed(&mut composition, preedit("ㄅ"));
     assert!(composition.set_generation(2));
-    assert!(!composition.set_generation(2));
-    assert_eq!(feed(&mut composition, empty()), []);
-    assert_eq!(feed(&mut composition, Ime::Commit("把".into())), []);
+    // Its late events keep its generation, a non-empty preedit before the commit included.
+    assert_eq!(
+        feed(&mut composition, preedit("ㄅㄆ")),
+        [Seen::Preedit("ㄅㄆ".into(), 1)]
+    );
+    assert_eq!(
+        feed(&mut composition, empty()),
+        [Seen::Preedit(String::new(), 1)]
+    );
+    assert_eq!(
+        feed(&mut composition, Ime::Commit("把".into())),
+        [Seen::Commit("把".into(), 1)]
+    );
     // The next composition belongs to the new recipient.
     assert_eq!(
         feed(&mut composition, preedit("ㄆ")),
@@ -98,6 +109,30 @@ fn a_new_generation_fences_the_old_composition() {
     assert_eq!(
         feed(&mut composition, Ime::Commit("葡".into())),
         [Seen::Commit("葡".into(), 2)]
+    );
+}
+
+#[test]
+fn the_native_cancel_ends_the_fenced_composition() {
+    let mut composition = Composition::default();
+    composition.set_generation(1);
+    feed(&mut composition, preedit("ㄅ"));
+    assert!(composition.set_generation(2));
+    // Another switch before the cancel arrived still finds it running.
+    assert!(composition.set_generation(3));
+    assert_eq!(
+        feed(&mut composition, preedit("ㄅㄆ")),
+        [Seen::Preedit("ㄅㄆ".into(), 1)]
+    );
+    assert_eq!(
+        feed(&mut composition, Ime::Disabled),
+        [Seen::Preedit(String::new(), 1)]
+    );
+    assert!(!composition.set_generation(4));
+    assert_eq!(feed(&mut composition, Ime::Commit("把".into())), []);
+    assert_eq!(
+        feed(&mut composition, preedit("ㄆ")),
+        [Seen::Preedit("ㄆ".into(), 4)]
     );
 }
 

@@ -35,6 +35,8 @@ struct Control {
     cycle: bool,
     cycles: u64,
     presented: u64,
+    /// Injected input-method events, reported once the batch that carries them is delivered.
+    injected: Vec<String>,
 }
 
 pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
@@ -52,6 +54,7 @@ pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
                 driver.settle(context, readiness, result.map(ControlFlow::Continue))?
             }
             event => {
+                let delivered = matches!(event, Event::AboutToWait);
                 match &event {
                     Event::Focused(focused) => println!("runner focused {focused}"),
                     Event::Ime(ime) => println!("runner ime {}", native::describe(ime)),
@@ -60,6 +63,11 @@ pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
                     _ => (),
                 }
                 let flow = driver.handle(context, readiness, event)?;
+                if delivered {
+                    for injected in control.injected.drain(..) {
+                        println!("runner injected {injected}");
+                    }
+                }
                 report_presents(&driver, started, &mut control.presented);
                 let pending = pending_report(&driver, &mut control.report);
                 driver.settle(context, readiness, pending.map(|()| flow))?
@@ -138,8 +146,12 @@ fn command(
                 Command::Key(key) => println!("runner posted key {}", native::post_key(key)),
                 Command::ImeAllowed(enabled) => open.window.set_ime(enabled),
                 Command::InjectIme(ime) => {
-                    println!("runner injected {}", native::describe(&ime));
+                    control.injected.push(native::describe(&ime));
                     open.window.ime(ime);
+                }
+                Command::SearchThenPreedit(text) => {
+                    control.injected.push("search".into());
+                    open.window.search_then_preedit(text);
                 }
                 Command::Overlay => {
                     let preedit = open.app.as_ref().and_then(|app| app.preedit());
@@ -149,7 +161,10 @@ fn command(
                     let (start, end) = cursor.map_or(("-".into(), "-".into()), |(start, end)| {
                         (start.to_string(), end.to_string())
                     });
-                    println!("runner overlay {length} {start} {end}");
+                    println!(
+                        "runner overlay {length} {start} {end} {}",
+                        open.window.generation()
+                    );
                 }
                 Command::InputSource => println!(
                     "runner source {}",

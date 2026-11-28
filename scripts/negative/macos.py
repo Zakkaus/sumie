@@ -1,6 +1,5 @@
 """The negative controls that need macOS: the window gates and the macos-ci build."""
 import os
-import subprocess
 import sys
 
 from negative.probe import append, probe, replace_once
@@ -44,16 +43,10 @@ objc2::define_class!(
 """
 
 
-def pinyin_selected():
-    """Whether macos-ime drives the selected input source natively. Reads it, never sets it."""
-    selected = subprocess.run(["defaults", "read", "com.apple.HIToolbox", "AppleSelectedInputSources"],
-                              capture_output=True, text=True, check=False).stdout
-    return any(f'"{mode}"' in selected for mode in ("com.apple.inputmethod.TCIM.Pinyin",
-                                                     "com.apple.inputmethod.SCIM.ITABC"))
-
-
 def ime_controls():
+    """Without a Pinyin input source macos-ime exits 2, so these report "could not run"."""
     ime = "crates/sumie-macos/src/ime.rs"
+    late = "ime: late: a late preedit and commit after the switch: recorded e68a8a"
     probe("commit sent twice", "macos-ime", ime,
           replace_once("                if let Some((generation, _)) = self.owner.take() {\n"
                        "                    out.push(Input::Commit",
@@ -61,18 +54,38 @@ def ime_controls():
                        "                    out.push(Input::Commit"),
           "ime: commit: once, then not again without a composition: recorded e68a8ae68a8a")
     probe("late commit delivered to the new pane", "macos-ime", ime,
-          replace_once("        self.owner = None;\n        self.generation = generation;\n",
-                       "        if let Some((owner, _)) = &mut self.owner {\n"
-                       "            *owner = generation;\n        }\n        self.generation = generation;\n"),
-          "ime: late: commits after a switch and after search opened: recorded e68a8a")
+          replace_once("        self.generation = generation;\n        self.owner\n",
+                       "        self.generation = generation;\n        if let Some((owner, _)) = &mut self.owner {\n"
+                       "            *owner = generation;\n        }\n        self.owner\n"),
+          late)
+    probe("late preedit binds the new pane", "macos-ime", ime,
+          replace_once("        self.generation = generation;\n        self.owner\n",
+                       "        self.generation = generation;\n        self.owner = None;\n        self.owner\n"),
+          late)
+    probe("the native cancel's Disabled leaves the old composition running", "macos-ime", ime,
+          replace_once("            Ime::Disabled => out.extend(self.cancel()),\n", "            Ime::Disabled => (),\n"),
+          "ime: late: search's composition after the cancel: the overlay shows 0 - - instead of 3 3 3")
+    probe("preedit after Cmd+F converted before the chord", "macos-ime", "src/macos/window.rs",
+          replace_once("        self.batch\n            .push_back(Queued::Ime(ime, Platform::input_source()));\n",
+                       "        let mut events = Vec::new();\n"
+                       "        self.convert(Queued::Ime(ime, Platform::input_source()), &mut events);\n"
+                       "        self.batch.extend(events.into_iter().map(Queued::Event));\n"),
+          "ime: batch: the preedit right after Cmd+F, in search: the overlay shows 0 - - instead of 3 3 3")
     probe("swallowed Kitty release not sent", "macos-ime", ime,
           replace_once("                out.extend(self.release_held());\n", ""),
           "ime: kitty: release when the composition takes over: recorded 1b5b393775 instead of")
-    probe("swallowed Kitty release sent twice", "macos-ime", "src/input.rs",
+    probe("takeover release sent at every preedit", "test", ime,
+          replace_once("self.held.drain(..).map(", "self.held.clone().into_iter().map("),
+          "test ime::tests::the_composition_releases_held_presses_once ... FAILED")
+    probe("real key-up after the takeover release reaches the PTY", "macos-ime", "src/input.rs",
           replace_once("            _ => return false,\n        }\n        true\n",
                        "            (KeyAction::Release, None) => (),\n            _ => return false,\n        }\n"
                        "        true\n"),
           "ime: kitty: one release, then the commit: recorded 1b5b3937751b5b39373b313a33751b5b39373b313a3375")
+    probe("takeover release sent to the new recipient", "macos-ime", "src/app/tabs.rs",
+          replace_once("        if let Some(id) = self.routing.release_owner(event)\n",
+                       "        if let Some(id) = self.routing.release_owner(event).filter(|_| false)\n"),
+          "ime: switch: the takeover release after a pane switch reaches pane 1: recorded 1b5b393775 instead of")
     probe("preedit caret dropped before the overlay", "macos-ime", "src/app/pane_input.rs",
           replace_once("            view.preedit_cursor = cursor;\n", "            view.preedit_cursor = None;\n"),
           "ime: commit: preedit: the overlay shows 3 - - instead of 3 3 3")
@@ -82,13 +95,12 @@ def ime_controls():
     probe("underline the whole preedit despite its selected clause", "test", "src/view/paint.rs",
           replace_once(".filter(|(start, end)| start < end);", ".filter(|_| false);"),
           "test view::tests::preedit::the_preedit_underline_spans_the_selected_clause ... FAILED")
-    # The native cases run only under a Pinyin input method, which hosted runners lack.
-    if pinyin_selected():
-        probe("no native cancel on a recipient change", "macos-ime", "src/macos/window.rs",
-              replace_once("            self.platform.cancel_composition();\n", ""),
-              "ime: cancel: a pane split: a made preedits of")
-    else:
-        print("\n== ime: the native-cancel control needs a Pinyin input method selected; skipped")
+    probe("search caret pinned to the preedit's end", "test", "src/view/overlays.rs",
+          replace_once("if start == end && start < self.preedit.len() =>", "if false =>"),
+          "test view::tests::preedit::the_search_caret_follows_a_collapsed_input_method_caret ... FAILED")
+    probe("no native cancel on a recipient change", "macos-ime", "src/macos/window.rs",
+          replace_once("            self.platform.cancel_composition();\n", ""),
+          "ime: cancel: a pane split: a continued the old composition")
 
 
 def macos_controls():
@@ -169,7 +181,8 @@ def macos_controls():
               replace_once('|| eval "${_sumie_trap-}"', "|| :"),
               login + "bash::bash_3_2_reinstalls_its_trap_after_one_set_at_the_prompt ... FAILED")
         probe("stop forwarding keys", "macos-keys", "src/macos/window.rs",
-              replace_once("                self.composition.key(&key);\n                self.key(key);\n", ""),
+              replace_once("            Native::Key(key) => self.batch.push_back(Queued::Key(key)),\n",
+                           "            Native::Key(_) => (),\n"),
               "keys: plain: recorded nothing instead of")
         probe("report focus on ModifiersChanged", "macos-keys", "src/app/pane_input.rs",
               replace_once("            pane.pane.pointer_modifiers_changed(modifiers);\n",

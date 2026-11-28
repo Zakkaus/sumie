@@ -2,20 +2,24 @@
 //! the key releases winit swallows while one runs.
 //!
 //! A composition belongs to the input generation that was current at its first non-empty
-//! preedit. Its preedits, the empty one that ends it and its one commit carry that generation,
-//! so the session drops all of them once the recipient changed. A new generation, focus loss
-//! or an input-source change ends the owner first: an event of the old composition that
-//! arrives afterwards has none, and a commit without an owner is dropped. On a new generation
-//! or focus loss the window then cancels the native marked text.
+//! preedit. Every event of it carries that generation until it ends, its preedits, the empty
+//! one and its one commit alike, so the session drops all of them once the recipient changed,
+//! in whatever order they arrive. It ends at its commit, when winit reports it disabled, at
+//! focus loss, or at its first event under another input source; a commit without an owner is
+//! dropped. A new generation does not end it: the window cancels it natively, and winit's
+//! `Disabled` for that cancel follows every event of it that winit delivered. The window
+//! converts events in the order it delivers them, so a new generation applies from the event
+//! that caused it, and a composition the next key starts belongs to the new recipient.
 //!
 //! winit forwards no key-up while the input method composes, so a press reported before the
 //! composition took over would never end. Its release is sent when the composition starts,
-//! with the modifiers held then; the session drops the real one if winit forwards it later,
+//! with the modifiers held then. The session routes a release to the pane that took its
+//! press, whichever recipient is current, and drops the real one if winit forwards it later,
 //! since it no longer holds the press.
 
-use sumie_core::{KeyAction, KeyModifiers};
+use sumie_core::{KeyAction, KeyModifiers, PhysicalKey};
 
-use crate::Key;
+use crate::{Key, Symbol};
 
 /// A native input-method event, as winit reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,23 +54,21 @@ pub enum Input {
 pub struct Composition {
     generation: u64,
     /// The generation and input source of the running composition, from its first non-empty
-    /// preedit until its commit or cancellation.
+    /// preedit until it ends; a newer generation leaves it in place.
     owner: Option<(u64, Option<String>)>,
     /// Presses forwarded to the session whose release has not arrived.
-    held: Vec<Key>,
+    held: Vec<(PhysicalKey, Symbol)>,
     modifiers: KeyModifiers,
 }
 
 impl Composition {
-    /// Start a new input generation. Returns whether it changed; the window then cancels the
-    /// native composition, whose late events no longer have an owner.
+    /// Start a new input generation. Returns whether a composition of an older one runs: the
+    /// window then cancels it natively, and its events keep their generation until it ends.
     pub fn set_generation(&mut self, generation: u64) -> bool {
-        if generation == self.generation {
-            return false;
-        }
-        self.owner = None;
         self.generation = generation;
-        true
+        self.owner
+            .as_ref()
+            .is_some_and(|&(owner, _)| owner != generation)
     }
 
     /// End the composition without a commit, as on focus loss: its overlay clears, and its
@@ -88,11 +90,11 @@ impl Composition {
     pub fn key(&mut self, key: &Key) {
         match key.action {
             KeyAction::Press => {
-                self.held.retain(|held| held.physical != key.physical);
-                self.held.push(key.clone());
+                self.held.retain(|&(physical, _)| physical != key.physical);
+                self.held.push((key.physical, key.symbol));
             }
             KeyAction::Repeat => (),
-            KeyAction::Release => self.held.retain(|held| held.physical != key.physical),
+            KeyAction::Release => self.held.retain(|&(physical, _)| physical != key.physical),
         }
     }
 
@@ -143,12 +145,13 @@ impl Composition {
     /// Release every forwarded press: winit swallows key-ups from now on.
     fn release_held(&mut self) -> impl Iterator<Item = Input> {
         let modifiers = self.modifiers;
-        self.held.drain(..).map(move |held| {
+        self.held.drain(..).map(move |(physical, symbol)| {
             Input::Key(Key {
+                physical,
+                symbol,
                 text: None,
                 modifiers,
                 action: KeyAction::Release,
-                ..held
             })
         })
     }

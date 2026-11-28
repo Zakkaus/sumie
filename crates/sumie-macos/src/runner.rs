@@ -67,7 +67,11 @@ pub enum Command {
     /// An input-method event as winit would report it, for the protocol check: `ime preedit
     /// [TEXT]` (its caret at the end), `ime commit TEXT`, `ime disabled`.
     InjectIme(Ime),
-    /// `ime overlay`: print the composition overlay's length and selected clause.
+    /// `ime search TEXT`: Cmd+F and a preedit of TEXT in one batch, as when the input method
+    /// composes the key typed right after the chord.
+    SearchThenPreedit(String),
+    /// `ime overlay`: print the composition overlay's length and selected clause, and the
+    /// input generation.
     Overlay,
     /// `ime source`: print the selected keyboard input source.
     InputSource,
@@ -158,6 +162,9 @@ impl Command {
                 cursor: None,
             }),
             fields => {
+                if let Some(text) = fields.strip_prefix(" search ") {
+                    return Self::SearchThenPreedit(text.to_owned());
+                }
                 if let Some(text) = fields.strip_prefix(" preedit ") {
                     let cursor = Some((text.len(), text.len()));
                     return Self::InjectIme(Ime::Preedit {

@@ -283,7 +283,16 @@ impl PanePainter<'_> {
         let Range { start, end } = self.search_selection;
         let prefix = if self.preedit.is_empty() { end } else { start };
         let (before, before_width) = visible_suffix(&query[..prefix], available - preedit_width);
-        let caret = left + before_width + preedit_width;
+        // A collapsed input-method caret places the caret inside the preedit; without one, or
+        // with a selected clause, it follows the preedit.
+        let hidden = self.preedit.len() - preedit.len();
+        let inside = match self.preedit_cursor {
+            Some((start, end)) if start == end && start < self.preedit.len() => {
+                width(&preedit[..start.saturating_sub(hidden)])
+            }
+            _ => preedit_width,
+        };
+        let caret = left + before_width + inside;
         if start != prefix {
             let (_, selected) = visible_suffix(&query[start..end], before_width);
             let highlight = rgba(mix(field, ink, 2));
@@ -460,6 +469,12 @@ impl Line {
 
 fn display_char(ch: char) -> char {
     if ch.is_control() { ' ' } else { ch }
+}
+
+fn width(text: &str) -> u32 {
+    text.chars()
+        .map(|ch| u32::from(codepoint_width(display_char(ch))))
+        .sum()
 }
 
 fn visible_suffix(text: &str, columns: u32) -> (&str, u32) {

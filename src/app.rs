@@ -328,6 +328,7 @@ impl Session {
         }
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
+                window.cursor_rectangle_presented();
                 self.view.frame_presented();
                 self.view.images_presented(gpu.presented_images());
                 self.pane_pointer.present_layout(tab);
