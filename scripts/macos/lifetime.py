@@ -21,9 +21,10 @@ Each case starts a fresh `SUMIE_MACOS_CI_RUNNER=terminal` process with a throwaw
                 10 s of the Quit and logs the open stage; no reap is reported.
   stuck-system  The same after a system quit: exit 0 within 6 s.
   exit          The last shell runs `exit`: the window closes and the process exits 0.
-  cycles        200 window open/close cycles in one process; descriptors, threads, zombies and
-                IOSurfaces after them match the first window. Recorded only under
-                SUMIE_TIMING=record.
+  cycles        200 window open/close cycles in one process: each drains within 6 s of its
+                close, and after each reap, with no window open, descriptors, threads,
+                children, zombies and IOSurface and IOAccelerator regions are back at their
+                counts after the first reap within 6 s. Recorded only under SUMIE_TIMING=record.
 SUMIE_LIFETIME_TRIGGER picks how Close or Quit enters AppKit: `runner` (the default:
 performClose:, terminate:), or, on the owner's Mac with Accessibility, `red` (a CG click on
 the close button), `cmdq` (Cmd+Q through the HID tap), `ax` (AX press on the Quit item) and
@@ -34,6 +35,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -47,6 +49,8 @@ HARD = {"ordinary": 10.0, "system": 6.0}
 REPLY = 4.0
 # Log lines land on stderr a few ms after the event; timers fire within a few ms.
 SLACK = 0.5
+# The design book's cleanup bound: a closed window's resources are back within 6 s.
+CLEANUP = 6.0
 CYCLES = int(os.environ.get("SUMIE_LIFETIME_CYCLES", "200"))
 RECORD = os.environ.get("SUMIE_TIMING") == "record"
 TRIGGER = os.environ.get("SUMIE_LIFETIME_TRIGGER", "runner")
@@ -452,27 +456,60 @@ def resources(pid):
             "ioaccelerator_regions": regions["IOAccelerator (graphics)"]}
 
 
+def settled(pid, baseline, since):
+    """A sample, retaken while any count is above the baseline, until CLEANUP after `since`."""
+    while True:
+        sample = resources(pid)
+        over = [key for key in sample if baseline and None not in (sample[key], baseline[key])
+                and sample[key] > baseline[key]]
+        if not over or time.monotonic() - since > CLEANUP:
+            return sample, over
+        time.sleep(0.25)
+
+
 def case_cycles(runner, _tool, result):
-    time.sleep(1.5)
-    baseline = resources(runner.process.pid)
-    began = time.monotonic()
+    """Each cycle closes the window and drains it; once it is reaped and no window is open, the
+    counts must be back at those after the first cycle's reap."""
+    baseline, worst, seconds = None, {}, []
     for number in range(1, CYCLES + 1):
-        asked = time.monotonic()
+        if number > 1:
+            asked = time.monotonic()
+            runner.send("open")
+            if runner.wait_for("out", "runner first", 15, asked) is None:
+                return [f"cycles: cycle {number} did not open and present"]
+        closed = time.monotonic()
         runner.send("cycle")
-        cycled = runner.wait_for("out", f"runner cycled {number}", 15, asked)
-        if cycled is None or runner.wait_for("out", "runner first", 15, cycled) is None:
-            return [f"cycles: cycle {number} did not reopen and present"]
-    seconds = time.monotonic() - began
-    time.sleep(1.5)
-    after = resources(runner.process.pid)
-    result.update(baseline=baseline, after=after, seconds=seconds)
-    print(f"cycles: {CYCLES} in {seconds:.1f} s")
-    print(f"{'':20}{'first window':>14}{'after cycles':>14}")
+        reaped = runner.wait_for("out", f"runner cycled {number}", CLEANUP, closed)
+        if reaped is None:
+            return [f"cycles: cycle {number} was not drained within {CLEANUP:.0f} s of its close"]
+        seconds.append(reaped - closed)
+        if baseline is None:
+            # Worker threads come and go: the baseline is each count's lowest over 2 s.
+            samples = []
+            for _ in range(4):
+                time.sleep(0.5)
+                samples.append(resources(runner.process.pid))
+            baseline = {key: None if None in (values := [taken[key] for taken in samples]) else min(values)
+                        for key in samples[0]}
+            continue
+        sample, over = settled(runner.process.pid, baseline, reaped)
+        for key, value in sample.items():
+            if value is not None:
+                worst[key] = max(worst.get(key, value), value)
+        missing = [key for key in sample if sample[key] is None]
+        errors = [f"cycles: {key} {baseline[key]} -> {sample[key]} after cycle {number}" for key in over]
+        errors += [f"cycles: could not measure {key} after cycle {number}" for key in missing]
+        if errors:
+            result.update(baseline=baseline, failed=sample, cycle=number)
+            break
+    else:
+        errors = []
+    result.update(baseline=baseline, worst=worst, drain_max=max(seconds), drain_median=statistics.median(seconds))
+    print(f"cycles: {len(seconds)} of {CYCLES} drained, longest {max(seconds):.3f} s, "
+          f"median {statistics.median(seconds):.3f} s from close to reaped")
+    print(f"{'':24}{'after cycle 1':>14}{'worst later':>14}")
     for key in baseline:
-        print(f"{key:20}{baseline[key]!s:>14}{after[key]!s:>14}")
-    errors = [f"cycles: {key} went from {baseline[key]} to {after[key]}" for key in baseline
-              if baseline[key] is not None and after[key] is not None and after[key] > baseline[key]]
-    errors += [f"cycles: could not measure {key}" for key in baseline if after[key] is None]
+        print(f"{key:24}{baseline[key]!s:>14}{worst.get(key, '-')!s:>14}")
     if RECORD:
         for error in errors:
             print(f"{error} (recorded only)")

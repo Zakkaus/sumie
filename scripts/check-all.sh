@@ -15,7 +15,7 @@ macos_window=
 if [ "$(uname -s)" = Darwin ]; then
     macos_ci=clippy-macos-ci
     macos_window='macos-wake macos-keys macos-pasteboard macos-ime macos-resize macos-idle macos-flood macos-timeout macos-throughput macos-loading
-        macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit'
+        macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit macos-cycles'
 fi
 # These Linux gates drive a private KWin.
 linux_window=
