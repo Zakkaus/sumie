@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ffi::OsStr, os::fd::BorrowedFd, time::Duration};
+use std::{ffi::OsStr, os::fd::BorrowedFd, time::Duration};
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use sumie_core::notify::Notification;
@@ -265,7 +265,7 @@ fn window_close_uses_osc133_before_foreground_group() {
     let mut session = session(&mut window, &config);
     session.active_mut().pane = crate::tests::ready_pane(
         "set -m; /bin/sh -c 'printf \"READY\\n\"; read -r line'; :",
-        &BTreeMap::from([("SHELL".into(), "/bin/sh".into())]),
+        &std::collections::BTreeMap::from([("SHELL".into(), "/bin/sh".into())]),
     );
     assert!(!session.request_window_close(&config).unwrap());
     assert!(matches!(
@@ -379,7 +379,7 @@ fn shell_exit_retires_busy_pane_without_confirmation() {
     let pane = &mut session.active_mut().pane;
     *pane = crate::tests::ready_pane(
         "printf '\\033]133;A\\007\\033]133;C\\007READY\\n'; read -r line",
-        &BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
     );
     assert_eq!(pane.terminal.semantic_prompt().unwrap(), Some(false));
     pane.command(PaneCommand::Text(b"\n")).unwrap();
@@ -403,7 +403,7 @@ fn multiline_paste_waits_unless_bracketed() {
     let mut session = session(&mut window, &config);
     session.active_mut().pane = crate::tests::ready_pane(
         "stty -echo; printf 'READY\\n'; read -r a; read -r b; printf 'INPUT:%s,%s\\n' \"$a\" \"$b\"; read -r c",
-        &BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
     );
     let generation = session.routing.generation;
     let paste = |text: &str| Event::ClipboardText {
