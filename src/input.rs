@@ -184,7 +184,10 @@ impl Routing {
                     Some(_) => Effect::None,
                 }
             }
-            KeyAction::Repeat if self.repeating_search_key == Some(physical) => {
+            KeyAction::Repeat
+                if self.repeating_search_key == Some(physical)
+                    && !self.shortcuts.command_repeat(modifiers, action) =>
+            {
                 search_key(logical, modifiers, text)
             }
             KeyAction::Release if self.repeating_search_key == Some(physical) => {

@@ -138,8 +138,8 @@ def macos_controls():
                            "                Some(Shortcut::Consume) => (),\n"),
               "keys: command chords: recorded")
         probe("repeat a key held into Command with it", "macos-keys", "crates/sumie-core/src/shortcuts.rs",
-              replace_once("            return Ok(command_repeat.then_some(Shortcut::Consume));\n",
-                           "            return Ok(command_repeat.then_some(Shortcut::Consume).filter(|_| false));\n"),
+              replace_once("                .then_some(Shortcut::Consume));\n",
+                           "                .then_some(Shortcut::Consume).filter(|_| false));\n"),
               "keys: a held into Command: recorded")
         probe("right Option sent as Meta", "macos-keys", "crates/sumie-macos/src/window.rs",
               replace_once("        right_alt: state.alt_key() && !left_alt,\n",

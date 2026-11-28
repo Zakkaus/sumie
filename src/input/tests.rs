@@ -1,4 +1,6 @@
-use sumie_core::{KeyAction, KeyCode as K, Pane, PaneCommand, PaneEffect, PhysicalKey};
+use sumie_core::{
+    KeyAction, KeyCode as K, Pane, PaneCommand, PaneEffect, PhysicalKey, Platform, Shortcuts,
+};
 
 use super::{Routing, release, route};
 use crate::{
@@ -214,6 +216,64 @@ fn shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one() {
         false,
     );
     assert!(matches!(effect.unwrap(), super::Effect::Tab(_)));
+}
+
+#[test]
+fn a_search_key_held_into_command_repeats_only_without_it_on_macos() {
+    use super::{Effect, SearchAction};
+    use KeyAction::{Press, Release, Repeat};
+    let backspace = |action, super_key| Event::Key {
+        physical: PhysicalKey::Code(K::Backspace),
+        logical: LogicalKey::Backspace,
+        utf8: None,
+        modifiers: Modifiers {
+            super_key,
+            ..Modifiers::default()
+        },
+        action,
+    };
+    let command = |action| Event::Key {
+        physical: PhysicalKey::Code(K::MetaLeft),
+        logical: LogicalKey::Other(None),
+        utf8: None,
+        modifiers: Modifiers {
+            super_key: !matches!(action, Release),
+            ..Modifiers::default()
+        },
+        action,
+    };
+    let deleted = || Effect::Search(SearchAction::Backspace { word: false });
+    for platform in [Platform::MacOS, Platform::Linux] {
+        let mut pane = Recorder::default();
+        let mut routing = Routing {
+            shortcuts: Shortcuts::new(platform),
+            ..Routing::default()
+        };
+        // Linux keeps Super out of the table, not out of the search box.
+        let with_command = if platform == Platform::MacOS {
+            Effect::None
+        } else {
+            deleted()
+        };
+        for (step, (event, expected)) in [
+            (backspace(Press, false), deleted()),
+            (command(Press), Effect::None),
+            (backspace(Repeat, true), with_command),
+            (command(Release), Effect::None),
+            (backspace(Repeat, false), deleted()),
+            (backspace(Release, false), Effect::None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let effect = route((1, 0), &mut pane, &mut routing, true, event, false).unwrap();
+            assert_eq!(effect, expected, "{platform:?} step {step}");
+        }
+        assert!(
+            pane.keys.is_empty(),
+            "{platform:?}: a search key reached the PTY"
+        );
+    }
 }
 
 #[test]

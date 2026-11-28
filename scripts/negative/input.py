@@ -1,4 +1,4 @@
-"""The negative controls for key encoding, page scrolling, focusing clicks and query replies."""
+"""The negative controls for key encoding, page scrolling, search repeats, focusing clicks and query replies."""
 import re
 import sys
 
@@ -31,6 +31,9 @@ def input_controls():
     probe("size and color-scheme queries go unanswered", "test", "crates/sumie-vt/src/lib.rs",
           replace_once("            check(reports::register(terminal.raw))?;\n", ""),
           "test tests::reports::size_and_color_scheme_queries_get_replies ... FAILED")
+    probe("a search key held into Command repeats with it", "test", "src/input.rs",
+          replace_once("\n                    && !self.shortcuts.command_repeat(modifiers, action) =>", " =>"),
+          "test input::tests::a_search_key_held_into_command_repeats_only_without_it_on_macos ... FAILED")
     if sys.platform.startswith("linux"):
         probe("Shift+PageUp leaves the history in place", "test", "src/input.rs",
               replace_once("return send_input(pane, routing, id, PaneCommand::ScrollPage { up });",

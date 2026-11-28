@@ -60,6 +60,15 @@ impl Shortcuts {
         }
     }
 
+    /// Whether a key held before Command repeats with Command down: on macOS that repeat
+    /// reaches neither a PTY nor the search box, though the key's release still does.
+    #[must_use]
+    pub fn command_repeat(&self, modifiers: KeyModifiers, action: KeyAction) -> bool {
+        self.platform == Platform::MacOS
+            && modifiers.super_key
+            && matches!(action, KeyAction::Repeat)
+    }
+
     /// Match before encoding. A captured press owns its repeats and release even
     /// if the user releases a modifier first or the layout changes.
     /// Directional pane bindings are reserved only in tabs with splits, and Shift+PageUp and
@@ -88,11 +97,9 @@ impl Shortcuts {
             }
         }
         if !matches!(action, KeyAction::Press) {
-            // A key held before Command repeats with it; Command still never reaches a PTY.
-            let command_repeat = self.platform == Platform::MacOS
-                && modifiers.super_key
-                && matches!(action, KeyAction::Repeat);
-            return Ok(command_repeat.then_some(Shortcut::Consume));
+            return Ok(self
+                .command_repeat(modifiers, action)
+                .then_some(Shortcut::Consume));
         }
         let shortcut = match self.platform {
             Platform::Linux if modifiers.super_key => return Ok(None),
