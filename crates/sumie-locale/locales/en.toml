@@ -47,7 +47,7 @@
 "setting.scrollback-limit.label" = "Scrollback limit"
 "setting.scrollback-limit.help" = "Approximate scrollback limit in bytes. Lowering it can discard history immediately.\nSet to 0 to clear and disable scrollback."
 "setting.font.family.label" = "Family"
-"setting.font.family.help" = "Choose a different installed font family for the terminal grid."
+"setting.font.family.help" = "Choose a different installed font family for the terminal grid. On macOS, a family that\nis not installed falls back to Menlo."
 "setting.font.size.label" = "Size"
 "setting.font.size.help" = "Adjust text size for readability, in points at 96 DPI."
 "setting.font.weight.label" = "Weight"

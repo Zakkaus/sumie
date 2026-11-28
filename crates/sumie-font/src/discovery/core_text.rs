@@ -21,14 +21,15 @@ use objc2_core_text::{
 };
 use skrifa::{
     FontRef, MetadataProvider as _,
-    font::Blob,
-    raw::{FileRef, TableProvider as _, tables::head::Flags},
-    string::StringId,
+    raw::{TableProvider as _, tables::head::Flags},
 };
 
 use super::{Font, FontError, FontStyle, Match, Request, Style, is_private_use};
 use crate::Rejection;
+use file::FontFile;
 
+mod file;
+mod primary;
 #[cfg(test)]
 mod tests;
 
@@ -56,43 +57,12 @@ pub(crate) struct Discovery {
 /// Core Text state for one primary font: its cascade and the file and family caches.
 struct Matcher {
     primary: CFRetained<CTFont>,
+    /// Whether the family was not found and [`primary::MISSING_FAMILY_SUBSTITUTE`] replaced it.
+    substituted: bool,
     weight: Option<u16>,
     files: HashMap<PathBuf, FontFile>,
     families: HashMap<String, Descriptors>,
     cascade: OnceCell<Descriptors>,
-}
-
-struct FontFile {
-    bytes: Blob,
-    // Core Text identifies a face by name, not its TTC directory index.
-    collection: Option<HashMap<String, u32>>,
-}
-
-impl FontFile {
-    fn read(path: &std::path::Path) -> Result<Self, FontError> {
-        let bytes: Blob = std::fs::read(path)
-            .map_err(|source| FontError::ReadFont {
-                path: path.to_owned(),
-                source,
-            })?
-            .into();
-        let file = FileRef::new(&bytes).map_err(|_| FontError::InvalidFont(path.to_owned()))?;
-        let collection = match file {
-            FileRef::Font(_) => None,
-            FileRef::Collection(ttc) => {
-                let mut names = HashMap::new();
-                for (index, face) in (0..ttc.len()).zip(ttc.iter()) {
-                    if let Ok(face) = face
-                        && let Some(name) = face.localized_strings(StringId::POSTSCRIPT_NAME).next()
-                    {
-                        names.insert(name.to_string(), index);
-                    }
-                }
-                Some(names)
-            }
-        };
-        Ok(Self { bytes, collection })
-    }
 }
 
 impl Discovery {
@@ -111,6 +81,10 @@ impl Discovery {
             #[cfg(test)]
             system_wide_delay: Duration::ZERO,
         })
+    }
+
+    pub const fn substituted(&self) -> bool {
+        self.matcher.substituted
     }
 
     pub fn find(&mut self, ch: Option<char>, style: FontStyle) -> Result<Match, FontError> {
@@ -272,10 +246,10 @@ fn drawable(ch: char) -> bool {
 
 impl Matcher {
     fn new(family: &str, weight: Option<u16>) -> Self {
-        // SAFETY: the name outlives the call; null selects the identity transform.
-        let primary = unsafe { CTFont::with_name(&CFString::from_str(family), 0.0, ptr::null()) };
+        let (primary, substituted) = primary::resolve(family);
         Self {
             primary,
+            substituted,
             weight,
             files: HashMap::new(),
             families: HashMap::new(),

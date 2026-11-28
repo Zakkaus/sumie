@@ -154,6 +154,10 @@ def macos_controls():
               "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("location: u32::from(ch).try_into().ok()?,", "location: 0x378,"),
               "test tests::core_text_system_wide_fallback_covers_cjk ... FAILED")
+        probe("a missing family keeps Core Text's proportional substitute", "font-test",
+              "crates/sumie-font/src/discovery/core_text/primary.rs",
+              replace_once("(named_font(MISSING_FAMILY_SUBSTITUTE), true)", "(named, true)"),
+              "test discovery::core_text::tests::a_missing_family_falls_back_to_a_monospaced_face ... FAILED")
         probe("Core Text system-wide fallback runs for undrawable characters", "font-test",
               "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("        if !drawable(ch) {\n", "        if !drawable(ch) && false {\n"),
