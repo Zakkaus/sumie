@@ -20,7 +20,7 @@ pub(crate) fn run(capture: capture::Options) -> Result<()> {
         Err(message) => (sumie_config::Config::default(), Some(message)),
     };
     let mut window = LinuxWindow::open("sumie")?;
-    let gpu = window.create_gpu(capture.screenshot.is_some(), config.minimum_contrast())?;
+    let gpu = window.create_gpu(capture.reads_back(), config.minimum_contrast())?;
     window.watches.register_config(reload.watch_fd())?;
     let mut app = App::new(gpu, capture, config, banner, environment);
     let result = drive(&mut app, &mut reload, &mut window);

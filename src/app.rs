@@ -313,7 +313,7 @@ impl Session {
         let final_frame = options
             .frames
             .is_some_and(|count| count == gpu.present_count() + 1);
-        let capture = final_frame && options.screenshot.is_some();
+        let capture = options.capture_path(gpu.present_count() + 1).is_some();
         let sources =
             |id| Some(&tab.get(id).pane.terminal as &dyn sumie_core::graphics::ImageSource);
         let submitted = || self.frame_log.mark(frame_log::Stage::Submitted);
@@ -347,8 +347,10 @@ impl Session {
                 if suboptimal {
                     gpu.resize(self.view.device);
                 }
-                if let (Some(readback), Some(path)) = (readback, &options.screenshot) {
-                    readback?.write(gpu.device(), path)?;
+                if let (Some(readback), Some(path)) =
+                    (readback, options.capture_path(gpu.present_count()))
+                {
+                    readback?.write(gpu.device(), &path)?;
                 }
                 return Ok(final_frame);
             }

@@ -416,7 +416,7 @@ fn start(
     };
     let gpu = surface::create_gpu(
         window.platform(),
-        capture.screenshot.is_some(),
+        capture.reads_back(),
         config.minimum_contrast(),
     )?;
     Ok(App::new(gpu, capture, config, banner, environment))

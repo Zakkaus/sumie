@@ -2,7 +2,9 @@
 
 use std::{
     cell::RefCell,
-    io, process,
+    io,
+    path::PathBuf,
+    process,
     sync::Arc,
     thread,
     time::{Duration, Instant},
@@ -54,6 +56,13 @@ pub enum Command {
     Type(String),
     /// Print the terminal driver's counters.
     Report,
+    /// `capture DIR`: read back every frame presented from now on into `DIR/N.png`, N its
+    /// present count; `capture off` stops.
+    Capture(Option<PathBuf>),
+    /// `cells ROW`: print the width class of each cell in a row of the focused pane.
+    Cells(u16),
+    /// Print the window's device size and the focused pane's grid origin and cell size.
+    Geometry,
     Finish,
     Inspect,
     AppKitKeys,
@@ -107,6 +116,8 @@ pub enum Step {
     Windowed,
     /// Another window of this application becomes key, as after Cmd+Tab.
     Blur,
+    /// `resize W H`: set the content size in points, as a script or zoom does.
+    Resize(u32, u32),
     /// The probe window becomes key again.
     Focus,
 }
@@ -129,6 +140,7 @@ impl Command {
             "blur" => Self::Step(Step::Blur),
             "focus" => Self::Step(Step::Focus),
             "report" => Self::Report,
+            "geometry" => Self::Geometry,
             "quit" => Self::RequestQuit(Quit::Ordinary),
             "system-quit" => Self::RequestQuit(Quit::System),
             "fail" => Self::Fail,
@@ -147,6 +159,18 @@ impl Command {
                 }
                 if let Some(ime) = line.strip_prefix("ime") {
                     return Self::ime(ime);
+                }
+                if let Some(dir) = line.strip_prefix("capture ") {
+                    return Self::Capture((dir != "off").then(|| dir.into()));
+                }
+                if let Some(row) = line.strip_prefix("cells ") {
+                    return row.parse().map_or(Self::Invalid, Self::Cells);
+                }
+                if let Some(size) = line.strip_prefix("resize ") {
+                    return size
+                        .split_once(' ')
+                        .and_then(|(w, h)| Some(Step::Resize(w.parse().ok()?, h.parse().ok()?)))
+                        .map_or(Self::Invalid, Self::Step);
                 }
                 line.strip_prefix("ping ")
                     .and_then(|number| number.parse().ok())
@@ -325,6 +349,9 @@ pub fn step(context: &WindowContext, window: &Platform, step: Step) -> Result<()
         }
         Step::Fullscreen => window.set_fullscreen(Some(Fullscreen::Borderless(None))),
         Step::Windowed => window.set_fullscreen(None),
+        Step::Resize(width, height) => {
+            let _ = window.request_inner_size(LogicalSize::new(width, height));
+        }
         Step::Blur => {
             if let Some(decoy) = decoy {
                 decoy.set_visible(true);

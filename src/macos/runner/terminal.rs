@@ -4,6 +4,7 @@
 //! its window and opens the next in one process (`cycle`, then `open`).
 
 use std::{
+    env,
     ops::ControlFlow,
     thread,
     time::{Duration, Instant},
@@ -37,12 +38,18 @@ struct Control {
     presented: u64,
     /// Injected input-method events, reported once the batch that carries them is delivered.
     injected: Vec<String>,
+    /// Set by `SUMIE_MACOS_CI_READBACK`: the surface allows `capture`.
+    readback: bool,
 }
 
-pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
+pub(in crate::macos) fn run(mut capture: capture::Options) -> Result<()> {
+    capture.readback = env::var_os("SUMIE_MACOS_CI_READBACK").is_some();
+    let mut control = Control {
+        readback: capture.readback,
+        ..Control::default()
+    };
     let mut driver = Driver::new(capture)?;
     let started = Instant::now();
-    let mut control = Control::default();
     let result = native::run(|context, readiness, event| {
         let flow = match event {
             // A `cycle` leaves the driver starting until `open`.
@@ -152,58 +159,107 @@ fn command(
             let State::Open(open) = &mut driver.state else {
                 return Err("the terminal window is not open".into());
             };
-            match command {
-                Command::Type(text) => open.window.commit_text(text),
-                Command::CloseAnswer(yes) => open.window.queue(close_answer(yes)),
-                Command::Report => {
-                    if !print_report(open)? {
-                        control
-                            .report
-                            .get_or_insert_with(|| Instant::now() + REPORT_WAIT);
-                    }
-                }
-                Command::Step(step) => native::step(context, open.window.platform(), step)?,
-                Command::Key(key) => println!("runner posted key {}", native::post_key(key)),
-                Command::ImeAllowed(enabled) => open.window.set_ime(enabled),
-                Command::InjectIme(ime) => {
-                    control.injected.push(native::describe(&ime));
-                    open.window.ime(ime);
-                }
-                Command::SearchThenPreedit(text) => {
-                    control.injected.push("search".into());
-                    open.window.search_then_preedit(text);
-                }
-                Command::Overlay => {
-                    let preedit = open.app.as_ref().and_then(|app| app.preedit());
-                    let (length, cursor) = preedit
-                        .filter(|(text, _)| !text.is_empty())
-                        .map_or((0, None), |(text, cursor)| (text.len(), cursor));
-                    let (start, end) = cursor.map_or(("-".into(), "-".into()), |(start, end)| {
-                        (start.to_string(), end.to_string())
-                    });
-                    println!(
-                        "runner overlay {length} {start} {end} {}",
-                        open.window.generation()
-                    );
-                }
-                Command::InputSource => println!(
-                    "runner source {}",
-                    sumie_macos::Platform::input_source().unwrap_or_else(|| "-".into())
-                ),
-                Command::Mouse(mouse) => {
-                    let scale = open.window.platform().scale();
-                    let point = open
-                        .app
-                        .as_ref()
-                        .and_then(|app| app.cell_center(mouse.cell))
-                        .map(|backing| backing.map(|px| px / scale));
-                    let posted = point.is_some_and(|point| native::post_mouse(mouse, point));
-                    println!("runner posted mouse {posted}");
-                }
-                _ => return Err("unexpected runner controller command".into()),
-            }
+            open_command(open, context, command, control)?;
         }
     }
+    Ok(())
+}
+
+/// A command for the open window and its session.
+fn open_command(
+    open: &mut Open,
+    context: &WindowContext,
+    command: Command,
+    control: &mut Control,
+) -> Result<()> {
+    match command {
+        Command::Type(text) => open.window.commit_text(text),
+        Command::CloseAnswer(yes) => open.window.queue(close_answer(yes)),
+        Command::Capture(dir) => {
+            if !control.readback {
+                return Err("capture needs SUMIE_MACOS_CI_READBACK".into());
+            }
+            let app = open.app.as_mut().ok_or("the session has not started")?;
+            app.capture_frames(dir);
+            println!("runner capture {}", app.gpu().present_count());
+        }
+        Command::Geometry => print_geometry(open)?,
+        Command::Cells(row) => {
+            let cells = open
+                .app
+                .as_ref()
+                .and_then(|app| app.snapshot_cells(row.into()));
+            println!("runner cells {row} {}", cells.as_deref().unwrap_or("-"));
+        }
+        Command::Report => {
+            if !print_report(open)? {
+                control
+                    .report
+                    .get_or_insert_with(|| Instant::now() + REPORT_WAIT);
+            }
+        }
+        Command::Step(step) => native::step(context, open.window.platform(), step)?,
+        Command::Key(key) => println!("runner posted key {}", native::post_key(key)),
+        Command::ImeAllowed(enabled) => open.window.set_ime(enabled),
+        Command::InjectIme(ime) => {
+            control.injected.push(native::describe(&ime));
+            open.window.ime(ime);
+        }
+        Command::SearchThenPreedit(text) => {
+            control.injected.push("search".into());
+            open.window.search_then_preedit(text);
+        }
+        Command::Overlay => {
+            let preedit = open.app.as_ref().and_then(|app| app.preedit());
+            let (length, cursor) = preedit
+                .filter(|(text, _)| !text.is_empty())
+                .map_or((0, None), |(text, cursor)| (text.len(), cursor));
+            let (start, end) = cursor.map_or(("-".into(), "-".into()), |(start, end)| {
+                (start.to_string(), end.to_string())
+            });
+            println!(
+                "runner overlay {length} {start} {end} {}",
+                open.window.generation()
+            );
+        }
+        Command::InputSource => println!(
+            "runner source {}",
+            sumie_macos::Platform::input_source().unwrap_or_else(|| "-".into())
+        ),
+        Command::Mouse(mouse) => {
+            let scale = open.window.platform().scale();
+            let point = open
+                .app
+                .as_ref()
+                .and_then(|app| app.cell_center(mouse.cell))
+                .map(|backing| backing.map(|px| px / scale));
+            let posted = point.is_some_and(|point| native::post_mouse(mouse, point));
+            println!("runner posted mouse {posted}");
+        }
+        _ => return Err("unexpected runner controller command".into()),
+    }
+    Ok(())
+}
+
+/// Print the window's device size, then the focused pane's grid origin and cell size, in
+/// device pixels.
+fn print_geometry(open: &Open) -> Result<()> {
+    let [width, height] = open.window.platform().device_size();
+    let corners = open
+        .app
+        .as_ref()
+        .and_then(|app| Some([app.cell_center([0, 0])?, app.cell_center([1, 1])?]));
+    let Some([first, next]) = corners else {
+        return Err("no pane shows for the geometry".into());
+    };
+    let cell = [next[0] - first[0], next[1] - first[1]];
+    println!(
+        "runner geometry {width} {height} {} {} {} {}",
+        first[0] - cell[0] / 2.0,
+        first[1] - cell[1] / 2.0,
+        cell[0],
+        cell[1],
+    );
     Ok(())
 }
 

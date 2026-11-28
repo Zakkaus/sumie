@@ -188,6 +188,21 @@ def macos_controls():
               replace_once("            Native::Key(key) => self.batch.push_back(Queued::Key(key)),\n",
                            "            Native::Key(_) => (),\n"),
               "keys: plain: recorded nothing instead of")
+        probe("stop forwarding typed keys", "macos-shell", "src/macos/window.rs",
+              replace_once("            Native::Key(key) => self.batch.push_back(Queued::Key(key)),\n",
+                           "            Native::Key(_) => (),\n"),
+              "size 1: the typed command did not run")
+        probe("skip TIOCSWINSZ on resize", "macos-shell", "crates/sumie-pty/src/lib.rs",
+              replace_once("        Ok(tcsetwinsize(self.master()?, size.into())?)\n",
+                           "        let _ = (self.master()?, size);\n        Ok(())\n"),
+              "size 2: stty size says 52x16")
+        probe("no fallback for CJK, kana and Hangul", "macos-shell", "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("        let mut rejected = Vec::new();\n        if let Some(matched) = self\n",
+                           "        let mut rejected = Vec::new();\n"
+                           "        if ch >= '\\u{2e80}' {\n"
+                           "            return Err(missing_glyph(ch, rejected, false));\n        }\n"
+                           "        if let Some(matched) = self\n"),
+              "size 1: a glyph was missing")
         probe("report focus on ModifiersChanged", "macos-keys", "src/app/pane_input.rs",
               replace_once("            pane.pane.pointer_modifiers_changed(modifiers);\n",
                            "            pane.pane.pointer_modifiers_changed(modifiers);\n"
