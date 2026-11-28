@@ -48,7 +48,7 @@ pub fn winner(main: &Path, key: &str) -> PathBuf {
 }
 
 fn defining(path: &Path, key: &str, active: &mut Vec<PathBuf>) -> Option<PathBuf> {
-    let table = parse(&fs::read(path).ok()?)?;
+    let table: Table = load::read_file(path).ok()?.parse().ok()?;
     if lookup(&table, key).is_some() {
         return Some(path.to_owned());
     }
@@ -153,7 +153,7 @@ fn problems(main: &Path, current: &Snapshot, text: &[u8]) -> Vec<Error> {
             String::from_utf8(text.to_vec())
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         } else {
-            fs::read_to_string(path)
+            load::read_file(path)
         }
     };
     load::check_with(main, &mut |_| {}, &mut read)

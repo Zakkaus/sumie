@@ -289,6 +289,13 @@ mod tests {
         let settings = settings();
         let find = |path| settings.iter().find(|info| info.path == path).unwrap();
         assert_eq!(
+            find("font.size").kind,
+            Kind::Number {
+                min: Some(0.0),
+                max: Some(200.0)
+            }
+        );
+        assert_eq!(
             find("font.weight").kind,
             Kind::Integer {
                 min: Some(100),

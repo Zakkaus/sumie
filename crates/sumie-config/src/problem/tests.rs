@@ -25,7 +25,7 @@ fn each_problem_is_typed_located_and_worded_as_before() {
             "[font]\nsize = 0\n",
             (2, "0"),
             Problem::FontSize,
-            "font size must be a positive finite number of points".to_owned(),
+            "font size must be greater than 0 and at most 200 points".to_owned(),
         ),
         (
             "[font]\nweight = 950\n",

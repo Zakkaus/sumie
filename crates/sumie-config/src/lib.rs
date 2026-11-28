@@ -54,6 +54,8 @@ pub use shell::Shell;
 
 /// Ratio of logical pixels at 96 DPI to typographic points.
 pub const POINT_TO_PX: f32 = 96.0 / 72.0;
+// Match the zoom ceiling; 200 pt stays under sumie-font's 4096 px limit through 15×.
+const MAX_FONT_SIZE: f32 = 200.0;
 const MIN_WEIGHT: u16 = 100;
 const MAX_WEIGHT: u16 = 900;
 
@@ -211,6 +213,7 @@ pub struct Font {
         with = "f32",
         default = "default_size",
         transform = positive_number,
+        range(max = MAX_FONT_SIZE),
         title = "Size"
     )]
     size: Option<f32>,
@@ -287,7 +290,7 @@ fn deserialize_size<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f32>, 
 }
 
 fn font_size(size: f32) -> Result<f32, Problem> {
-    if size > 0.0 && (size * POINT_TO_PX).is_finite() {
+    if size > 0.0 && size <= MAX_FONT_SIZE {
         Ok(size)
     } else {
         Err(Problem::FontSize)

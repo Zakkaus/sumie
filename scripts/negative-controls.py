@@ -156,12 +156,20 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("contrast above the supported range", "test", "crates/sumie-config/src/lib.rs",
           replace_once("(1.0..=21.0).contains(&ratio)", "(1.0..=22.0).contains(&ratio)"),
           "test tests::load_configuration ... FAILED")
+    if sys.platform.startswith("linux"):
+        probe("config load opens a FIFO with no writer", "test", "crates/sumie-config/src/load.rs",
+              replace_once("check_with(path, visit, &mut read_file)",
+                           "check_with(path, visit, &mut |path| fs::read_to_string(path))"),
+              "test tests::fifo_include_is_rejected_without_a_writer ... FAILED")
+    probe("font size above the supported range", "test", "crates/sumie-config/src/lib.rs",
+          replace_once("size > 0.0 && size <= MAX_FONT_SIZE", "size > 0.0 && (size * POINT_TO_PX).is_finite()"),
+          "test tests::oversized_font_sizes_are_rejected ... FAILED")
     probe("settings key without a title", "test", "crates/sumie-config/src/images.rs",
           replace_once(',\n        title = "Thumbnail rows"\n', '\n'),
           "test settings::tests::every_leaf_has_title_and_category ... FAILED")
     probe("settings problem reworded", "test", "crates/sumie-config/src/problem.rs",
-          replace_once('"font size must be a positive finite number of points"',
-                       '"font size must be a positive number of points"'),
+          replace_once('"font size must be greater than 0 and at most {MAX_FONT_SIZE} points"',
+                       '"font size must be positive and at most {MAX_FONT_SIZE} points"'),
           "test problem::tests::each_problem_is_typed_located_and_worded_as_before ... FAILED")
     # A full re-serialize loses comments; dropping them stands in for toml::to_string, which
     # this toml build does not compile.
