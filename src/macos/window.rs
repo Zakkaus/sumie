@@ -61,8 +61,6 @@ struct ImeWindow {
     enabled: bool,
     /// The candidate window's caret, in points.
     area: Option<LogicalRect>,
-    /// A caret of a frame not yet known to be on screen.
-    pending: Option<LogicalRect>,
 }
 
 pub(super) struct MacWindow {
@@ -408,16 +406,8 @@ impl WindowOps for MacWindow {
         }
     }
 
-    /// The candidate window moves with the frame that shows the caret there: one that timed
-    /// out leaves it at the caret still on screen.
     fn set_cursor_rectangle(&mut self, rect: LogicalRect) {
-        self.ime.pending = Some(rect);
-    }
-
-    fn cursor_rectangle_presented(&mut self) {
-        if let Some(rect) = self.ime.pending.take()
-            && self.ime.area.replace(rect) != Some(rect)
-        {
+        if self.ime.area.replace(rect) != Some(rect) {
             self.platform
                 .set_ime_cursor_area([rect.x, rect.y], [rect.width, rect.height]);
         }

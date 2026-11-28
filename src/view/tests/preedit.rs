@@ -88,7 +88,7 @@ fn terminal_preedit_fits_the_whole_emoji_in_grapheme_mode() {
     view.preedit = "👩‍💻a".into();
     view.preedit_cursor = Some((11, 12));
     let first = view.pane_grid(rect).x + u32::from(size.cols - 3) * view.cell[0];
-    for (mode, start, width) in [(b"\x1b[?2027l", 0, 2), (b"\x1b[?2027h", 2, 1)] {
+    for (mode, width) in [(b"\x1b[?2027l", 0), (b"\x1b[?2027h", 1)] {
         vt.write(mode);
         let snapshot = vt.render_snapshot().unwrap();
         view.preedit_graphemes = vt.grapheme_clustering().unwrap();
@@ -105,10 +105,39 @@ fn terminal_preedit_fits_the_whole_emoji_in_grapheme_mode() {
         let underline = view.draw_list(false).cursor.unwrap().rect;
         assert_eq!(
             underline.origin[0],
-            (first + start * view.cell[0]).cast_signed()
+            (first + 2 * view.cell[0]).cast_signed()
         );
         assert_eq!(underline.size, [width * view.cell[0], 2]);
     }
+}
+
+#[test]
+fn preedit_selection_inside_a_grapheme_underlines_only_that_cluster() {
+    let mut view = view();
+    let rect = view.content_rect();
+    let size = view.pane_size(rect);
+    let mut vt = Terminal::new(size.cols, size.rows).unwrap();
+    vt.write(b"\x1b[?2027h");
+    let snapshot = vt.render_snapshot().unwrap();
+    view.preedit_graphemes = vt.grapheme_clustering().unwrap();
+    view.preedit = "xe\u{301}y".into();
+    view.preedit_cursor = Some((2, 4));
+    view.begin_frame([], snapshot.background);
+    view.build_pane(
+        rect,
+        &snapshot,
+        None,
+        LinkHighlight::default(),
+        None,
+        focus(1, true),
+    );
+    view.end_frame();
+    let underline = view.draw_list(false).cursor.unwrap().rect;
+    assert_eq!(
+        underline.origin[0],
+        (view.pane_grid(rect).x + view.cell[0]).cast_signed()
+    );
+    assert_eq!(underline.size, [view.cell[0], 2]);
 }
 
 #[test]

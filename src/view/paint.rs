@@ -348,30 +348,27 @@ impl PanePainter<'_> {
             if cells + span > available {
                 break;
             }
-            underline[0] += span * u32::from(offset < selected.0);
-            underline[1] += span * u32::from(offset < selected.1);
             if self.preedit_cursor.is_some_and(|(begin, _)| offset < begin) {
                 caret += span;
             }
-            for (i, (_, ch)) in remaining.by_ref().take(len).enumerate() {
+            let mut end = offset;
+            for (i, (byte, ch)) in remaining.by_ref().take(len).enumerate() {
+                end = byte + ch.len_utf8();
                 if width != 0 || cells != 0 {
                     self.composition.text.push(ch);
                     self.composition.widths.push(if i == 0 { width } else { 0 });
                 }
             }
+            underline[0] += span * u32::from(end <= selected.0);
+            underline[1] += span * u32::from(offset < selected.1);
             cells += span;
         }
         let [start, end] = underline;
-        let underline = if end > start {
-            [start, end - start]
-        } else {
-            [0, cells]
-        };
         (cells > 0).then_some(Composed {
             row: u32::from(cursor.row),
             column,
             cells,
-            underline,
+            underline: [start, end - start],
             caret: self
                 .preedit_cursor
                 .map(|_| (column + caret).min(self.pane.grid[0].saturating_sub(1))),

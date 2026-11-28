@@ -55,6 +55,7 @@ pub(crate) struct Session {
     closing: Vec<(u64, sumie_pty::Pty)>,
     pointer: tabs::BarPointer,
     pane_pointer: pane_input::Pointer,
+    visible_panes: Vec<u64>,
     link_pointer: links::Pointer,
     clock: scroll::FrameClock,
     smooth_scroll: bool,
@@ -134,6 +135,7 @@ impl Session {
             closing: Vec::new(),
             pointer: tabs::BarPointer::default(),
             pane_pointer: pane_input::Pointer::default(),
+            visible_panes: Vec::new(),
             link_pointer: links::Pointer::default(),
             clock: scroll::FrameClock::new(),
             smooth_scroll: config.scroll.smooth(),
@@ -244,7 +246,7 @@ impl PaneState {
 }
 
 impl Session {
-    fn rebuild(&mut self, gpu: &mut Gpu, banner: Option<&str>, focused: bool) -> Result<()> {
+    fn rebuild(&mut self, banner: Option<&str>, focused: bool) -> Result<()> {
         let tab = self.tabs.active().unwrap();
         let active = tab.focused();
         active.prepare_search_view(&mut self.view)?;
@@ -273,19 +275,19 @@ impl Session {
         }
         self.view.end_frame();
         self.draw_tab_strip();
-        gpu.upload_atlas(&self.view.atlas());
-        self.view.atlas_uploaded();
         Ok(())
     }
 
-    fn present_pointer_hits(&mut self, frame: SurfaceFrame) {
-        if !matches!(frame, SurfaceFrame::Presented { .. }) {
-            return;
-        }
+    fn present_pointer_hits(&mut self) {
         self.show_scroll();
         self.view.frame_presented();
-        self.pane_pointer
-            .present_layout(self.tabs.active().unwrap());
+        let tab = self.tabs.active().unwrap();
+        if !self.pane_pointer.layout_is_presented(tab) {
+            self.pane_pointer.present_layout(tab);
+            self.visible_panes.clear();
+            self.visible_panes
+                .extend(tab.layout.panes.iter().map(|&(id, _)| id));
+        }
     }
 
     fn draw<W: WindowOps>(
@@ -296,6 +298,62 @@ impl Session {
         banner: Option<&str>,
         focused: bool,
     ) -> Result<bool> {
+        let final_frame = options
+            .frames
+            .is_some_and(|count| count == gpu.present_count() + 1);
+        let capture = final_frame && options.screenshot.is_some();
+        let mut readback = None;
+        let submit = |session: &mut Self, window: &mut W, dirty, cursor_hidden| {
+            if dirty {
+                gpu.upload_atlas(&session.view.atlas());
+                session.view.atlas_uploaded();
+            }
+            let tab = session.tabs.active().unwrap();
+            let panes = tab.layout.panes.iter();
+            session
+                .frame_log
+                .painted(|| panes.filter(|&&(id, _)| tab.get(id).frame_dirty).count());
+            let sources =
+                |id| Some(&tab.get(id).pane.terminal as &dyn sumie_core::graphics::ImageSource);
+            let submitted = || session.frame_log.mark(frame_log::Stage::Submitted);
+            let result = gpu.draw(
+                window,
+                &session.view.frame(cursor_hidden, sources),
+                capture,
+                submitted,
+            );
+            if matches!(result, Err(SurfaceError::Outdated)) {
+                gpu.resize(session.view.device);
+            }
+            result.map(|(frame, pixels)| {
+                readback = pixels;
+                frame
+            })
+        };
+        let Some((suboptimal, dirty)) = self.draw_frame(window, banner, focused, submit)? else {
+            return Ok(false);
+        };
+        self.view.images_presented(gpu.presented_images());
+        self.frame_log
+            .presented(self.view.repainted_panes().filter(|_| dirty));
+        self.panes_presented(gpu, window, banner.is_some())?;
+        gpu.log_present();
+        if suboptimal {
+            gpu.resize(self.view.device);
+        }
+        if let (Some(readback), Some(path)) = (readback, &options.screenshot) {
+            readback?.write(gpu.device(), path)?;
+        }
+        Ok(final_frame)
+    }
+
+    fn draw_frame<W: WindowOps>(
+        &mut self,
+        window: &mut W,
+        banner: Option<&str>,
+        focused: bool,
+        submit: impl FnOnce(&mut Self, &mut W, bool, bool) -> Result<SurfaceFrame, SurfaceError>,
+    ) -> Result<Option<(bool, bool)>> {
         self.frame_retry = None;
         let tab = self.tabs.active_mut().unwrap();
         let active = tab.focused_mut();
@@ -315,66 +373,37 @@ impl Session {
             && !self.view.thumbnail_hover_dirty()
             && !window.background_commit_needed()
         {
-            return Ok(false);
+            return Ok(None);
         }
         if dirty {
-            self.rebuild(gpu, banner, focused)?;
+            self.rebuild(banner, focused)?;
         }
-        let tab = self.tabs.active_mut().unwrap();
-        let panes = tab.layout.panes.iter();
-        self.frame_log
-            .painted(|| panes.filter(|&&(id, _)| tab.get(id).frame_dirty).count());
-        let active = tab.focused();
-        let final_frame = options
-            .frames
-            .is_some_and(|count| count == gpu.present_count() + 1);
-        let capture = final_frame && options.screenshot.is_some();
-        let sources =
-            |id| Some(&tab.get(id).pane.terminal as &dyn sumie_core::graphics::ImageSource);
-        let submitted = || self.frame_log.mark(frame_log::Stage::Submitted);
-        let frame = gpu.draw(
-            window,
-            &self.view.frame(cursor_hidden, sources),
-            capture,
-            submitted,
-        );
-        if dirty
-            && let Some(rect) = self.view.ime_rectangle(
-                active.snapshot.as_ref().unwrap().cursor,
-                active.rect,
-                W::logical_rect,
-            )
-        {
-            window.set_cursor_rectangle(rect);
-        }
-        if let Ok((frame, _)) = &frame {
-            self.present_pointer_hits(*frame);
-        }
-        match frame {
-            Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
+        let retry = match submit(self, window, dirty, cursor_hidden) {
+            Ok(SurfaceFrame::Presented { suboptimal }) => {
+                if dirty {
+                    let active = self.active();
+                    if let Some(rect) = self.view.ime_rectangle(
+                        active.snapshot.as_ref().unwrap().cursor,
+                        active.rect,
+                        W::logical_rect,
+                    ) {
+                        window.set_cursor_rectangle(rect);
+                    }
+                }
+                self.present_pointer_hits();
                 self.confirmation_presented = self.confirmation.is_some();
-                window.cursor_rectangle_presented();
-                self.view.images_presented(gpu.presented_images());
-                self.frame_log
-                    .presented(self.view.repainted_panes().filter(|_| dirty));
-                self.panes_presented(gpu, window, banner.is_some())?;
                 self.cursor_hidden = cursor_hidden;
-                gpu.log_present();
-                if suboptimal {
-                    gpu.resize(self.view.device);
-                }
-                if let (Some(readback), Some(path)) = (readback, &options.screenshot) {
-                    readback?.write(gpu.device(), path)?;
-                }
-                return Ok(final_frame);
+                return Ok(Some((suboptimal, dirty)));
             }
-            Ok((SurfaceFrame::Suspended, _)) => return Ok(false),
-            Ok((SurfaceFrame::Timeout, _)) if window.hold_after_timeout() => return Ok(false),
-            Ok((SurfaceFrame::Timeout | SurfaceFrame::Occluded, _)) => (),
-            Err(SurfaceError::Outdated) => gpu.resize(self.view.device),
-            Err(error) => return Err(error.into()),
+            Ok(SurfaceFrame::Suspended) => Ok(false),
+            Ok(SurfaceFrame::Timeout) => Ok(!window.hold_after_timeout()),
+            Ok(SurfaceFrame::Occluded) | Err(SurfaceError::Outdated) => Ok(true),
+            Err(error) => Err(error),
+        };
+        self.rollback_scroll()?;
+        if retry? {
+            self.frame_retry = Some(Instant::now() + FRAME_RETRY_DELAY);
         }
-        self.frame_retry = Some(Instant::now() + FRAME_RETRY_DELAY);
-        Ok(false)
+        Ok(None)
     }
 }
