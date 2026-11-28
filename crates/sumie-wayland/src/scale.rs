@@ -42,13 +42,8 @@ impl Scale {
         self.set_units(units)
     }
 
-    pub(crate) fn set_integer(
-        &mut self,
-        window: &WlSurface,
-        surface: &WlSurface,
-        factor: i32,
-    ) -> bool {
-        if window != surface || self.viewport.is_some() || surface.version() < 3 {
+    pub(crate) fn set_integer(&mut self, is_window: bool, version: u32, factor: i32) -> bool {
+        if !is_window || self.viewport.is_some() || version < 3 {
             return false;
         }
         self.set_units(factor.unsigned_abs().saturating_mul(UNIT))
@@ -129,34 +124,16 @@ delegate_noop!(State: ignore WpViewport);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use smithay_client_toolkit::reexports::client::protocol::{
-        wl_compositor::WlCompositor, wl_registry::WlRegistry,
-    };
-    use std::os::unix::net::UnixStream;
 
     #[test]
     fn cursor_surface_scale_does_not_resize_the_window() {
-        struct Client;
-        delegate_noop!(Client: ignore WlRegistry);
-        delegate_noop!(Client: ignore WlCompositor);
-        delegate_noop!(Client: ignore WlSurface);
-
-        // Allocate distinct live proxies without connecting to a compositor.
-        let (socket, _peer) = UnixStream::pair().unwrap();
-        let conn = Connection::from_socket(socket).unwrap();
-        let queue = conn.new_event_queue::<Client>();
-        let qh = queue.handle();
-        let registry = conn.display().get_registry(&qh, ());
-        let compositor: WlCompositor = registry.bind(1, 6, &qh, ());
-        let window = compositor.create_surface(&qh, ());
-        let cursor = compositor.create_surface(&qh, ());
         let mut scale = Scale {
             viewport: None,
             units: UNIT,
         };
 
-        assert!(scale.set_integer(&window, &window, 2));
-        assert!(!scale.set_integer(&window, &cursor, 3));
+        assert!(scale.set_integer(true, 6, 2));
+        assert!(!scale.set_integer(false, 6, 3));
         assert_eq!(scale.device_size((800, 600)), (1600, 1200));
     }
 

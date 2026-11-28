@@ -155,19 +155,22 @@ fn kitty_file_transfers_keep_temporary_files_and_reject_links() {
     symlink(&source, &link).unwrap();
 
     let mut vt = terminal(512);
-    let mut query = |medium, path: &std::path::Path, reply| {
+    let mut query = |medium, path: &std::path::Path| {
         let payload = base64_path(path.as_os_str().as_encoded_bytes());
-        kitty(
-            &mut vt,
-            &format!("a=q,t={medium},i=7,f=24,s=1,v=1;{payload}"),
-            reply,
-        );
+        vt.write(format!("\x1b_Ga=q,t={medium},i=7,f=24,s=1,v=1;{payload}\x1b\\").as_bytes());
+        let mut reply = Vec::new();
+        vt.drain_replies(|bytes| reply.extend_from_slice(bytes));
+        reply
     };
-    query('t', &source, "i=7;OK");
+    let ok = b"\x1b_Gi=7;OK\x1b\\";
+    let invalid = b"\x1b_Gi=7;EINVAL: invalid data\x1b\\";
+    assert_eq!(query('t', &source), ok);
     assert_eq!(fs::read(&source).unwrap(), pixels);
-    query('f', &link, "i=7;EINVAL: invalid data");
+    assert_eq!(query('f', &link), invalid);
     fs::hard_link(&source, &hard_link).unwrap();
-    query('f', &hard_link, "i=7;EINVAL: invalid data");
+    let reply = query('f', &hard_link);
+    assert_ne!(reply, ok, "Kitty hard-link query returned OK");
+    assert_eq!(reply, invalid);
 }
 
 #[cfg(target_os = "linux")]
