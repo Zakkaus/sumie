@@ -79,17 +79,24 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
             })
         }
         Native::ClipboardText { text, generation } => Event::ClipboardText { text, generation },
-        // The Linux overlay underlines the whole preedit, as before.
         Native::ImePreedit {
-            text, generation, ..
-        } => Event::ImePreedit {
             text,
-            cursor: None,
+            cursor,
+            generation,
+        } => Event::ImePreedit {
+            cursor: preedit_cursor(&text, cursor),
+            text,
             generation,
         },
         Native::ImeCommit { text, recipient } => Event::ImeCommit { text, recipient },
     };
     Some((event, copy_serial))
+}
+
+fn preedit_cursor(text: &str, cursor: Option<(u32, u32)>) -> Option<(usize, usize)> {
+    cursor
+        .map(|(begin, end)| (begin as usize, end as usize))
+        .filter(|&(begin, end)| text.is_char_boundary(begin) && text.is_char_boundary(end))
 }
 
 fn presented(feedback: sumie_wayland::PresentationFeedback) -> Option<Event> {
@@ -166,6 +173,27 @@ fn pointer_phase(phase: PointerPhase, serial: u32) -> (Phase, Option<u32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preedit_keeps_only_valid_utf8_cursor_offsets() {
+        for (offsets, expected) in [
+            (Some((3, 3)), Some((3, 3))),
+            (Some((6, 3)), Some((6, 3))),
+            (Some((1, 3)), None),
+            (Some((3, 7)), None),
+            (None, None),
+        ] {
+            let event = Native::ImePreedit {
+                text: "中文".into(),
+                cursor: offsets,
+                generation: 1,
+            };
+            let Some((Event::ImePreedit { cursor, .. }, _)) = convert(event) else {
+                panic!("expected preedit");
+            };
+            assert_eq!(cursor, expected);
+        }
+    }
 
     #[test]
     fn copy_uses_only_the_triggering_press_or_release() {

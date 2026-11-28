@@ -94,7 +94,7 @@ def ime_controls():
           replace_once(".is_some_and(|(_, owner)| *owner != source)", ".is_some_and(|_| false)"),
           "test ime::tests::a_commit_from_another_input_source_is_dropped ... FAILED")
     probe("underline the whole preedit despite its selected clause", "test", "src/view/paint.rs",
-          replace_once(".filter(|(start, end)| start < end);", ".filter(|_| false);"),
+          replace_once(".filter(|(begin, end)| begin != end)", ".filter(|_| false)"),
           "test view::tests::preedit::the_preedit_underline_spans_the_selected_clause ... FAILED")
     probe("search caret pinned to the preedit's end", "test", "src/view/overlays.rs",
           replace_once("if start == end && start < self.preedit.len() =>", "if false =>"),

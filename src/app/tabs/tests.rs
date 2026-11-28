@@ -42,6 +42,7 @@ struct TestWindow {
     ready: Ready,
     clipboard: Vec<Option<Vec<u8>>>,
     paste_request: Option<u64>,
+    notifications: Vec<Notification>,
 }
 
 impl FrameWindow for TestWindow {
@@ -102,7 +103,9 @@ impl WindowOps for TestWindow {
         self.clipboard.push(bytes);
     }
     fn queue_title(&mut self, _: String) {}
-    fn notify(&mut self, _: Notification) {}
+    fn notify(&mut self, request: Notification) {
+        self.notifications.push(request);
+    }
     fn set_background_effects(&mut self, _: bool, _: bool) -> bool {
         false
     }
@@ -197,6 +200,75 @@ fn queued_ime_commit_reaches_the_original_pane() {
     pane.command(PaneCommand::Text(b"\n")).unwrap();
     assert!(pane.pty.flush_input().unwrap());
     crate::tests::wait_for_line(pane, "original");
+}
+
+#[test]
+fn pointer_hits_use_the_old_scroll_offset_until_presented() {
+    use sumie_core::mouse::MousePhase;
+    use sumie_render::SurfaceFrame;
+
+    let mut session = session(&mut TestWindow::default(), &sumie_config::Config::default());
+    let rect = session.active().rect;
+    let row_height = session.view.cell[1];
+    let [pad_x, pad_y] = session.view.pane_padding();
+    let near_row_end = Position::DevicePx(
+        f64::from(rect.x + pad_x + 1),
+        f64::from(rect.y + pad_y + row_height - 1),
+    );
+    let terminal = &mut session.active_mut().pane.terminal;
+    terminal.write(b"one\r\n".repeat(40).as_slice());
+    terminal.scroll_rows(-2).unwrap();
+    session
+        .active_mut()
+        .smooth_wheel(MousePhase::Touch(24.0), 120, Duration::ZERO);
+    session.step_scroll(Instant::now()).unwrap();
+    for (frame, row) in [
+        (SurfaceFrame::Timeout, 0),
+        (SurfaceFrame::Presented { suboptimal: false }, 1),
+    ] {
+        session.present_pointer_hits(frame);
+        let (cell, _, _) =
+            session
+                .view
+                .pointer_position(near_row_end, rect, session.active().scroll.shown());
+        assert_eq!(cell.row, row);
+    }
+}
+
+#[test]
+fn zoomed_out_pane_can_notify_from_the_active_tab() {
+    let config = sumie_config::Config::default();
+    let mut window = TestWindow::default();
+    let mut session = session(&mut window, &config);
+    let first = session.active().id;
+    session
+        .apply(
+            Action::Pane(PaneAction::Split(sumie_core::splits::Axis::Horizontal)),
+            &mut window,
+            &config,
+        )
+        .unwrap();
+    let focused = session.active().id;
+    assert_ne!(first, focused);
+    let now = Instant::now();
+    for zoomed in [false, true] {
+        if zoomed {
+            session
+                .pane_action(PaneAction::Zoom, focused, &mut window, &config)
+                .unwrap();
+        }
+        session
+            .tabs
+            .active_mut()
+            .unwrap()
+            .get_mut(first)
+            .pane
+            .terminal
+            .write(b"\x1b]9;hidden pane\x07");
+        window.ready.output = true;
+        session.service_pty(now, true, &mut window).unwrap();
+        assert_eq!(window.notifications.len(), usize::from(zoomed));
+    }
 }
 
 #[test]

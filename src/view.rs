@@ -60,6 +60,8 @@ pub(crate) struct View {
     pub(crate) device: [u32; 2],
     pub(crate) cell: [u32; 2],
     pub(crate) preedit: String,
+    preedit_codepoints: Vec<u32>,
+    pub(crate) preedit_graphemes: bool,
     /// The selected clause of a non-empty preedit, set with it; see `Event::ImePreedit`.
     pub(crate) preedit_cursor: Option<(usize, usize)>,
     /// Formatted query and tab-separated count, without IME preedit.
@@ -144,6 +146,8 @@ impl View {
             device,
             cell,
             preedit: String::new(),
+            preedit_codepoints: Vec::new(),
+            preedit_graphemes: false,
             preedit_cursor: None,
             search_bar: None,
             search_selection: 0..0,
@@ -363,6 +367,8 @@ impl View {
                 &[]
             },
             preedit: if focus.active { &self.preedit } else { "" },
+            preedit_codepoints: &mut self.preedit_codepoints,
+            preedit_graphemes: self.preedit_graphemes,
             preedit_cursor: self.preedit_cursor,
         }
         .build(

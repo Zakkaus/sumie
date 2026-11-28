@@ -78,8 +78,9 @@ impl View {
             pane.cursor?.rect.origin
         } else {
             let cursor = cursor?;
+            let column = pane.preedit_column.unwrap_or(u32::from(cursor.column));
             [
-                pane.glyphs.offset[0] + (u32::from(cursor.column) * self.cell[0]).cast_signed(),
+                pane.glyphs.offset[0] + (column * self.cell[0]).cast_signed(),
                 pane.glyphs.offset[1] + (u32::from(cursor.row) * self.cell[1]).cast_signed()
                     - pane.scroll.offset.cast_signed(),
             ]

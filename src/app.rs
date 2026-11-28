@@ -272,11 +272,20 @@ impl Session {
             );
         }
         self.view.end_frame();
-        self.show_scroll();
         self.draw_tab_strip();
         gpu.upload_atlas(&self.view.atlas());
         self.view.atlas_uploaded();
         Ok(())
+    }
+
+    fn present_pointer_hits(&mut self, frame: SurfaceFrame) {
+        if !matches!(frame, SurfaceFrame::Presented { .. }) {
+            return;
+        }
+        self.show_scroll();
+        self.view.frame_presented();
+        self.pane_pointer
+            .present_layout(self.tabs.active().unwrap());
     }
 
     fn draw<W: WindowOps>(
@@ -288,8 +297,12 @@ impl Session {
         focused: bool,
     ) -> Result<bool> {
         self.frame_retry = None;
-        let tab = self.tabs.active().unwrap();
-        let cursor_hidden = window.cursor_hidden(tab.focused().id);
+        let tab = self.tabs.active_mut().unwrap();
+        let active = tab.focused_mut();
+        let mode = !self.view.preedit.is_empty() && active.pane.terminal.grapheme_clustering()?;
+        active.frame_dirty |= self.view.preedit_graphemes != mode;
+        self.view.preedit_graphemes = mode;
+        let cursor_hidden = window.cursor_hidden(active.id);
         let dirty = !self.pane_pointer.layout_is_presented(tab)
             || tab
                 .layout
@@ -334,13 +347,14 @@ impl Session {
         {
             window.set_cursor_rectangle(rect);
         }
+        if let Ok((frame, _)) = &frame {
+            self.present_pointer_hits(*frame);
+        }
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
                 self.confirmation_presented = self.confirmation.is_some();
                 window.cursor_rectangle_presented();
-                self.view.frame_presented();
                 self.view.images_presented(gpu.presented_images());
-                self.pane_pointer.present_layout(tab);
                 self.frame_log
                     .presented(self.view.repainted_panes().filter(|_| dirty));
                 self.panes_presented(gpu, window, banner.is_some())?;
