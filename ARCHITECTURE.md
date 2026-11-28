@@ -144,7 +144,7 @@ The VT `reports` module answers XTWINOPS size queries (CSI 14/16/18/19 t) from t
 
 The VT `selection` module uses libghostty-vt's word and line helpers. A Zig bridge maps the pinned Ghostty link pattern back to cells in one logical line, including soft wraps. Word selection accepts both URLs and paths; hover accepts only URIs from core's scheme allowlist. OSC 8 takes precedence: an implicit link spans adjacent cells, while an explicit ID groups all visible runs with the same ID and URI. Native references remain inside the call. The formatter joins soft wraps and includes selected rows outside the viewport.
 
-`build.rs` fetches the Ghostty archive by commit and checks its SHA-256 before extracting it under Cargo's `OUT_DIR`. Zig uses its package cache on repeat builds. For a clean offline build, set `SUMIE_GHOSTTY_ARCHIVE` to the prefetched archive and `GHOSTTY_ZIG_SYSTEM_DIR` to the directory of unpacked, hash-named Zig packages. The private FFI module vendors the declarations it uses from the libghostty-rs revision for vt-1.0.1, without taking on its separate native build.
+`build.rs` fetches the Ghostty archive by commit and checks its SHA-256 before extracting it under Cargo's `OUT_DIR`. Zig uses its package cache on repeat builds; see [Offline build](docs/packaging.md#offline-build) for prefetching. The private FFI module vendors the declarations it uses from the libghostty-rs revision for vt-1.0.1, without taking on its separate native build.
 
 Before compiling the extracted source, the build script links `src/search/grid.zig` into the pinned Ghostty module and enables uucode's simple-fold table. The bridge uses Ghostty's page types directly; Rust does not depend on Ghostty's internal cell layout.
 

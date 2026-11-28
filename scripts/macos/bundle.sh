@@ -41,6 +41,13 @@ case $version in
     '' | *[!0-9A-Za-z.+-]*) echo "bundle: unusable version '$version'" >&2; exit 2 ;;
 esac
 
+# Keep prerelease and build metadata in the archive name, not in the plist.
+build=${version%%[-+]*}
+if ! printf '%s\n' "$build" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "bundle: unusable bundle version '$version' (expected major.minor.patch)" >&2
+    exit 2
+fi
+
 mkdir -p "$out"
 out=$(CDPATH='' cd "$out" && pwd -P)
 app=$out/sumie.app
@@ -51,8 +58,6 @@ chmod 755 "$app/Contents/MacOS/sumie"
 cp "$root/LICENSE" "$app/Contents/Resources/LICENSE"
 cp "$licenses" "$app/Contents/Resources/THIRD-PARTY-LICENSES"
 
-# CFBundleVersion must be dotted integers; a pre-release suffix stays in the short string.
-build=${version%%[-+]*}
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -75,7 +80,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>$version</string>
+    <string>$build</string>
     <key>CFBundleVersion</key>
     <string>$build</string>
     <key>LSApplicationCategoryType</key>

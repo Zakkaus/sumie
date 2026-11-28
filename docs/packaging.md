@@ -193,6 +193,8 @@ python3 scripts/release-licenses.py /path/to/build.jsonl /path/to/licenses.json 
 
 Pass that file to `scripts/linux/package.sh BINARY OUTPUT_DIR VERSION ARCH LICENSES` or
 `scripts/macos/bundle.sh --dmg BINARY OUTPUT_DIR LICENSES VERSION`.
+The macOS bundle uses the numeric `major.minor.patch` version in its `Info.plist`.
+The disk image filename retains any prerelease or build suffix.
 
 ## Cutting a release
 

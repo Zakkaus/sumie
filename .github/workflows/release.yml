@@ -180,6 +180,11 @@ jobs:
           hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
           trap 'hdiutil detach "$mount"' EXIT
           codesign --verify --deep --strict --verbose=2 "$mount/sumie.app"
+          version=${VERSION#v}
+          for key in CFBundleShortVersionString CFBundleVersion; do
+            actual=$(plutil -extract "$key" raw -o - "$mount/sumie.app/Contents/Info.plist")
+            test "$actual" = "${version%%[-+]*}"
+          done
           test "$(readlink "$mount/Applications")" = /Applications
           cmp "$RUNNER_TEMP/THIRD-PARTY-LICENSES" "$mount/sumie.app/Contents/Resources/THIRD-PARTY-LICENSES"
           mkdir -p "$RUNNER_TEMP/dist"
