@@ -35,7 +35,7 @@ pub(super) struct Effects {
     progress_pending: bool,
     pub(super) version: &'static str,
     pub(super) render: ffi::RenderState,
-    hold: Option<(Instant, Result<(), Error>)>,
+    hold: Option<Instant>,
 }
 
 impl Effects {
@@ -134,11 +134,10 @@ pub(super) unsafe fn register(terminal: ffi::Terminal) -> c_int {
 unsafe extern "C" fn render_hold(terminal: ffi::Terminal, data: *mut c_void, held: bool) {
     // SAFETY: Ghostty calls synchronously under the owner's exclusive terminal borrow.
     let effects = unsafe { &mut *data.cast::<Effects>() };
-    effects.hold = held.then(|| {
-        // SAFETY: The callback may capture this live render state before the write continues.
-        let captured = check(unsafe { ffi::ghostty_render_state_update(effects.render, terminal) });
-        (Instant::now() + Duration::from_secs(1), captured)
-    });
+    let captured = held
+        // SAFETY: The write exclusively owns the terminal; a null render handle returns an error.
+        && unsafe { ffi::ghostty_render_state_update(effects.render, terminal) } == ffi::SUCCESS;
+    effects.hold = captured.then(|| Instant::now() + Duration::from_secs(1));
 }
 
 impl Terminal {
@@ -146,7 +145,7 @@ impl Terminal {
     #[must_use]
     pub fn render_hold_deadline(&self) -> Option<Instant> {
         // SAFETY: The boxed userdata outlives this borrow; only exclusive calls run callbacks.
-        unsafe { (*self.effects).hold.map(|(deadline, _)| deadline) }
+        unsafe { (*self.effects).hold }
     }
 
     /// Release an expired hold. A released frame needs a new snapshot.
@@ -170,10 +169,8 @@ impl Terminal {
     }
 
     pub(super) fn update_render(&mut self) -> Result<(), Error> {
-        if let Some((_, captured)) = self.effects().hold
-            && !self.expire_render_hold(Instant::now())?
-        {
-            return captured;
+        if self.render_hold_deadline().is_some() {
+            return Ok(());
         }
         // SAFETY: Both handles are live and exclusively borrowed.
         check(unsafe { ffi::ghostty_render_state_update(self.render, self.raw) })
@@ -308,6 +305,14 @@ pub(super) unsafe extern "C" fn queue_title(terminal: ffi::Terminal, data: *mut 
 mod tests {
     use super::{Event, OUTPUT_LIMIT};
     use crate::Terminal;
+
+    #[test]
+    fn failed_hold_capture_keeps_rendering_live_output() {
+        let mut vt = Terminal::new(3, 1).unwrap();
+        vt.effects().render = std::ptr::null_mut(); // Ghostty rejects the capture handle.
+        vt.write(b"A\x1b[?2026h\rB");
+        assert_eq!(vt.snapshot().unwrap()[0][0].text, "B");
+    }
 
     #[test]
     fn osc52_queues_only_bounded_standard_writes() {
