@@ -59,8 +59,6 @@ pub enum Event {
     Ime(ime::Ime),
     #[cfg(feature = "macos-ci")]
     RunnerCommand(runner::Command),
-    #[cfg(feature = "macos-ci")]
-    RunnerKey(runner::Key),
 }
 
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
@@ -120,8 +118,6 @@ struct Handler<F> {
     quit: Option<Quit>,
     /// The callback ended the loop; later events are not delivered.
     done: bool,
-    #[cfg(feature = "macos-ci")]
-    forward_runner_keys: bool,
 }
 
 impl<F: Callback> Handler<F> {
@@ -134,8 +130,6 @@ impl<F: Callback> Handler<F> {
             intercept: Some(intercept),
             quit: None,
             done: false,
-            #[cfg(feature = "macos-ci")]
-            forward_runner_keys: false,
         }
     }
 
@@ -198,18 +192,6 @@ impl<F: Callback> ApplicationHandler<Wake> for Handler<F> {
     }
 
     fn window_event(&mut self, context: &WindowContext, _: WindowId, event: WindowEvent) {
-        #[cfg(feature = "macos-ci")]
-        if let WindowEvent::KeyboardInput {
-            event,
-            is_synthetic: false,
-            ..
-        } = &event
-            && self.forward_runner_keys
-            && let Some(key) = runner::Key::from_event(event)
-        {
-            self.emit(context, Event::RunnerKey(key));
-            return;
-        }
         if let Some(event) = self.input.convert(event) {
             self.emit(context, event);
         }

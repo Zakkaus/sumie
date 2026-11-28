@@ -28,7 +28,7 @@ macos-ci = [
 nix = { workspace = true, features = ["fs"] }
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSEvent", "NSGraphics", "NSPasteboard", "NSPasteboardItem", "NSScreen", "NSTextInputContext"] }
-objc2-core-graphics = { version = "0.3.2", optional = true, default-features = false, features = ["std", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation", "CGWindow", "libc"] }
+objc2-core-graphics = { version = "0.3.2", optional = true, default-features = false, features = ["std", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation", "libc"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSString", "NSValue"] }
 signal-hook = { version = "0.4.6", default-features = false }
 sumie-core = { path = "../sumie-core" }
