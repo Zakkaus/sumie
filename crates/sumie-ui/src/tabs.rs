@@ -380,7 +380,8 @@ impl TabLayout {
     pub fn fills(&self, palette: TabPalette, hover: Option<TabHit>, out: &mut Vec<Fill>) {
         fill(out, rect(0, 0, self.width, self.height), palette.surface);
         self.shadow(out);
-        self.dividers(out, tint_over(palette.surface, palette.selected, 23));
+        let rule = tint_over(palette.surface, palette.selected, tokens::TAB_RULE_ALPHA);
+        self.dividers(out, rule);
 
         if self.visible().contains(&self.active) {
             self.underline(palette, out);
@@ -404,12 +405,16 @@ impl TabLayout {
     fn shadow(&self, out: &mut Vec<Fill>) {
         let depth = self.px(tokens::SHADOW_HEIGHT);
         for row in 0..depth.min(self.remaining_height) {
-            let alpha = (41 * (depth - row) + depth / 2) / depth;
+            let alpha = (u32::from(tokens::TAB_SHADOW_ALPHA) * (depth - row) + depth / 2) / depth;
             let color = black(u8::try_from(alpha).expect("shadow alpha fits in a byte"));
             fill(out, rect(0, self.height + row, self.width, 1), color);
         }
         let rule = self.px(tokens::RULE).min(self.remaining_height);
-        fill(out, rect(0, self.height, self.width, rule), black(89));
+        fill(
+            out,
+            rect(0, self.height, self.width, rule),
+            black(tokens::TAB_EDGE_ALPHA),
+        );
     }
 
     fn dividers(&self, out: &mut Vec<Fill>, color: Rgba) {
@@ -439,11 +444,11 @@ impl TabLayout {
                     out,
                     close,
                     2 * self.px(tokens::CLOSE_RADIUS),
-                    tint_over(palette.surface, palette.selected, 31),
+                    tint_over(palette.surface, palette.selected, tokens::CLOSE_HOVER_ALPHA),
                 );
                 label
             } else {
-                tint_over(palette.surface, label, 179)
+                tint_over(palette.surface, label, tokens::CLOSE_MARK_ALPHA)
             };
             self.paint_close(out, close, color);
         }
@@ -479,7 +484,7 @@ impl TabLayout {
         let color = if hovered {
             palette.selected
         } else {
-            tint_over(palette.surface, palette.selected, 140)
+            tint_over(palette.surface, palette.selected, tokens::PLUS_ALPHA)
         };
         let side = self.px(tokens::PLUS_MARK).min(width).min(height);
         if side != 0 {

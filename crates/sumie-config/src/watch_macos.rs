@@ -25,7 +25,7 @@ use nix::{
     },
 };
 
-use crate::{Config, Error, load_visited};
+use crate::{Config, Error, load::resolve_path, load_visited};
 
 /// Reason the watcher's wait completed.
 #[derive(Debug, PartialEq, Eq)]
@@ -176,10 +176,8 @@ impl Scan<'_> {
         if let Some(file) = open(path, 0) {
             self.watch(file)?;
         }
-        // Watch both directory entries when a symlink resolves outside its lexical parent.
-        if let Ok(real) = path.canonicalize()
-            && real != path
-        {
+        // The target's directory entry can change independently of the link itself.
+        if let Some(real) = resolve_path(path).ok().filter(|target| target != path) {
             self.watch_parent(&real)?;
         }
         Ok(())

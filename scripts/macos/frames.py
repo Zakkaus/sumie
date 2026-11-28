@@ -18,6 +18,8 @@ enforced.
   loading  The settings include a FIFO with no writer: the window presents the defaults under
            a loading banner within 1 s (the driver waits 500 ms). Once a file replaces the
            FIFO and a writer releases the child, the settings apply and the banner clears.
+           A malformed save then presents a diagnostic without changing the grid; restoring
+           the same effective settings presents the grid again without the banner.
 """
 import json
 import os
@@ -393,6 +395,36 @@ def case_loading(runner, _cg, result):
     elif loaded["columns"] >= loading["columns"]:
         errors.append(f"loading: the written settings did not apply ({loaded['columns']} columns, "
                       f"{loading['columns']} under the defaults)")
+    else:
+        errors.extend(check_reload_banner(runner, loaded, result))
+    return errors
+
+
+def check_reload_banner(runner, loaded, result):
+    pending = runner.slow.with_name("pending.toml")
+
+    def save_and_present(text, banner, before):
+        pending.write_text(text)
+        pending.replace(runner.slow)
+        end = time.monotonic() + LOADING_WAIT
+        report = runner.report()
+        while (report["banner"] != banner or report["presents"] <= before["presents"]) and time.monotonic() < end:
+            time.sleep(0.05)
+            report = runner.report()
+        return report
+
+    broken = save_and_present(LOADING_INCLUDE + "\nbogus\n", 1, loaded)
+    result["broken"] = broken
+    if not broken["banner"] or broken["presents"] <= loaded["presents"]:
+        return ["loading: no diagnostic frame after saving an invalid config"]
+
+    repaired = save_and_present(LOADING_INCLUDE, 0, broken)
+    result["repaired"] = repaired
+    errors = []
+    if repaired["banner"] or repaired["presents"] <= broken["presents"]:
+        errors.append("loading: no frame clearing the diagnostic after restoring the same settings")
+    if any(report[axis] != loaded[axis] for report in (broken, repaired) for axis in ("columns", "rows")):
+        errors.append("loading: the invalid save or repair changed the terminal grid")
     return errors
 
 

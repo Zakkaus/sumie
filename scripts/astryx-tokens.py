@@ -72,6 +72,15 @@ def main():
         lines.append(f"pub(super) const {key}: u32 = {value};")
     lines += ["pub const LABEL_PX: f32 = 12.5;", "pub const LABEL_WEIGHT: u16 = 400;",
               "pub const NUMBER_PX: f32 = 11.0;"]
+    lines += ["", "// Sumie-local tints for chrome derived from the terminal colors."]
+    for key, value in {"LINK_HINT_ALPHA": 128, "TAB_SURFACE_LIGHT_ALPHA": 10,
+                       "TAB_SURFACE_DARK_ALPHA": 56, "TAB_LABEL_ALPHA": 128,
+                       "TAB_HOVER_ALPHA": 209, "TAB_NUMBER_ALPHA": 153,
+                       "TAB_RULE_ALPHA": 23, "TAB_SHADOW_ALPHA": 41,
+                       "TAB_EDGE_ALPHA": 89, "CLOSE_HOVER_ALPHA": 31,
+                       "CLOSE_MARK_ALPHA": 179, "PLUS_ALPHA": 140}.items():
+        lines.append(f"pub(super) const {key}: u8 = {value};")
+
     # Match native generic families rather than copying a web fallback stack into one font name.
     lines += ["", "// Generic families from the Astryx font stacks."]
     for key, token in {"LABEL_FAMILY": "font-family-body", "NUMBER_FAMILY": "font-family-code"}.items():

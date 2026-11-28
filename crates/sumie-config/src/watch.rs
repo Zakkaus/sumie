@@ -14,7 +14,7 @@ use rustix::{
     io::{self, Errno},
 };
 
-use crate::{Config, Error, load_visited};
+use crate::{Config, Error, load::resolve_path, load_visited};
 
 type Targets = HashMap<i32, HashSet<OsString>>;
 
@@ -119,9 +119,7 @@ fn watch_path(fd: &OwnedFd, targets: &mut Targets, path: &Path) -> io::Result<()
     }
     // The lexical parent catches replacement of the link; the resolved parent catches replacement
     // of its target, which inotify otherwise watches by inode.
-    if let Ok(resolved) = path.canonicalize()
-        && resolved != path
-    {
+    if let Some(resolved) = resolve_path(path).ok().filter(|target| target != path) {
         watch_parent(fd, targets, &resolved)?;
     }
     Ok(())

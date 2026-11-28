@@ -28,6 +28,20 @@ pub const LABEL_PX: f32 = 12.5;
 pub const LABEL_WEIGHT: u16 = 400;
 pub const NUMBER_PX: f32 = 11.0;
 
+// Sumie-local tints for chrome derived from the terminal colors.
+pub(super) const LINK_HINT_ALPHA: u8 = 128;
+pub(super) const TAB_SURFACE_LIGHT_ALPHA: u8 = 10;
+pub(super) const TAB_SURFACE_DARK_ALPHA: u8 = 56;
+pub(super) const TAB_LABEL_ALPHA: u8 = 128;
+pub(super) const TAB_HOVER_ALPHA: u8 = 209;
+pub(super) const TAB_NUMBER_ALPHA: u8 = 153;
+pub(super) const TAB_RULE_ALPHA: u8 = 23;
+pub(super) const TAB_SHADOW_ALPHA: u8 = 41;
+pub(super) const TAB_EDGE_ALPHA: u8 = 89;
+pub(super) const CLOSE_HOVER_ALPHA: u8 = 31;
+pub(super) const CLOSE_MARK_ALPHA: u8 = 179;
+pub(super) const PLUS_ALPHA: u8 = 140;
+
 // Generic families from the Astryx font stacks.
 pub const LABEL_FAMILY: &str = "sans-serif";
 pub const NUMBER_FAMILY: &str = "monospace";
