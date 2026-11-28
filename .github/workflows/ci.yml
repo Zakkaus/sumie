@@ -31,7 +31,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libcairo2-dev fonts-noto-color-emoji
+          sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev fonts-noto-color-emoji
           sudo apt-get install -y libegl1 libegl-mesa0 libgl1-mesa-dri libvulkan1 mesa-vulkan-drivers
           lavapipe=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
           test -n "$lavapipe"

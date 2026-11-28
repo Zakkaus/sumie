@@ -519,6 +519,7 @@ impl Line {
             if image.rect.width != 0 && image.rect.height != 0 {
                 glyphs.push(attributes::glyph_quad(
                     image,
+                    glyph.key.is_color(),
                     [x + glyph.x, y + glyph.y],
                     [col + glyph.column, row],
                     foreground,

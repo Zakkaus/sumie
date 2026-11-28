@@ -100,6 +100,11 @@ impl GlyphKey {
     pub const fn ppem(self) -> f32 {
         f32::from_bits(self.ppem_bits)
     }
+
+    #[must_use]
+    pub const fn is_color(self) -> bool {
+        self.color_width != 0
+    }
 }
 
 #[derive(Debug, Error)]
@@ -436,13 +441,13 @@ impl FontSystem {
     /// Rasterizes a shaped glyph from this font system, or returns its cached atlas entry.
     ///
     /// # Errors
-    /// Returns an error if the face, outline or atlas allocation is unavailable, or the glyph
-    /// uses an unsupported color or bitmap format.
+    /// Returns an error if the face, outline or atlas allocation is unavailable,
+    /// or an embedded PNG could not be decoded.
     pub fn rasterize(&mut self, key: GlyphKey) -> Result<AtlasGlyph, FontError> {
-        let atlas = if key.color_width == 0 {
-            &mut self.atlas
-        } else {
+        let atlas = if key.is_color() {
             &mut self.color_atlas
+        } else {
+            &mut self.atlas
         };
         if let Some(entry) = atlas.get(key) {
             return Ok(entry);

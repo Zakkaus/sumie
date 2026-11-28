@@ -457,6 +457,7 @@ fn cache_ink(
             Ok(image) if image.rect.width != 0 && image.rect.height != 0 => {
                 ink.push(glyph_quad(
                     image,
+                    glyph.key.is_color(),
                     [glyph.x + offset, glyph.y],
                     [0, 0],
                     [0; 4],
@@ -476,6 +477,7 @@ impl TabDigits {
             let image = font.rasterize(key)?;
             *quad = Some(glyph_quad(
                 image,
+                key.is_color(),
                 [0, font.metrics().baseline],
                 [0, 0],
                 [0; 4],

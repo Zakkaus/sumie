@@ -111,7 +111,7 @@ impl Decorations {
         for column in col..col + u32::from(width) {
             let cell = [column, row];
             let origin = view.origin(cell);
-            let mut quad = glyph_quad(image, origin, cell, color);
+            let mut quad = glyph_quad(image, false, origin, cell, color);
             if mark == Decoration::LinkHint {
                 quad.atlas.origin[0] += origin[0].rem_euclid(3).cast_unsigned();
                 quad.atlas.size[0] = view.cell[0];
@@ -150,6 +150,7 @@ fn underline(
 
 pub(super) fn glyph_quad(
     image: AtlasGlyph,
+    color_glyph: bool,
     [x, y]: [i32; 2],
     cell: [u32; 2],
     color: Rgba,
@@ -157,7 +158,7 @@ pub(super) fn glyph_quad(
     let rect = image.rect;
     let size = [rect.width, rect.height];
     GlyphQuad {
-        color_glyph: image.color,
+        color_glyph,
         atlas: AtlasRect {
             origin: [rect.x, rect.y],
             size,

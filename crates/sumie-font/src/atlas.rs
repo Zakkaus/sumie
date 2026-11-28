@@ -20,7 +20,6 @@ pub struct AtlasGlyph {
     /// Mask offset from the shaped glyph origin, in pixels right and down.
     pub left: i32,
     pub top: i32,
-    pub color: bool,
 }
 
 /// Tightly packed R8 coverage or premultiplied sRGB RGBA8. Rectangles survive growth.
@@ -124,12 +123,7 @@ impl Atlas {
             width,
             height,
         };
-        let entry = AtlasGlyph {
-            rect,
-            left,
-            top,
-            color: self.channels == 4,
-        };
+        let entry = AtlasGlyph { rect, left, top };
         self.entries.insert(key, entry);
         if !self.resized {
             self.dirty.push(rect);

@@ -152,13 +152,13 @@ impl Layout {
                     let x = output.advance + f64::from(pos.x_offset) * scale;
                     let id = GlyphId::new(info.glyph_id);
                     let mut key = GlyphKey::new(first.face, id, ppem);
-                    if faces[first.face.0].color_glyph(id) {
+                    if crate::raster::png_strike(font, id, metrics.height).is_some() {
                         key.color_width = ceil_width(f64::from(pos.x_advance) * scale).max(1);
                     }
                     output.glyphs.push(TextGlyph {
                         key,
                         x: x.round() as i32,
-                        y: if key.color_width != 0 {
+                        y: if key.is_color() {
                             0
                         } else {
                             metrics.baseline - (f64::from(pos.y_offset) * scale).round() as i32
