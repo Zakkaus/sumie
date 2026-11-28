@@ -197,7 +197,9 @@ impl App {
             || window.may_configure(|| gpu.queue_empty()));
         let next = if ready {
             session.apply_geometry(gpu)?;
-            session.step_scroll(Instant::now(), || window.reduce_motion())?;
+            if session.frame_retry.is_none() {
+                session.step_scroll(Instant::now(), || window.reduce_motion())?;
+            }
             let now = session.frame_retry.is_none().then(|| animation.now_ms());
             session.refresh_visible(now, window)?
         } else {
