@@ -157,6 +157,7 @@ pub(super) fn glyph_quad(
     let rect = image.rect;
     let size = [rect.width, rect.height];
     GlyphQuad {
+        color_glyph: image.color,
         atlas: AtlasRect {
             origin: [rect.x, rect.y],
             size,

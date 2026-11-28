@@ -40,6 +40,12 @@ pub(crate) struct Match {
     request: Request,
     #[cfg(target_os = "macos")]
     bytes: skrifa::font::Blob,
+    #[cfg(target_os = "macos")]
+    postscript: String,
+    #[cfg(target_os = "macos")]
+    color_bitmap: bool,
+    #[cfg(target_os = "linux")]
+    color_face: std::cell::OnceCell<cairo::FontFace>,
 }
 
 impl Match {
@@ -147,6 +153,20 @@ pub(crate) struct Face {
 }
 
 impl Face {
+    pub fn color_glyph(&self, glyph: skrifa::GlyphId) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.matched.color_bitmap {
+            // Core Text also decodes Apple's private sbix image formats.
+            return true;
+        }
+        self.font.color_glyphs().get(glyph).is_some()
+            || self
+                .font
+                .bitmap_strikes()
+                .select_bitmap(glyph, Some(self.ppem))
+                .is_some()
+    }
+
     pub fn matches(&self, matched: &Match, regular_weight: Option<Weight>) -> bool {
         self.matched.path == matched.path
             && self.matched.index == matched.index
@@ -265,7 +285,80 @@ fn to_match(matched: &fontconfig::Pattern<'_>, request: Request) -> Result<Match
         path,
         index,
         request,
+        color_face: std::cell::OnceCell::new(),
     })
+}
+
+#[cfg(target_os = "linux")]
+impl Match {
+    pub(crate) fn draw_color(
+        &self,
+        key: crate::GlyphKey,
+        height: u32,
+        atlas: &mut crate::Atlas,
+    ) -> Result<crate::AtlasGlyph, FontError> {
+        use cairo::{Context, FontFace, Format, Glyph, ImageSurface, freetype::Library};
+        let fail = |_| FontError::ColorGlyph;
+        let face = if let Some(face) = self.color_face.get() {
+            face
+        } else {
+            let library = Library::init().map_err(|_| FontError::ColorGlyph)?;
+            let ft = library
+                .new_face(
+                    &self.path,
+                    isize::try_from(self.index).map_err(|_| FontError::ColorGlyph)?,
+                )
+                .map_err(|_| FontError::ColorGlyph)?;
+            let native = FontFace::create_from_ft(&ft).map_err(fail)?;
+            self.color_face.get_or_init(|| native)
+        };
+        let width = key.color_width;
+        let surface =
+            ImageSurface::create(Format::ARgb32, width.cast_signed(), height.cast_signed())
+                .map_err(fail)?;
+        let ctx = Context::new(&surface).map_err(fail)?;
+        ctx.set_font_face(face);
+        ctx.set_font_size(f64::from(height));
+        let glyph = Glyph::new(key.glyph_id().into(), 0.0, 0.0);
+        let bounds = ctx.glyph_extents(&[glyph]).map_err(fail)?;
+        let (w, h) = (f64::from(width), f64::from(height));
+        let scale = (w / bounds.width()).max(h / bounds.height());
+        if !scale.is_finite() {
+            return Err(FontError::ColorGlyph);
+        }
+        ctx.translate(w * 0.5, h * 0.5);
+        ctx.scale(scale, scale);
+        ctx.translate(
+            -bounds.x_bearing() - bounds.width() * 0.5,
+            -bounds.y_bearing() - bounds.height() * 0.5,
+        );
+        ctx.show_glyphs(&[glyph]).map_err(fail)?;
+        drop(ctx);
+        let src = surface.take_data().map_err(|_| FontError::ColorGlyph)?;
+        atlas.insert(
+            key,
+            zeno::Placement {
+                width,
+                height,
+                ..Default::default()
+            },
+            |dst, pitch| {
+                for (src, dst) in src
+                    .chunks_exact(width as usize * 4)
+                    .zip(dst.chunks_mut(pitch))
+                {
+                    for (argb, rgba) in src
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(dst.as_chunks_mut::<4>().0)
+                    {
+                        *rgba = u32::from_ne_bytes(*argb).rotate_left(8).to_be_bytes();
+                    }
+                }
+            },
+        )
+    }
 }
 
 #[cfg(target_os = "linux")]

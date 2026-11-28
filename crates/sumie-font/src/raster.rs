@@ -53,17 +53,8 @@ impl Rasterizer {
             return sprite::draw(key, metrics, atlas, &mut self.scratch, &mut self.path.0);
         }
         let face = faces.get(key.face.0).ok_or(FontError::UnknownFace)?;
-        let font = &face.font;
-        let glyph = key.glyph;
-        let ppem = key.ppem();
-        // TODO(P1): Composite COLR and color bitmaps into a separate RGBA atlas.
-        if font.color_glyphs().get(glyph).is_some()
-            || font
-                .bitmap_strikes()
-                .select_bitmap(glyph, Some(ppem))
-                .is_some()
-        {
-            return Err(FontError::UnsupportedGlyph);
+        if key.color_width != 0 {
+            return face.matched.draw_color(key, metrics.height, atlas);
         }
         let (offset, placement) = self.prepare(face, key)?;
         if placement.width == 0 || placement.height == 0 {

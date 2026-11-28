@@ -70,7 +70,7 @@ struct TabDigits {
 struct TabPaint {
     font: FontSystem,
     glyphs: Glyphs,
-    dirty: Vec<AtlasRect>,
+    dirty: [Vec<AtlasRect>; 2],
     labels: Vec<TabLabel>,
     measurements: Vec<TabMeasurement>,
     digits: TabDigits,
@@ -107,7 +107,7 @@ impl Tabs {
             .and_then(|paint| paint.frame.as_ref().map(|(placement, _)| placement.clone()));
         if let Some(paint) = &mut self.paint {
             paint.font.clear_dirty_regions();
-            paint.dirty.clear();
+            paint.dirty.iter_mut().for_each(Vec::clear);
         }
     }
 }
@@ -263,7 +263,7 @@ impl TabPaint {
         Ok(Self {
             font,
             glyphs: Glyphs::default(),
-            dirty: Vec::new(),
+            dirty: Default::default(),
             labels: Vec::new(),
             measurements: Vec::new(),
             digits,

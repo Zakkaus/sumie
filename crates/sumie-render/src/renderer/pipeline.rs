@@ -5,9 +5,9 @@ use crate::{AtlasRect, AtlasUpload, atlas, grid::Instance};
 use super::{FRAME_SIZE, INSTANCE_SIZE};
 
 pub(super) struct BoundAtlas {
-    texture: wgpu::Texture,
+    texture: [wgpu::Texture; 2],
     pub(super) bindings: wgpu::BindGroup,
-    uploaded: bool,
+    uploaded: [bool; 2],
 }
 
 impl BoundAtlas {
@@ -15,13 +15,16 @@ impl BoundAtlas {
         device: &wgpu::Device,
         pipeline: &wgpu::RenderPipeline,
         frame: &wgpu::Buffer,
-        size: [u32; 2],
+        size: [[u32; 2]; 2],
     ) -> Self {
-        let texture = atlas::create(device, size);
+        let texture = [
+            atlas::create(device, size[0], wgpu::TextureFormat::R8Unorm),
+            atlas::create(device, size[1], wgpu::TextureFormat::Rgba8Unorm),
+        ];
         Self {
             bindings: bindings(device, pipeline, &texture, frame),
             texture,
-            uploaded: false,
+            uploaded: [false; 2],
         }
     }
 
@@ -40,27 +43,37 @@ impl BoundAtlas {
         queue: &wgpu::Queue,
         pipeline: &wgpu::RenderPipeline,
         frame: &wgpu::Buffer,
-        upload: &AtlasUpload<'_>,
+        uploads: &[AtlasUpload<'_>; 2],
     ) {
-        let size = [upload.width, upload.height];
-        if size != [self.texture.width(), self.texture.height()] {
-            *self = Self::new(device, pipeline, frame, size);
-        }
-        if self.uploaded {
-            for &rect in upload.dirty {
-                atlas::write(queue, &self.texture, upload, rect);
+        let mut resized = false;
+        for ((texture, uploaded), upload) in
+            self.texture.iter_mut().zip(&mut self.uploaded).zip(uploads)
+        {
+            let size = [upload.width, upload.height];
+            if size != [texture.width(), texture.height()] {
+                *texture = atlas::create(device, size, texture.format());
+                *uploaded = false;
+                resized = true;
             }
-        } else {
-            atlas::write(
-                queue,
-                &self.texture,
-                upload,
-                AtlasRect {
-                    origin: [0, 0],
-                    size,
-                },
-            );
-            self.uploaded = true;
+            if *uploaded {
+                for &rect in upload.dirty {
+                    atlas::write(queue, texture, upload, rect);
+                }
+            } else {
+                atlas::write(
+                    queue,
+                    texture,
+                    upload,
+                    AtlasRect {
+                        origin: [0, 0],
+                        size,
+                    },
+                );
+                *uploaded = true;
+            }
+        }
+        if resized {
+            self.rebind(device, pipeline, frame);
         }
     }
 }
@@ -79,7 +92,7 @@ pub(super) fn frame_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer
 fn bindings(
     device: &wgpu::Device,
     pipeline: &wgpu::RenderPipeline,
-    atlas: &wgpu::Texture,
+    atlas: &[wgpu::Texture; 2],
     frame: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -97,7 +110,13 @@ fn bindings(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::TextureView(
-                    &atlas.create_view(&wgpu::TextureViewDescriptor::default()),
+                    &atlas[0].create_view(&wgpu::TextureViewDescriptor::default()),
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(
+                    &atlas[1].create_view(&wgpu::TextureViewDescriptor::default()),
                 ),
             },
         ],
@@ -148,6 +167,16 @@ impl AlphaPipelines {
 }
 
 pub(super) fn pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+    let texture = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
     let bindings = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sumie grid bindings layout"),
         entries: &[
@@ -161,16 +190,8 @@ pub(super) fn pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wg
                 },
                 count: None,
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
+            texture(1),
+            texture(2),
         ],
     });
     create_pipeline(

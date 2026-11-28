@@ -165,7 +165,7 @@ impl<'window> SurfaceRenderer<'window> {
     }
 
     /// Queue atlas transfers for the next draw. Do not hold a terminal lock.
-    pub fn upload_atlas(&mut self, upload: &AtlasUpload<'_>) {
+    pub fn upload_atlas(&mut self, upload: &[AtlasUpload<'_>; 2]) {
         self.renderer.upload_atlas(upload);
     }
 

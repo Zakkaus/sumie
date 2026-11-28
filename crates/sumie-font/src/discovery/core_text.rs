@@ -527,10 +527,15 @@ fn covers(matched: &Match, ch: char) -> bool {
     };
     face.head()
         .is_ok_and(|head| !head.flags().contains(Flags::LAST_RESORT_FONT))
-        && face
-            .charmap()
-            .map(ch)
-            .is_some_and(|glyph| face.outline_glyphs().get(glyph).is_some())
+        && face.charmap().map(ch).is_some_and(|glyph| {
+            matched.color_bitmap
+                || face.outline_glyphs().get(glyph).is_some()
+                || face.color_glyphs().get(glyph).is_some()
+                || face
+                    .bitmap_strikes()
+                    .glyph_for_size(skrifa::instance::Size::unscaled(), glyph)
+                    .is_some()
+        })
 }
 
 fn file_match(
@@ -556,6 +561,11 @@ fn file_match(
         path,
         index,
         request,
+        postscript: name.to_string(),
+        // SAFETY: font is retained throughout the trait query.
+        color_bitmap: unsafe { font.symbolic_traits() }
+            .contains(CTFontSymbolicTraits::TraitColorGlyphs)
+            && FontRef::from_index(&file.bytes, index).is_ok_and(|sfnt| sfnt.sbix().is_ok()),
         bytes: file.bytes.clone(),
     })
 }

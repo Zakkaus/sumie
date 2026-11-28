@@ -457,7 +457,7 @@ fn atlas_keeps_rectangles_and_reports_uploads() {
 
     use crate::{Atlas, FaceId, GlyphKey, Rect};
 
-    let mut atlas = Atlas::new(4);
+    let mut atlas = Atlas::new(4, 1);
     let key = |glyph| GlyphKey::new(FaceId(0), GlyphId::new(glyph), 30.0);
     let small = Placement {
         width: 2,

@@ -321,7 +321,9 @@ impl Segment<'_> {
             let cells = next_column - cell.column;
             let anchor = (cell.column * self.metrics.width).cast_signed();
             let centered = cell.width == 2 || cell.continuation;
-            let (ppem, dx) = if centered {
+            let first_id = GlyphId::new(infos[start].glyph_id);
+            let first_color = self.face.color_glyph(first_id);
+            let (ppem, dx) = if centered && !first_color {
                 self.fit_cluster(cell, &infos[start..end], &positions[start..end])?
             } else {
                 (self.face.ppem, 0)
@@ -332,13 +334,31 @@ impl Segment<'_> {
             }
             let mut relative = pen;
             for (info, pos) in infos[start..end].iter().zip(&positions[start..end]) {
+                let id = GlyphId::new(info.glyph_id);
+                let color = if id == first_id {
+                    first_color
+                } else {
+                    self.face.color_glyph(id)
+                };
+                let mut key = GlyphKey::new(cell.face, id, ppem);
+                if color {
+                    key.color_width = cells.max(1) * self.metrics.width;
+                }
                 glyphs.push(ShapedGlyph {
-                    key: GlyphKey::new(cell.face, GlyphId::new(info.glyph_id), ppem),
+                    key,
                     cluster: cell.byte,
                     column: cell.column,
                     cells,
-                    x: anchor + dx + px(relative + pos.x_offset, scale).round() as i32,
-                    y: self.face.baseline - px(pos.y_offset, scale).round() as i32,
+                    x: if color {
+                        anchor
+                    } else {
+                        anchor + dx + px(relative + pos.x_offset, scale).round() as i32
+                    },
+                    y: if color {
+                        0
+                    } else {
+                        self.face.baseline - px(pos.y_offset, scale).round() as i32
+                    },
                 });
                 relative += pos.x_advance;
             }

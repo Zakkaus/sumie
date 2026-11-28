@@ -113,7 +113,7 @@ impl Renderer {
         let frame_limit = u32::try_from(max_buffer.saturating_sub(FRAME_SIZE) / INSTANCE_SIZE)
             .unwrap_or(u32::MAX);
         let frame = frame_buffer(device, INITIAL_INSTANCES.min(frame_limit));
-        let grid_atlas = BoundAtlas::new(device, &pipeline, &frame, [1, 1]);
+        let grid_atlas = BoundAtlas::new(device, &pipeline, &frame, [[1, 1]; 2]);
         Self {
             grid_atlas,
             chrome_atlas: None,
@@ -171,9 +171,9 @@ impl Renderer {
         OffscreenTarget { view, texture }
     }
 
-    /// Queue atlas transfers for the next draw. Do not hold a terminal lock.
-    /// The first upload and any change in dimensions use the full atlas.
-    pub fn upload_atlas(&mut self, upload: &AtlasUpload<'_>) {
+    /// Upload coverage and premultiplied color, in that order. Reallocation uploads a full plane.
+    /// Do not hold a terminal lock.
+    pub fn upload_atlas(&mut self, upload: &[AtlasUpload<'_>; 2]) {
         self.grid_atlas.upload(
             &self.device,
             &self.queue,
@@ -452,7 +452,7 @@ impl Renderer {
 
     fn prepare_chrome(&mut self, layer: Option<&ChromeLayer<'_>>) -> u32 {
         let Some(layer) = layer else { return 0 };
-        let size = [layer.atlas.width, layer.atlas.height];
+        let size = layer.atlas.map(|plane| [plane.width, plane.height]);
         let atlas = self.chrome_atlas.get_or_insert_with(|| {
             BoundAtlas::new(&self.device, &self.pipeline, &self.frame, size)
         });
