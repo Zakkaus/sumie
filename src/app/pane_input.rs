@@ -219,15 +219,26 @@ impl Session {
             }
             (event, _) => event,
         };
+        let scope = if pane.launch == super::Launch::Settings
+            && matches!(event, Event::Key { .. })
+            && pane.pane.terminal.reports_key_events()?
+        {
+            input::Scope::Recording
+        } else if has_splits {
+            input::Scope::Split
+        } else {
+            input::Scope::Single
+        };
         match input::route(
             (id, recipient),
             &mut pane.pane,
             &mut self.routing,
             searching,
             event,
-            has_splits,
+            scope,
         )? {
             Effect::Tab(action) => return Ok(Some(tabs::Action::Key(action))),
+            Effect::Settings => return Ok(Some(tabs::Action::Settings)),
             Effect::Pane(action) => return Ok(Some(tabs::Action::Pane(action))),
             Effect::Zoom(action) => self.zoom(action)?,
             Effect::InputBell => self.view.input_bell = true,

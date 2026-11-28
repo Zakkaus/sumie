@@ -24,6 +24,7 @@ pub(crate) enum Effect {
     ViewportChanged,
     Search(SearchAction),
     Tab(TabAction),
+    Settings,
     Pane(PaneAction),
     Zoom(FontZoom),
 }
@@ -78,6 +79,10 @@ impl Default for Routing {
 }
 
 impl Routing {
+    pub(crate) fn set_bindings(&mut self, bindings: &sumie_config::Keybinds) {
+        self.shortcuts.set_bindings(bindings.overrides());
+    }
+
     pub(crate) fn change_recipient(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1);
         self.repeating_search_key = None;
@@ -202,13 +207,20 @@ impl Routing {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Scope {
+    Single,
+    Split,
+    Recording,
+}
+
 pub(crate) fn route(
     (id, recipient): (u64, u64),
     pane: &mut impl Pane<Error = Error>,
     routing: &mut Routing,
     searching: bool,
     event: Event,
-    has_splits: bool,
+    scope: Scope,
 ) -> Result<Effect> {
     if matches!(
         &event,
@@ -236,16 +248,23 @@ pub(crate) fn route(
             action,
         } => {
             let symbol = logical.character();
-            let shortcut = routing.shortcuts.match_key(
-                physical,
-                symbol,
-                modifiers,
-                action,
-                has_splits,
-                || pane.primary_screen(),
-            )?;
+            // A recording press must reach the settings child. The application still owns
+            // repeats and releases of presses it intercepted before recording began.
+            let shortcut = if scope == Scope::Recording && matches!(action, KeyAction::Press) {
+                None
+            } else {
+                routing.shortcuts.match_key(
+                    physical,
+                    symbol,
+                    modifiers,
+                    action,
+                    scope == Scope::Split,
+                    || pane.primary_screen(),
+                )?
+            };
             match shortcut {
                 Some(Shortcut::Tab(action)) => return Ok(Effect::Tab(action)),
+                Some(Shortcut::Settings) => return Ok(Effect::Settings),
                 Some(Shortcut::Pane(action)) => return Ok(Effect::Pane(action)),
                 Some(Shortcut::Zoom(action)) => return Ok(Effect::Zoom(action)),
                 shortcut if search_owns_key => {

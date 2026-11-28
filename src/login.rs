@@ -42,6 +42,10 @@ impl Environment {
         Ok(Self(env))
     }
 
+    pub(crate) const fn vars(&self) -> &BTreeMap<OsString, OsString> {
+        &self.0
+    }
+
     /// The login a new pane starts, with shell integration when `integration` is set. The
     /// first integrated login can block on the shell integration install.
     pub(crate) fn login(&self, integration: bool) -> Login {

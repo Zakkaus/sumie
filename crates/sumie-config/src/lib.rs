@@ -9,6 +9,7 @@ mod cursor;
 #[cfg(unix)]
 mod edit;
 mod images;
+mod keybinds;
 mod language;
 mod load;
 mod problem;
@@ -26,6 +27,7 @@ pub use cursor::{Cursor, CursorStyle};
 #[cfg(unix)]
 pub use edit::{EditValues, WriteError, format_list, parse_list, save, winner};
 pub use images::Images;
+pub use keybinds::Keybinds;
 pub use language::Language;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use load::load_visited;
@@ -97,6 +99,9 @@ pub struct Config {
     /// History scrolling behavior.
     #[schemars(title = "Scrolling", extend("x-sumie-category" = "behavior"))]
     pub scroll: Scroll,
+    /// Override application shortcuts by action.
+    #[schemars(title = "Shortcuts", extend("x-sumie-category" = "keybinds"))]
+    pub keybinds: Keybinds,
     /// Minimum WCAG contrast ratio for text. Set to 1.0 to disable correction.
     #[serde(deserialize_with = "deserialize_contrast")]
     #[schemars(
@@ -116,6 +121,14 @@ pub struct Config {
         extend("x-sumie-category" = "behavior")
     )]
     scrollback_limit: Option<usize>,
+    /// Use h, j, k and l in the settings editor in addition to the arrow keys.
+    #[serde(rename = "settings-vim-keys")]
+    #[schemars(with = "bool", default = "default_settings_vim_keys", title = "Vim keys in settings", extend("x-sumie-category" = "behavior"))]
+    settings_vim_keys: Option<bool>,
+}
+
+const fn default_settings_vim_keys() -> bool {
+    true
 }
 
 impl Config {
@@ -164,6 +177,8 @@ impl Config {
         self.shell.overlay(&file.shell);
         self.window.overlay(&file.window);
         self.scroll.overlay(&file.scroll);
+        self.keybinds.overlay(file.keybinds);
+        self.settings_vim_keys = file.settings_vim_keys.or(self.settings_vim_keys);
         self.minimum_contrast = file.minimum_contrast.or(self.minimum_contrast);
         self.scrollback_limit = file.scrollback_limit.or(self.scrollback_limit);
     }

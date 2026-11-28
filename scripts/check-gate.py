@@ -25,10 +25,10 @@ ADAPTERS = {"sumie-vt", "sumie-font", "sumie-render", "sumie-wayland", "sumie-ma
 EDGES = {name: BASE for name in ADAPTERS}
 EDGES.update({
     "sumie-core": frozenset(),
-    "sumie-config": frozenset(),
+    "sumie-config": {"sumie-core"},
     "sumie-locale": frozenset({"sumie-config"}),
     "sumie-ui": BASE | {"sumie-font", "sumie-render"},
-    "sumie-settings": {"sumie-config", "sumie-locale"},
+    "sumie-settings": {"sumie-config", "sumie-core", "sumie-locale"},
     "sumie": BASE | ADAPTERS | {"sumie-locale", "sumie-settings", "sumie-ui"},
 })
 UNSAFE_CRATES = {"sumie-vt", "sumie-font", "sumie-render"}
@@ -52,7 +52,7 @@ DEBUG_PRINT = re.compile(r"\b(?:e?print(?:ln)?|dbg)!")
 # gate in minutes instead of running until the CI job limit.
 TEST_TIMEOUT = 600
 # Focused probes run only the affected crate's tests.
-TEST_GATES = ("test", "font-test", "locale-test", "settings-test")
+TEST_GATES = ("test", "font-test", "locale-test", "settings-test", "settings-app-test")
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -435,6 +435,7 @@ def main():
         "font-test": ("test", "--locked", "-p", "sumie-font", "--message-format=json"),
         "locale-test": ("test", "--locked", "-p", "sumie-locale", "--message-format=json"),
         "settings-test": ("test", "--locked", "-p", "sumie-settings", "--message-format=json"),
+        "settings-app-test": ("test", "--locked", "-p", "sumie", "settings_", "--message-format=json"),
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",

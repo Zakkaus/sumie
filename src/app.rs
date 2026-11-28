@@ -84,9 +84,16 @@ struct PaneTab {
     activity: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Launch {
+    Shell,
+    Settings,
+}
+
 struct PaneState {
     id: u64,
     rect: Rect,
+    launch: Launch,
     cell: [u32; 2],
     viewport_px: [u16; 2],
     exited: bool,
@@ -129,11 +136,20 @@ impl Session {
             config.window.padding(),
         )?;
         let home = std::env::home_dir().ok_or("no home directory for login shell")?;
-        let mut first = spawn.open(0, view.content_rect(), &view, config, &home, watches)?;
+        let mut first = spawn.open(
+            (0, view.content_rect()),
+            &view,
+            config,
+            &home,
+            Launch::Shell,
+            watches,
+        )?;
         first.text_recipient = Some(0);
+        let mut routing = input::Routing::default();
+        routing.set_bindings(&config.keybinds);
         Ok(Self {
             tabs: WindowTabs::new(PaneTab::new(first)),
-            routing: input::Routing::default(),
+            routing,
             next_id: 1,
             view,
             frame_retry: None,

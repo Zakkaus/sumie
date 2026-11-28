@@ -1,12 +1,15 @@
 use std::{borrow::Cow, path::PathBuf};
 
-use sumie_config::{Category, EditValues, Error, Problem, Value, WriteError, load, save, settings};
+use sumie_config::{
+    Category, EditValues, Error, Kind, Problem, Value, WriteError, load, save, settings,
+};
+use sumie_core::{Chord, binding_conflict};
 use sumie_locale::Locale;
 
 use crate::{
     input::{Key, Line},
     log::Log,
-    value::{OptionInfo, same},
+    value::{OptionInfo, PLATFORM, same},
 };
 
 pub(crate) struct Tab {
@@ -24,12 +27,13 @@ pub(crate) enum Mode {
         prior: usize,
     },
     Edit(Line),
+    Record,
 }
 
 impl Mode {
     pub(crate) fn line(&self) -> Option<&Line> {
         match self {
-            Self::Browse => None,
+            Self::Browse | Self::Record => None,
             Self::Edit(line) | Self::Search { line, .. } => Some(line),
         }
     }
@@ -38,6 +42,7 @@ impl Mode {
 enum Notice {
     Message(&'static str),
     Allowed(usize),
+    BindingConflict { chord: Chord, option: usize },
 }
 
 pub(crate) struct Model {
@@ -52,7 +57,10 @@ pub(crate) struct Model {
     pub(crate) selected: usize,
     pub(crate) mode: Mode,
     matches: Vec<usize>,
+    top: usize,
+    clicked: Option<usize>,
     error: Option<Notice>,
+    vim_keys: bool,
 }
 
 impl Model {
@@ -86,7 +94,10 @@ impl Model {
             selected: 0,
             mode: Mode::Browse,
             matches: Vec::new(),
+            top: 0,
+            clicked: None,
             error: None,
+            vim_keys: false,
         };
         model.reload();
         model
@@ -104,6 +115,16 @@ impl Model {
         self.invalid_config = load(&self.main)
             .inspect_err(|error| self.log.error(error))
             .is_err();
+        let vim_keys = self
+            .options
+            .iter()
+            .find(|option| option.info.path == "settings-vim-keys")
+            .expect("Vim key setting is in the schema");
+        self.vim_keys = self
+            .value(vim_keys)
+            .and_then(Value::as_bool)
+            .or_else(|| vim_keys.default.as_ref().and_then(Value::as_bool))
+            .expect("Vim key setting has a boolean default");
     }
 
     pub(crate) fn has_notice(&self) -> bool {
@@ -118,6 +139,13 @@ impl Model {
                 locale
                     .text("ui.expected")
                     .replace("{value}", &self.options[index].allowed(locale))
+                    .into(),
+            ),
+            Some(Notice::BindingConflict { chord, option }) => Some(
+                locale
+                    .text("ui.binding-conflict")
+                    .replace("{chord}", &chord.display(PLATFORM))
+                    .replace("{action}", self.options[option].label(locale))
                     .into(),
             ),
             None => self
@@ -157,8 +185,95 @@ impl Model {
         !same(self.value(option), self.default(option))
     }
 
+    pub(crate) fn first_row(&self, page: usize) -> usize {
+        self.top
+            .clamp((self.selected + 1).saturating_sub(page), self.selected)
+            .min(self.visible().len().saturating_sub(page))
+    }
+
+    pub(crate) fn wheel(&mut self, down: bool, page: usize) {
+        if !matches!(self.mode, Mode::Browse | Mode::Search { .. }) || self.visible().is_empty() {
+            return;
+        }
+        let top = self.first_row(page);
+        self.top = if down {
+            (top + 1).min(self.visible().len().saturating_sub(page))
+        } else {
+            top.saturating_sub(1)
+        };
+        self.selected = self.selected.clamp(self.top, self.top + page - 1);
+        self.clicked = None;
+    }
+
+    pub(crate) fn click_tab(&mut self, tab: usize) {
+        if matches!(self.mode, Mode::Browse) {
+            self.clicked = None;
+            self.switch(tab);
+        }
+    }
+
+    pub(crate) fn click_option(&mut self, selected: usize) {
+        if !matches!(self.mode, Mode::Browse | Mode::Search { .. }) {
+            return;
+        }
+        let second = self.clicked.replace(selected) == Some(selected) && self.selected == selected;
+        self.selected = selected;
+        if second {
+            self.clicked = None;
+            if matches!(self.mode, Mode::Search { .. }) {
+                self.accept_match();
+            }
+            let option = &self.options[self.visible()[self.selected]];
+            if matches!(option.info.kind, Kind::Bool | Kind::Choice(_)) {
+                self.step(true);
+            } else {
+                self.begin_edit();
+            }
+        }
+    }
+
+    fn begin_edit(&mut self) {
+        let option = &self.options[self.visible()[self.selected]];
+        self.mode = if matches!(option.info.kind, Kind::Binding(_)) {
+            Mode::Record
+        } else if let Some(text) = option.edit_text(self.value(option)) {
+            Mode::Edit(Line::new(text))
+        } else {
+            return;
+        };
+        self.error = None;
+    }
+
+    fn record(&mut self, chord: Chord) {
+        let index = self.visible()[self.selected];
+        let Kind::Binding(target) = self.options[index].info.kind else {
+            unreachable!("recording requires a binding");
+        };
+        let find =
+            |id| {
+                self.options.iter().position(|option| {
+            matches!(option.info.kind, Kind::Binding(binding) if binding.id == id)
+        }).expect("every binding has an option")
+            };
+        if let Some(other) = binding_conflict(PLATFORM, chord, target, |binding| {
+            self.values
+                .get(&self.options[find(binding.id)].info.path)
+                .and_then(Value::as_str)
+                .and_then(Chord::parse)
+        }) {
+            self.error = Some(Notice::BindingConflict {
+                chord,
+                option: find(other.id),
+            });
+        } else if self.write(index, &Value::String(chord.to_string())) {
+            self.mode = Mode::Browse;
+        }
+    }
+
     /// Return false when the session should exit.
     pub(crate) fn key(&mut self, key: Key, page: usize) -> bool {
+        self.clicked = None;
+        self.top = self.first_row(page);
         match &mut self.mode {
             Mode::Edit(line) => match key {
                 Key::Esc => {
@@ -186,6 +301,15 @@ impl Model {
                     }
                 }
             },
+            Mode::Record => match key {
+                Key::Esc => {
+                    self.mode = Mode::Browse;
+                    self.error = None;
+                }
+                Key::Chord(chord) => self.record(chord),
+                Key::Pasted(_) => (),
+                _ => self.error = Some(Notice::Message("ui.unbindable")),
+            },
             Mode::Browse => return self.browse(key, page),
         }
         true
@@ -209,17 +333,13 @@ impl Model {
                 self.update_matches();
             }
             Key::Char('r') => self.reset(),
-            Key::Left | Key::Char('h') => self.step(false),
-            Key::Right | Key::Char('l') => self.step(true),
-            Key::Enter => {
-                let option = &self.options[self.visible()[self.selected]];
-                if let Some(text) = option.edit_text(self.value(option)) {
-                    self.mode = Mode::Edit(Line::new(text));
-                    self.error = None;
-                }
-            }
-            Key::Char('j') => self.navigate(Key::Down, page),
-            Key::Char('k') => self.navigate(Key::Up, page),
+            Key::Left => self.step(false),
+            Key::Right => self.step(true),
+            Key::Char('h') if self.vim_keys => self.step(false),
+            Key::Char('l') if self.vim_keys => self.step(true),
+            Key::Enter => self.begin_edit(),
+            Key::Char('j') if self.vim_keys => self.navigate(Key::Down, page),
+            Key::Char('k') if self.vim_keys => self.navigate(Key::Up, page),
             _ => self.navigate(key, page),
         }
         true
@@ -229,6 +349,7 @@ impl Model {
         if self.tab != tab {
             self.tab = tab;
             self.selected = 0;
+            self.top = 0;
         }
     }
 
@@ -263,6 +384,7 @@ impl Model {
                 }),
         );
         self.selected = 0;
+        self.top = 0;
     }
 
     fn accept_match(&mut self) {
@@ -276,6 +398,7 @@ impl Model {
         }) {
             self.tab = tab;
             self.selected = selected;
+            self.top = 0;
             self.mode = Mode::Browse;
         }
     }

@@ -109,7 +109,13 @@ fn browse_and_search_handle_pages_and_committed_utf8() {
     assert_eq!(selected(&model), "font.weight");
     press(
         &mut model,
-        [Key::PageUp, Key::Char('j'), Key::Char('k'), Key::Char('5')],
+        [
+            Key::PageUp,
+            Key::Char('j'),
+            Key::Char('k'),
+            Key::Char('6'),
+            Key::Char('7'),
+        ],
     );
     assert_eq!(selected(&model), "font.family");
     let mut decoder = Decoder::default();
@@ -258,6 +264,122 @@ fn invalid_number_reports_localized_inclusive_range() {
 }
 
 #[test]
+fn shortcut_recording_writes_to_the_defining_file() {
+    let dir = Scratch::new();
+    let initial = "[keybinds]\ncopy = 'Alt+F1' # keep\n";
+    let included = dir.file("shortcuts.toml", initial);
+    let main = dir.file(
+        "sumie.toml",
+        "language = 'en'\ninclude = ['shortcuts.toml']\n",
+    );
+    let mut editor = model(&main);
+    let mut decoder = Decoder::default();
+    press(&mut editor, [Key::Char('5'), Key::Enter]);
+    assert_eq!(selected(&editor), "keybinds.copy");
+    decoder.recording = true;
+    press(
+        &mut editor,
+        b"\x1b[120;7:3u\x1b[120;7:2u"
+            .iter()
+            .filter_map(|&byte| decoder.push(byte)),
+    );
+    assert_eq!(fs::read_to_string(&included).unwrap(), initial);
+    press(
+        &mut editor,
+        b"\x1b[120;7u".iter().filter_map(|&byte| decoder.push(byte)),
+    );
+    let config = load(&main).unwrap();
+    assert_eq!(
+        config.keybinds.overrides().collect::<Vec<_>>(),
+        [(
+            sumie_core::Chord::parse("Ctrl+Alt+X").unwrap(),
+            sumie_core::Shortcut::Copy,
+        )]
+    );
+    assert_eq!(
+        fs::read_to_string(included).unwrap(),
+        "[keybinds]\ncopy = \"Ctrl+Alt+X\" # keep\n"
+    );
+    assert!(matches!(editor.mode, Mode::Browse));
+}
+
+#[test]
+fn shortcut_conflict_names_the_other_action_and_can_be_cancelled() {
+    let dir = Scratch::new();
+    let initial = "language = 'en'\n[keybinds]\npaste = 'Alt+F1'\n";
+    let main = dir.file("sumie.toml", initial);
+    let mut editor = model(&main);
+    press(&mut editor, [Key::Char('5'), Key::Enter]);
+    let mut decoder = Decoder::default();
+    decoder.recording = true;
+    press(
+        &mut editor,
+        b"\x1b[1;3P".iter().filter_map(|&byte| decoder.push(byte)),
+    );
+    let modifier = if cfg!(target_os = "macos") {
+        "Option"
+    } else {
+        "Alt"
+    };
+    assert_eq!(
+        editor.notice().unwrap(),
+        format!("Paste already uses {modifier}+F1.")
+    );
+    let mut screen = Screen::default();
+    let layout = Layout::new(&editor, 42, 8);
+    screen.render(&editor, 42, 8, &layout);
+    assert!(
+        screen
+            .rows
+            .iter()
+            .any(|row| row == &format!("Paste already uses {modifier}+F1."))
+    );
+    assert_eq!(fs::read_to_string(&main).unwrap(), initial);
+    press(
+        &mut editor,
+        b"\x1b[27u".iter().filter_map(|&byte| decoder.push(byte)),
+    );
+    assert!(matches!(editor.mode, Mode::Browse));
+    assert!(editor.notice().is_none());
+}
+
+#[test]
+fn mouse_clicks_select_then_edit_and_wheel_scrolls_only_the_list() {
+    let dir = Scratch::new();
+    let main = dir.file("sumie.toml", "language = 'en'\n[font]\nsize = 15.0\n");
+    let mut editor = model(&main);
+    let mut decoder = Decoder::default();
+    let mut mouse = |editor: &mut Model, report: &[u8]| {
+        for key in report.iter().filter_map(|&byte| decoder.push(byte)) {
+            assert!(Layout::new(editor, 40, 8).mouse(editor, 40, key));
+        }
+    };
+    mouse(&mut editor, b"\x1b[<0;10;1M");
+    mouse(&mut editor, b"\x1b[<65;1;7M"); // Help, not the list.
+    assert_eq!(selected(&editor), "font.family");
+    mouse(&mut editor, b"\x1b[<65;1;2M");
+    assert_eq!(selected(&editor), "font.size");
+    mouse(&mut editor, b"\x1b[<0;1;2M\x1b[<0;1;2m");
+    assert!(matches!(editor.mode, Mode::Browse));
+    mouse(&mut editor, b"\x1b[<0;1;2M");
+    press(&mut editor, [Key::Backspace, Key::Char('6'), Key::Enter]);
+    assert_font_size(&main, 16.0);
+}
+
+#[test]
+fn disabling_vim_keys_leaves_arrow_keys_active() {
+    let dir = Scratch::new();
+    let path = dir.file("sumie.toml", "settings-vim-keys = false\n");
+    let mut editor = model(&path);
+    press(&mut editor, [Key::Char('2'), Key::Char('j')]);
+    assert_eq!(selected(&editor), "font.family");
+    press(&mut editor, [Key::Down, Key::Char('l')]);
+    assert_font_size(&path, 15.0);
+    press(&mut editor, [Key::Right]);
+    assert_font_size(&path, 15.1);
+}
+
+#[test]
 fn render_wide_and_narrow_in_en_and_zh_tw() {
     use unicode_width::UnicodeWidthStr as _;
 
@@ -287,7 +409,7 @@ fn render_wide_and_narrow_in_en_and_zh_tw() {
 }
 
 const EN_WIDE: &str = concat!(
-    "1 Appearance             2 [Font]                 3 Colors                 4 Behavior\n",
+    "1 Appearance        2 [Font]            3 Colors            4 Behavior          5 Shortcuts\n",
     ">* Family                   甲乙丙丁戊己庚辛壬癸   Choose a different installed font family for the…\n",
     "   Size                     15                     Default: JetBrains Mono\n",
     "   Weight                   Automatic              Allowed: Text\n",
@@ -295,7 +417,7 @@ const EN_WIDE: &str = concat!(
     "↑↓ Select  ←→ Change  Enter Edit  / Search  r Reset  Esc Quit",
 );
 const EN_NARROW: &str = concat!(
-    "1 Appear… 2 [Font]  3 Colors  4 Behavior\n",
+    "1 Appe… 2 [Fon… 3 Colo… 4 Beha… 5 Short…\n",
     ">* Family               甲乙丙丁戊己庚…\n",
     "   Size                 15\n",
     "   Weight               Automatic\n",
@@ -305,7 +427,7 @@ const EN_NARROW: &str = concat!(
     "↑↓ Select  ←→ Change  Enter Edit  / Sea…",
 );
 const ZH_WIDE: &str = concat!(
-    "1 外觀                   2 [字型]                 3 配色                   4 行為\n",
+    "1 外觀              2 [字型]            3 配色              4 行為              5 快捷鍵\n",
     ">* 字型家族                 甲乙丙丁戊己庚辛壬癸   選擇已安裝的字型家族，用於終端機文字。\n",
     "   字級                     15                     預設值: JetBrains Mono\n",
     "   字重                     自動                   可用值: 文字\n",
@@ -313,7 +435,7 @@ const ZH_WIDE: &str = concat!(
     "↑↓ 選取  ←→ 修改  Enter 編輯  / 搜尋  r 還原  Esc 離開",
 );
 const ZH_NARROW: &str = concat!(
-    "1 外觀    2 [字型]  3 配色    4 行為\n",
+    "1 外觀  2 [字…  3 配色  4 行為  5 快捷鍵\n",
     ">* 字型家族             甲乙丙丁戊己庚…\n",
     "   字級                 15\n",
     "   字重                 自動\n",

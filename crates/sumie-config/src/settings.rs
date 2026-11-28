@@ -4,13 +4,13 @@ use std::{fmt::Write as _, sync::LazyLock};
 
 use schemars::{Schema, generate::SchemaSettings};
 use serde_json::Value;
+use sumie_core::Binding;
 
 use crate::Config;
 
 const CATEGORY: &str = "x-sumie-category";
 
 /// Settings editor tab that lists a key, as the design book's settings section orders them.
-/// Keybinds, links and input method have no keys yet; the editor hides empty tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Category {
     Appearance,
@@ -79,6 +79,7 @@ pub enum Kind {
     Palette,
     /// File paths relative to the file that lists them.
     Paths,
+    Binding(&'static Binding),
     Choice(Vec<Choice>),
 }
 
@@ -171,12 +172,17 @@ fn info(path: String, leaf: &Value, table: &Value) -> SettingInfo {
                 .find(|category| category.id() == id)
         })
         .unwrap_or_else(|| panic!("{path} has no category"));
-    SettingInfo {
-        kind: kind(&path, leaf),
-        default: leaf
+    let kind = kind(&path, leaf);
+    let default = match kind {
+        Kind::Binding(binding) => Some(binding.default_on(crate::keybinds::platform()).into()),
+        _ => leaf
             .get("default")
             .filter(|value| !value.is_null())
             .cloned(),
+    };
+    SettingInfo {
+        kind,
+        default,
         default_from: leaf["x-sumie-default-from"].as_str().map(str::to_owned),
         label: text("title"),
         description: text("description"),
@@ -186,6 +192,12 @@ fn info(path: String, leaf: &Value, table: &Value) -> SettingInfo {
 }
 
 fn kind(path: &str, leaf: &Value) -> Kind {
+    if let Some(binding) = path
+        .strip_prefix("keybinds.")
+        .and_then(crate::keybinds::binding)
+    {
+        return Kind::Binding(binding);
+    }
     if let Some(choices) = leaf["oneOf"].as_array() {
         return Kind::Choice(
             choices
@@ -262,13 +274,15 @@ mod tests {
     fn every_leaf_has_title_and_category() {
         let settings = settings();
         let paths: Vec<_> = settings.iter().map(|info| info.path.as_str()).collect();
+        assert_eq!(paths.len(), 24 + sumie_core::BINDINGS.len(), "{paths:?}");
         assert_eq!(
-            paths[..8],
+            paths[..9],
             [
                 "include",
                 "language",
                 "minimum-contrast",
                 "scrollback-limit",
+                "settings-vim-keys",
                 "font.family",
                 "font.size",
                 "font.weight",
@@ -287,6 +301,14 @@ mod tests {
                 );
             }
         }
+        let count = |category| {
+            settings
+                .iter()
+                .filter(|info| info.category == category)
+                .count()
+        };
+        let counts = Category::ALL.map(count);
+        assert_eq!(counts, [6, 4, 7, 7, sumie_core::BINDINGS.len(), 0, 0]);
     }
 
     #[test]

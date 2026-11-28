@@ -468,6 +468,34 @@ def settings_controls():
           replace_once("let _ = tcsetattr(io::stdin(), OptionalActions::Now, &original);",
                        "let _ = original;"),
           "test terminal::tests::restores_after_error ... FAILED")
+    probe("recorded shortcut is not saved", "settings-test", "crates/sumie-settings/src/model.rs",
+          replace_once("} else if self.write(index, &Value::String(chord.to_string())) {",
+                       "} else {"),
+          "test tests::shortcut_recording_writes_to_the_defining_file ... FAILED")
+    probe("shortcut conflict misses the other action", "settings-test",
+          "crates/sumie-core/src/shortcuts/bindings.rs",
+          replace_once("binding.action != target.action", "binding.action == target.action"),
+          "test tests::shortcut_conflict_names_the_other_action_and_can_be_cancelled ... FAILED")
+    probe("settings mouse wheel scrolls in the wrong direction", "settings-test",
+          "crates/sumie-settings/src/screen.rs", replace_once("model.wheel(down,", "model.wheel(!down,"),
+          "test tests::mouse_clicks_select_then_edit_and_wheel_scrolls_only_the_list ... FAILED")
+    probe("settings mouse edits on the first click", "settings-test", "crates/sumie-settings/src/model.rs",
+          replace_once("if second {", "if !second {"),
+          "test tests::mouse_clicks_select_then_edit_and_wheel_scrolls_only_the_list ... FAILED")
+    probe("settings leaves SGR mouse reporting enabled", "settings-test", "crates/sumie-settings/src/terminal.rs",
+          replace_once(r"\x1b[?1006l", ""),
+          "test terminal::tests::restores_and_reports_signal_status ... FAILED")
+    probe("settings ignores the Vim key switch", "settings-test", "crates/sumie-settings/src/model.rs",
+          replace_once("Key::Char('j') if self.vim_keys", "Key::Char('j')"),
+          "test tests::disabling_vim_keys_leaves_arrow_keys_active ... FAILED")
+    probe("settings chord is not dispatched", "settings-app-test", "src/input.rs",
+          replace_once("Some(Shortcut::Settings) => return Ok(Effect::Settings),",
+                       "Some(Shortcut::Settings) => return Ok(Effect::None),"),
+          "test input::tests::settings_chord_opens_a_tab_unless_it_is_being_recorded ... FAILED")
+    if sys.platform.startswith("linux"):
+        probe("settings tab starts the wrong command", "settings-app-test", "src/pane.rs",
+              replace_once('let args = ["config".into()];', 'let args = ["schema".into()];'),
+              "test tests::settings_child_receives_config_argument ... FAILED")
 
 
 def interrupted(_signum, _frame):

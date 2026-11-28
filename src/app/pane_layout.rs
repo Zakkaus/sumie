@@ -133,6 +133,7 @@ impl Session {
         &mut self,
         rect: Rect,
         config: &sumie_config::Config,
+        launch: super::Launch,
         watches: &mut impl PaneWatches,
     ) -> Result<PaneState> {
         let cwd = self
@@ -142,9 +143,14 @@ impl Session {
             .as_deref()
             .filter(|p| p.is_dir())
             .unwrap_or(&self.home);
-        let pane = self
-            .spawn
-            .open(self.next_id, rect, &self.view, config, cwd, watches)?;
+        let pane = self.spawn.open(
+            (self.next_id, rect),
+            &self.view,
+            config,
+            cwd,
+            launch,
+            watches,
+        )?;
         self.next_id += 1;
         Ok(pane)
     }
@@ -163,7 +169,7 @@ impl Session {
             self.view.cell,
             self.view.pane_padding(),
         );
-        let pane = match self.spawn_pane(rect, config, window) {
+        let pane = match self.spawn_pane(rect, config, super::Launch::Shell, window) {
             Ok(pane) => pane,
             Err(error) => {
                 tracing::warn!(%error, "could not split pane");

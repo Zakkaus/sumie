@@ -22,7 +22,7 @@ fn held_enter_never_reaches_the_next_pty() {
         &mut routing,
         false,
         enter(KeyAction::Press),
-        false,
+        input::Scope::Single,
     )
     .unwrap();
     assert!(first.pty.input_fd().is_some());
@@ -34,7 +34,7 @@ fn held_enter_never_reaches_the_next_pty() {
             &mut routing,
             false,
             enter(action),
-            false,
+            input::Scope::Single,
         )
         .unwrap();
         assert!(next.pty.input_fd().is_none());
@@ -63,7 +63,7 @@ fn held_keys_keep_their_release_but_not_their_repeat_across_focus() {
         &mut routing,
         false,
         ctrl(KeyAction::Press),
-        false,
+        input::Scope::Single,
     )
     .unwrap();
     for _ in 0..20 {
@@ -80,7 +80,15 @@ fn held_keys_keep_their_release_but_not_their_repeat_across_focus() {
         } else {
             &mut panes[1]
         };
-        input::route((owner, generation), pane, &mut routing, false, event, false).unwrap();
+        input::route(
+            (owner, generation),
+            pane,
+            &mut routing,
+            false,
+            event,
+            input::Scope::Single,
+        )
+        .unwrap();
     }
     assert!(!panes[0].terminal.at_bottom().unwrap());
     assert!(panes[1].pty.input_fd().is_none());
@@ -108,7 +116,7 @@ fn rerouted_release_requires_a_reported_press() {
             &mut routing,
             false,
             event(KeyAction::Press),
-            false,
+            input::Scope::Single,
         )
         .unwrap();
         pane.pty.flush_input().unwrap();
@@ -120,7 +128,7 @@ fn rerouted_release_requires_a_reported_press() {
             &mut routing,
             false,
             event(KeyAction::Release),
-            false,
+            input::Scope::Single,
         )
         .unwrap();
         assert!(pane.pty.input_fd().is_none());
@@ -141,8 +149,15 @@ fn unavailable_directional_chords_reach_the_pty() {
         };
         for action in [KeyAction::Press, KeyAction::Repeat, KeyAction::Release] {
             let event = key_event(K::ArrowLeft, L::Left, action, modifiers);
-            let effect =
-                input::route((0, 0), &mut pane, &mut routing, false, event, false).unwrap();
+            let effect = input::route(
+                (0, 0),
+                &mut pane,
+                &mut routing,
+                false,
+                event,
+                input::Scope::Single,
+            )
+            .unwrap();
             assert_eq!(effect, input::Effect::None);
             if !matches!(action, KeyAction::Release) {
                 assert!(pane.pty.input_fd().is_some());
@@ -230,7 +245,8 @@ pub(super) fn window_shortcuts_never_reach_the_pty(
                 let event = key_event(physical, symbol, action, modifiers);
                 let searching = searching && !matches!(action, Release);
                 assert_eq!(
-                    &input::route((0, 0), pane, routing, searching, event, true).unwrap(),
+                    &input::route((0, 0), pane, routing, searching, event, input::Scope::Split)
+                        .unwrap(),
                     expected
                 );
                 assert!(pane.pty.input_fd().is_none(), "matched key: {physical:?}");

@@ -23,7 +23,10 @@ mod tabs;
 pub use keys::{KeyCode, PhysicalKey};
 pub use link::LinkUri;
 pub use selection::{CellPosition, CellRange, Selection, SelectionPoint};
-pub use shortcuts::{FontZoom, PaneAction, Shortcut, Shortcuts, letter_chord};
+pub use shortcuts::{
+    BINDINGS, Binding, Chord, FontZoom, PaneAction, Shortcut, Shortcuts, binding_conflict,
+    letter_chord,
+};
 pub use tabs::{TabAction, WindowTabs};
 
 /// Key action before encoding against the active terminal modes.
