@@ -24,6 +24,7 @@ pub(crate) use attributes::LinkHighlight;
 pub(crate) use paint::PaneFocus;
 use paint::{PanePaint, PanePainter};
 
+mod edge;
 mod geometry;
 pub(crate) use geometry::surface_logical_rect;
 use geometry::{grid_size, scaled_padding};
@@ -31,7 +32,6 @@ mod images;
 use images::{PresentedImages, ViewerPaint};
 mod overlays;
 use overlays::{Glyphs, PresentedSearch};
-mod edge;
 mod paint;
 mod settings;
 mod tabs;
@@ -424,6 +424,7 @@ impl View {
             LinkHighlight {
                 ranges: hovered_link,
                 control: true,
+                target: None,
             },
             banner,
             PaneFocus {

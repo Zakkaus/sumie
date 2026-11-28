@@ -55,6 +55,40 @@ impl PaneScroll {
         self.motion.stop();
         self.sub = 0.0;
     }
+
+    /// Take a wheel or touchpad event as smooth scrolling. Returns false when the program or
+    /// the stepped route owns it.
+    pub(super) fn wheel(
+        &mut self,
+        phase: MousePhase,
+        scale: u32,
+        cell: u32,
+        now: Duration,
+        smooth: impl FnOnce() -> bool,
+    ) -> bool {
+        if !matches!(
+            phase,
+            MousePhase::Wheel(_) | MousePhase::Touch(_) | MousePhase::TouchEnd
+        ) {
+            return false;
+        }
+        if !smooth() {
+            self.reset();
+            return false;
+        }
+        match phase {
+            MousePhase::Wheel(value) => {
+                let px = value / VALUE120_PER_NOTCH * ROWS_PER_NOTCH * f64::from(cell);
+                self.motion.wheel(px);
+            }
+            MousePhase::Touch(value) => {
+                let px = value / VALUE120_PER_LOGICAL_PX * f64::from(scale) / 120.0;
+                self.motion.touch(px, now);
+            }
+            _ => self.motion.release(now),
+        }
+        true
+    }
 }
 
 /// Frame time from presentation timestamps, so motion keeps its speed when a frame is late.
@@ -116,34 +150,6 @@ impl FrameClock {
 }
 
 impl PaneState {
-    /// Take a wheel or touchpad event as smooth scrolling. Returns false when the program or
-    /// the stepped route owns it.
-    pub(super) fn smooth_wheel(&mut self, phase: MousePhase, scale: u32, now: Duration) -> bool {
-        if !matches!(
-            phase,
-            MousePhase::Wheel(_) | MousePhase::Touch(_) | MousePhase::TouchEnd
-        ) {
-            return false;
-        }
-        if !self.pane.wheel_scrolls_history() {
-            self.scroll.reset();
-            return false;
-        }
-        let cell = f64::from(self.cell[1]);
-        match phase {
-            MousePhase::Wheel(value) => {
-                let px = value / VALUE120_PER_NOTCH * ROWS_PER_NOTCH * cell;
-                self.scroll.motion.wheel(px);
-            }
-            MousePhase::Touch(value) => {
-                let px = value / VALUE120_PER_LOGICAL_PX * f64::from(scale) / 120.0;
-                self.scroll.motion.touch(px, now);
-            }
-            _ => self.scroll.motion.release(now),
-        }
-        true
-    }
-
     /// New output while pinned to the bottom ends any offset: the newest row stays whole.
     pub(super) fn follow_output(&mut self) -> Result<()> {
         if self.scroll.pending() && self.pane.terminal.at_bottom()? {
@@ -197,14 +203,23 @@ impl Session {
     }
 
     /// Advance every visible pane's scroll motion for the frame about to be drawn.
-    pub(super) fn step_scroll(&mut self, now: Instant) -> Result<()> {
+    pub(super) fn step_scroll(
+        &mut self,
+        now: Instant,
+        reduce_motion: impl FnOnce() -> bool,
+    ) -> Result<()> {
         let tab = self.tabs.active_mut().expect("live window");
         let animating = tab
             .layout
             .panes
             .iter()
             .any(|&(id, _)| tab.get(id).scroll.motion.active());
-        if !animating {
+        if !animating || reduce_motion() {
+            if animating {
+                for pane in &mut tab.panes {
+                    pane.scroll.reset();
+                }
+            }
             self.clock.restart();
             return Ok(());
         }
@@ -232,5 +247,20 @@ impl Session {
         for i in 0..tab.layout.panes.len() {
             tab.get_mut(tab.layout.panes[i].0).scroll.show();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reduced_motion_routes_wheel_to_stepped_scrolling_and_stops_coasting() {
+        let mut scroll = PaneScroll::default();
+        let event = MousePhase::Wheel(120.0);
+        assert!(scroll.wheel(event, 120, 16, Duration::ZERO, || true));
+        assert!(scroll.pending());
+        assert!(!scroll.wheel(event, 120, 16, Duration::ZERO, || false));
+        assert!(!scroll.pending());
     }
 }

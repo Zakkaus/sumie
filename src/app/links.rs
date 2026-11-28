@@ -69,7 +69,8 @@ struct Checked {
 pub(super) struct Hover {
     checked: Option<Checked>,
     ranges: Vec<CellRange>,
-    uri: Option<LinkUri>,
+    link: Option<(LinkUri, CellRange)>,
+    preview: bool,
     control: bool,
 }
 
@@ -89,7 +90,7 @@ impl Hover {
     fn clear(&mut self) -> bool {
         self.checked = None;
         self.ranges.clear();
-        self.uri.take().is_some()
+        self.link.take().is_some()
     }
 
     fn refresh(
@@ -98,7 +99,7 @@ impl Hover {
         hit: Option<CellPosition>,
         host: &str,
     ) -> Result<bool> {
-        let was_link = self.uri.is_some();
+        let was_link = self.link.is_some();
         if let Some(hit) = hit {
             if let Some(checked) = &mut self.checked
                 && (checked.hit == hit
@@ -110,31 +111,49 @@ impl Hover {
                 checked.hit = hit;
                 return Ok(false);
             }
-            self.uri = terminal.link_at(hit, host, &mut self.ranges)?;
+            self.link = terminal.link_at(hit, host, &mut self.ranges)?;
             self.checked = Some(Checked {
                 hit,
                 origin: hit,
                 stamp: terminal.link_stamp(hit).0,
             });
+            self.update_preview(terminal)?;
         } else {
             return Ok(self.clear());
         }
-        Ok(was_link || self.uri.is_some())
+        Ok(was_link || self.link.is_some())
     }
 
-    fn set_control(&mut self, control: bool) -> bool {
-        std::mem::replace(&mut self.control, control) != control && self.uri.is_some()
+    fn set_control(&mut self, terminal: &Terminal, control: bool) -> Result<bool> {
+        if std::mem::replace(&mut self.control, control) != control && self.link.is_some() {
+            self.update_preview(terminal)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn update_preview(&mut self, terminal: &Terminal) -> Result<()> {
+        self.preview = if self.control
+            && let Some((uri, label)) = &self.link
+            && !terminal.plain_link_cell(self.checked.as_ref().expect("link hit").hit)?
+        {
+            !terminal.selection_text_matches(*label, uri.as_str())?
+        } else {
+            false
+        };
+        Ok(())
     }
 
     pub(super) fn highlight(&self) -> LinkHighlight<'_> {
         LinkHighlight {
             ranges: &self.ranges,
             control: self.control,
+            target: self.uri().filter(|_| self.preview).map(LinkUri::as_str),
         }
     }
 
     pub(super) fn uri(&self) -> Option<&LinkUri> {
-        self.uri.as_ref()
+        self.link.as_ref().map(|(uri, _)| uri)
     }
 
     pub(super) fn open(uri: LinkUri) {
@@ -235,7 +254,9 @@ impl Session {
             if hit.is_none() || !pane.snapshot_dirty {
                 pane.probe_link(hit, &self.host)?;
             }
-            pane.frame_dirty |= pane.hover.set_control(POLICY.link_modifier(modifiers));
+            pane.frame_dirty |= pane
+                .hover
+                .set_control(&pane.pane.terminal, POLICY.link_modifier(modifiers))?;
             link |= hit.is_some_and(|hit| {
                 pane.hover.uri().is_some()
                     && pane
@@ -261,6 +282,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ctrl_hover_previews_only_a_different_osc8_target() {
+        let uri = "https://ex.io/actual";
+        let mut terminal = Terminal::new(12, 3).unwrap();
+        terminal.write(
+            format!("\x1b]8;id=a;{uri}\x1b\\{uri}\x1b]8;;\x1b\\\r\n\x1b]8;id=a;{uri}\x1b\\label\x1b]8;;\x1b\\")
+                .as_bytes(),
+        );
+        let mut hover = Hover::default();
+        let wrapped_uri = CellPosition { row: 1, column: 2 };
+        let different = CellPosition { row: 2, column: 2 };
+        for (hit, control, target) in [
+            (wrapped_uri, true, None),
+            (different, true, Some(uri)),
+            (different, false, None),
+            (different, true, Some(uri)),
+        ] {
+            hover.refresh(&terminal, Some(hit), "").unwrap();
+            hover.set_control(&terminal, control).unwrap();
+            assert_eq!(hover.highlight().target, target);
+        }
+        hover.refresh(&terminal, None, "").unwrap();
+        assert_eq!(hover.highlight().target, None);
+    }
+
+    #[test]
     fn hover_reuses_wrapped_url_but_not_over_an_osc8_label() {
         let mut terminal = Terminal::new(12, 3).unwrap();
         terminal.write(b"https://ex.io/a\x1b]8;;https://other.test\x1b\\b\x1b]8;;\x1b\\c");
@@ -273,7 +319,10 @@ mod tests {
         ] {
             let hit = CellPosition { row, column };
             let moved = hover.refresh(&terminal, Some(hit), "").unwrap();
-            assert_eq!(moved | hover.set_control(control), redraw);
+            assert_eq!(
+                moved | hover.set_control(&terminal, control).unwrap(),
+                redraw
+            );
             assert_eq!(hover.highlight().control, control);
             assert_eq!(hover.uri().unwrap().as_str(), uri);
         }

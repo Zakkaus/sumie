@@ -27,6 +27,7 @@ impl Ink {
 pub(crate) struct LinkHighlight<'a> {
     pub(crate) ranges: &'a [CellRange],
     pub(crate) control: bool,
+    pub(crate) target: Option<&'a str>,
 }
 
 impl LinkHighlight<'_> {

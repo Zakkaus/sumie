@@ -23,32 +23,37 @@ impl Notification {
     #[must_use]
     pub fn from_bytes(title: &[u8], body: &[u8]) -> Self {
         Self {
-            title: clean(title, TITLE_LIMIT),
-            body: clean(body, BODY_LIMIT),
+            title: clean(title, TITLE_LIMIT, true),
+            body: clean(body, BODY_LIMIT, true),
         }
     }
 }
 
-fn clean(bytes: &[u8], limit: usize) -> String {
-    let mut text: String = String::from_utf8_lossy(&bytes[..bytes.len().min(limit * 4)])
-        .chars()
-        .filter(|c| (!c.is_control() && !is_format(*c)) || *c == '\n')
-        .collect();
+/// Remove control and Unicode format characters from a single-line window title.
+#[must_use]
+pub fn clean_title(bytes: &[u8]) -> String {
+    clean(bytes, usize::MAX, false)
+}
+
+fn clean(bytes: &[u8], limit: usize, notification: bool) -> String {
+    let input = &bytes[..bytes.len().min(limit.saturating_mul(4))];
+    let mut text = String::from_utf8_lossy(input).into_owned();
+    text.retain(|c| {
+        let exception = matches!(c, '\n' | '\u{200c}'..='\u{200d}' | '\u{e0020}'..='\u{e007f}');
+        (!c.is_control() && !is_format(c)) || (notification && exception)
+    });
     let end = text.floor_char_boundary(limit);
     text.truncate(end);
     text
 }
 
-/// Unicode category Cf: invisible characters that reorder or hide text (bidi overrides and
-/// isolates, zero-width spaces, the byte order mark). The zero-width joiner and non-joiner
-/// (U+200C, U+200D) and tag characters stay, because emoji sequences, flags and several
-/// scripts need them to render.
+/// Unicode category Cf. Notifications keep joiners and tags for emoji and joining scripts.
 fn is_format(c: char) -> bool {
     matches!(u32::from(c),
-        0xAD | 0x600..=0x605 | 0x61C | 0x6DD | 0x70F | 0x8E2 | 0x180E
-        | 0x200B | 0x200E | 0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F
+        0xAD | 0x600..=0x605 | 0x61C | 0x6DD | 0x70F | 0x890..=0x891 | 0x8E2 | 0x180E
+        | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F
         | 0xFEFF | 0xFFF9..=0xFFFB | 0x110BD | 0x110CD | 0x13430..=0x1343F
-        | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0xE0001)
+        | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0xE0001 | 0xE0020..=0xE007F)
 }
 
 /// Rate limit and repeat filter for one window. Only an admitted request starts the timers.

@@ -3,7 +3,7 @@ use std::mem::{size_of, take};
 use std::ptr::{from_mut, null};
 use std::slice;
 
-use sumie_core::notify::{Notification, Progress, ProgressState};
+use sumie_core::notify::{Notification, Progress, ProgressState, clean_title};
 
 use crate::ffi;
 
@@ -247,8 +247,7 @@ pub(super) unsafe extern "C" fn queue_title(terminal: ffi::Terminal, data: *mut 
     // SAFETY: Ghostty lends the title until the next terminal mutation.
     let bytes = unsafe { borrowed_bytes(&title) };
     // SAFETY: Userdata is the boxed Effects, exclusively accessible in this callback.
-    unsafe { &mut *data.cast::<Effects>() }.title =
-        Some(String::from_utf8_lossy(bytes).into_owned());
+    unsafe { &mut *data.cast::<Effects>() }.title = Some(clean_title(bytes));
 }
 
 #[cfg(test)]
@@ -321,5 +320,14 @@ mod tests {
         let mut events = terminal.drain_events();
         assert!(matches!(events.next(), Some(Event::Title(title)) if title == "title-ok"));
         assert!(events.next().is_none());
+    }
+
+    #[test]
+    fn osc2_strips_control_and_format_characters_from_titles() {
+        let mut terminal = Terminal::new(5, 2).unwrap();
+        terminal.write("\x1b]2;前\u{0085}\u{202e}title\u{200d}\u{e0067}後\x07".as_bytes());
+        assert!(
+            matches!(terminal.drain_events().next(), Some(Event::Title(title)) if title == "前title後")
+        );
     }
 }

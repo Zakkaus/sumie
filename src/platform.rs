@@ -39,6 +39,9 @@ pub(crate) struct LogicalRect {
 pub(crate) trait WindowOps: PaneWatches + crate::frame_window::FrameWindow {
     /// The desktop's double-click interval in milliseconds, if it publishes one.
     fn click_interval() -> Option<u32>;
+    fn reduce_motion(&self) -> bool {
+        false
+    }
     fn hostname() -> crate::Result<String>;
     /// Map caret edges to the coordinates the platform's input method expects.
     fn logical_rect(bounds: CaretBounds) -> Option<LogicalRect>;
