@@ -4,7 +4,7 @@ The [design book](https://claude.ai/artifact/A3KR8SWWJouwinJsSZUje8) defines the
 
 ## Crates and allowed dependencies
 
-Edges in the last column go from the row's crate to the listed crates. They are permissions, not dependencies to declare before use. The P3 packages are listed for reference and are not workspace members.
+Edges in the last column go from the row's crate to the listed crates. They are permissions, not dependencies to declare before use. `sumie-ipc` is not a workspace member.
 
 | Crate | Owns | Must not do | May depend on |
 | --- | --- | --- | --- |
@@ -20,12 +20,21 @@ Edges in the last column go from the row's crate to the listed crates. They are 
 | `sumie-macos` (macOS) | Windows, input, input methods, clipboard | Match shortcuts, make business decisions, block the main loop on clipboard reads | `sumie-core`, `sumie-config` |
 | `sumie-pty` | Shared Unix PTY, child processes, reader threads | Touch window objects or render | `sumie-core`, `sumie-config` |
 | `sumie-ipc` (P3) | Socket protocol and client shared by the CLI and settings TUI | Make business decisions or render | `sumie-core`, `sumie-config` |
-| `sumie-settings` (P3) | Settings TUI | Parse or write TOML itself or access GUI state directly | `sumie-config`, `sumie-ipc` |
+| `sumie-locale` | Embedded message catalogs, locale selection, English fallback | Change config, read config files, or render | `sumie-config` |
+| `sumie-settings` | Settings TUI, raw terminal session, keyboard input, layout | Parse or write TOML itself or access GUI state directly | `sumie-config`, `sumie-locale` |
 
 Two edges are deliberately closed:
 
 - `sumie-render` → `sumie-font`: the font crate produces CPU-side glyph atlas data. The binary passes that data to the renderer, which accepts only atlas data and draw lists.
 - `sumie-core` → `sumie-config`: core defines plain-data options. The binary translates parsed TOML settings into those options, so headless core tests and the future daemon do not require TOML.
+
+## Settings terminal UI
+
+`main` calls `sumie_settings::run` before any window, worker thread or GUI logger starts. It owns stdin, stdout and signal registrations on that thread until it returns. The terminal adapter uses rustix for termios, size and polling, and the already-locked `signal-hook` for self-pipe notification without unsafe code. A scope guard leaves the alternate screen and restores termios on return or unwind. Signal handlers only wake the loop; cleanup runs on the owner thread.
+
+`sumie-config::EditValues` supplies each visible value and the snapshot of the file that defines it. The editor calls `sumie-config::save` synchronously on that snapshot, then rereads the settings. The GUI picks up writes through its existing hot reload; no IPC is involved. Typed-invalid values from parseable files can be edited subject to the same write validation. Files with syntax or include errors must be repaired before the writer can validate changes.
+
+The in-memory screen uses the already-locked `unicode-width` and `unicode-segmentation` for cell widths and grapheme boundaries. Its text slots truncate before terminal output. Locale tests and settings tests run in the workspace test gate; the targeted negative controls check for English fallback and immediate persistence.
 
 ## Tabbed Linux window
 

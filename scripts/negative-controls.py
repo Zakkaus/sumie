@@ -42,6 +42,7 @@ UNSAFE_READ = ("#[must_use]\npub fn read_probe() -> u8 {\n"
 
 
 def controls():
+    settings_controls()
     probe("shell drops command status", "shell", "shell-integration/bash/sumie.bash",
           replace_once("133;D;%d", "133;D"), "bash/sumie.bash: missing 133;D;%d")
     probe("spawn ignores descriptor creation", "test", "crates/sumie-pty/src/spawn.rs",
@@ -455,6 +456,16 @@ def pane_controls():
           "FAIL: no frame log")
 
 
+def settings_controls():
+    probe("settings change not written back", "settings-test", "crates/sumie-settings/src/model.rs",
+          replace_once("save(&self.main, source, &option.info.path, Some(value))",
+                       "Ok(source.clone())"),
+          "test tests::changes_write_immediately_to_the_defining_file ... FAILED")
+    probe("locale skips the English fallback", "locale-test", "crates/sumie-locale/src/lib.rs",
+          replace_once(".or_else(|| EN.get(key))", ""),
+          "test tests::missing_translation_uses_english ... FAILED")
+
+
 def interrupted(_signum, _frame):
     raise KeyboardInterrupt
 
@@ -485,6 +496,8 @@ def main():
         try:
             if sys.argv[1:] == ["linux-clipboard"]:
                 linux_clipboard_controls()
+            elif sys.argv[1:] == ["settings"]:
+                settings_controls()
             else:
                 controls()
         finally:

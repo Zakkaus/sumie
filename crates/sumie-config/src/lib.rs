@@ -24,7 +24,7 @@ pub use changes::Changes;
 pub use colors::Colors;
 pub use cursor::{Cursor, CursorStyle};
 #[cfg(unix)]
-pub use edit::{WriteError, save, winner};
+pub use edit::{EditValues, WriteError, format_list, parse_list, save, winner};
 pub use images::Images;
 pub use language::Language;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

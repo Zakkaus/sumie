@@ -17,6 +17,7 @@ members = [
     "crates/sumie-macos",
     "crates/sumie-pty",
     "crates/sumie-render",
+    "crates/sumie-settings",
     "crates/sumie-ui",
     "crates/sumie-vt",
     "crates/sumie-wayland",
@@ -70,6 +71,7 @@ sumie-font = { path = "crates/sumie-font" }
 sumie-locale = { path = "crates/sumie-locale" }
 sumie-pty = { path = "crates/sumie-pty" }
 sumie-render = { path = "crates/sumie-render" }
+sumie-settings = { path = "crates/sumie-settings" }
 sumie-ui = { path = "crates/sumie-ui" }
 sumie-vt = { path = "crates/sumie-vt" }
 tracing.workspace = true

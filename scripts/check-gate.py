@@ -28,7 +28,8 @@ EDGES.update({
     "sumie-config": frozenset(),
     "sumie-locale": frozenset({"sumie-config"}),
     "sumie-ui": BASE | {"sumie-font", "sumie-render"},
-    "sumie": BASE | ADAPTERS | {"sumie-locale", "sumie-ui"},
+    "sumie-settings": {"sumie-config", "sumie-locale"},
+    "sumie": BASE | ADAPTERS | {"sumie-locale", "sumie-settings", "sumie-ui"},
 })
 UNSAFE_CRATES = {"sumie-vt", "sumie-font", "sumie-render"}
 WAYLAND_DIR = Path("crates/sumie-wayland")
@@ -50,8 +51,8 @@ DEBUG_PRINT = re.compile(r"\b(?:e?print(?:ln)?|dbg)!")
 # The test gate builds first, so this bounds only the test binaries: a hung test fails the
 # gate in minutes instead of running until the CI job limit.
 TEST_TIMEOUT = 600
-# A probe that breaks sumie-font runs only its tests, so dependants cannot hang the gate.
-TEST_GATES = ("test", "font-test")
+# Focused probes run only the affected crate's tests.
+TEST_GATES = ("test", "font-test", "locale-test", "settings-test")
 
 RUST_TOKEN = re.compile(
     r'(?P<line>//[^\n]*)|(?P<block>/\*)|'
@@ -432,6 +433,8 @@ def main():
                             "--message-format=json", "--", "-D", "warnings"),
         "test": ("test", "--locked", "--workspace", "--message-format=json"),
         "font-test": ("test", "--locked", "-p", "sumie-font", "--message-format=json"),
+        "locale-test": ("test", "--locked", "-p", "sumie-locale", "--message-format=json"),
+        "settings-test": ("test", "--locked", "-p", "sumie-settings", "--message-format=json"),
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",

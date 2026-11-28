@@ -56,7 +56,12 @@ pub struct Colors {
     #[schemars(with = "Color", default = "default_background", title = "Background")]
     background: Option<Color>,
     /// Cursor color. Omit to use the foreground color.
-    #[schemars(with = "Color", default = "default_foreground", title = "Cursor")]
+    #[schemars(
+        with = "Color",
+        default = "default_foreground",
+        title = "Cursor",
+        extend("x-sumie-default-from" = "colors.foreground")
+    )]
     cursor: Option<Color>,
     /// Selected text color.
     #[schemars(

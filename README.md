@@ -108,6 +108,11 @@ Set `cursor.style` to `block`, `bar`, or `underline`. Terminal applications can
 override the shape and blink setting with DECSCUSR until they reset it. An
 unfocused window shows a steady outline for a visible cursor.
 
+Run `sumie config` in an existing terminal to edit settings. Use Tab or 1–4 to
+switch categories, ↑/↓ to select, ←/→ or Enter to edit, `/` to search, and `r`
+to reset the selected option. Changes are saved immediately. Press Esc or `q`
+to quit.
+
 Run `sumie config show --defaults` for all options. To enable editor completion,
 run `sumie config schema > sumie.schema.json` from the config directory.
 For font comparisons, `SUMIE_FONT`, `SUMIE_FONT_PX` (logical pixels),
