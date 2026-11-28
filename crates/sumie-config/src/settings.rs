@@ -274,7 +274,7 @@ mod tests {
     fn every_leaf_has_title_and_category() {
         let settings = settings();
         let paths: Vec<_> = settings.iter().map(|info| info.path.as_str()).collect();
-        assert_eq!(paths.len(), 24 + sumie_core::BINDINGS.len(), "{paths:?}");
+        assert_eq!(paths.len(), 25 + sumie_core::BINDINGS.len(), "{paths:?}");
         assert_eq!(
             paths[..9],
             [
@@ -308,7 +308,7 @@ mod tests {
                 .count()
         };
         let counts = Category::ALL.map(count);
-        assert_eq!(counts, [6, 4, 7, 7, sumie_core::BINDINGS.len(), 0, 0]);
+        assert_eq!(counts, [7, 4, 7, 7, sumie_core::BINDINGS.len(), 0, 0]);
     }
 
     #[test]
@@ -319,7 +319,8 @@ mod tests {
             find("font.size").kind,
             Kind::Number {
                 min: Some(0.0),
-                max: Some(200.0)
+                max: Some(200.0),
+                exclusive_min: true
             }
         );
         assert_eq!(
