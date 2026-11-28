@@ -16,9 +16,6 @@ jobs:
       matrix:
         include:
           - {scenario: metal, sample: 1}
-          - {scenario: runner, sample: 1}
-          - {scenario: runner, sample: 2}
-          - {scenario: runner, sample: 3}
     name: ${{ matrix.scenario }}-${{ matrix.sample }}
     env:
       MACOSX_DEPLOYMENT_TARGET: '13.0'
@@ -40,8 +37,6 @@ jobs:
           echo "CARGO_TARGET_DIR=$RUNNER_TEMP/target" >> "$GITHUB_ENV"
           echo "SUMIE_SPIKE_EVIDENCE=$RUNNER_TEMP/evidence" >> "$GITHUB_ENV"
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-      - if: matrix.scenario == 'runner'
-        run: cargo build --release --locked --features macos-ci --bin sumie
       - name: Exercise native scenario
         env:
           SCENARIO: ${{ matrix.scenario }}
