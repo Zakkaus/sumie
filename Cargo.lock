@@ -1954,6 +1954,7 @@ dependencies = [
 name = "sumie-settings"
 version = "0.0.0"
 dependencies = [
+ "nix",
  "rustix 1.1.6",
  "signal-hook",
  "sumie-config",

@@ -110,7 +110,8 @@ unfocused window shows a steady outline for a visible cursor.
 
 Run `sumie config` in an existing terminal to edit settings. Use Tab or 1–4 to
 switch categories, ↑/↓ to select, ←/→ or Enter to edit, `/` to search, and `r`
-to reset the selected option. Changes are saved immediately. Press Esc or `q`
+to remove the selected override and reveal the value from a lower-priority
+include or the built-in default. Changes are saved immediately. Press Esc or `q`
 to quit.
 
 Run `sumie config show --defaults` for all options. To enable editor completion,

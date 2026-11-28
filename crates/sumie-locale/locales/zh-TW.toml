@@ -23,6 +23,7 @@
 "ui.save-conflict" = "檔案中的設定已變更。請確認後再試。"
 "ui.config-blocked" = "無法儲存。請先修正設定檔。"
 "ui.rejected" = "設定檔不接受這個值。"
+"ui.expected" = "請輸入：{value}"
 "ui.unconfirmed" = "無法確認是否已儲存。請檢查目前的值。"
 "ui.no-terminal" = "請在互動式終端機開啟設定。"
 "ui.no-config-path" = "找不到設定目錄。"

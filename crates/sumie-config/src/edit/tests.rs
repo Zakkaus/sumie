@@ -59,6 +59,54 @@ fn edit_keeps_comments_and_order() {
 }
 
 #[test]
+fn removing_assignments_keeps_array_and_dotted_key_comments() {
+    let scratch = Scratch::new("edit-remove-comments");
+    let main = scratch.0.join("sumie.toml");
+    fs::write(scratch.0.join("shared#.toml"), "").unwrap();
+    fs::write(
+        &main,
+        "include = [\n  # machine settings\n  'shared#.toml', # optional\n] # local\n\
+         # font settings\nfont.size = 13.5 # points\nfont.family = 'Iosevka'\n",
+    )
+    .unwrap();
+    let snapshot = Snapshot::read(&main).unwrap();
+    let snapshot = save(&main, &snapshot, "include", None).unwrap();
+    save(&main, &snapshot, "font.size", None).unwrap();
+    assert_eq!(
+        text(&main),
+        "  # machine settings\n # optional\n# local\n# font settings\n# points\nfont.family = 'Iosevka'\n"
+    );
+    assert_eq!(load(&main).unwrap().font.family(), "Iosevka");
+}
+
+#[test]
+fn removing_inline_fields_keeps_comments_and_order() {
+    let scratch = Scratch::new("edit-remove-inline");
+    let main = scratch.0.join("sumie.toml");
+    fs::write(
+        &main,
+        "font = {\n  # local size\n  size = 13.5, # points\n  family = 'Iosevka',\n  # local weight\n  weight = 500\n}\n",
+    )
+    .unwrap();
+    let snapshot = Snapshot::read(&main).unwrap();
+    let snapshot = save(&main, &snapshot, "font.size", None).unwrap();
+    save(&main, &snapshot, "font.weight", None).unwrap();
+    assert_eq!(
+        text(&main).lines().map(str::trim).collect::<Vec<_>>(),
+        [
+            "font = {",
+            "# local size",
+            "# points",
+            "family = 'Iosevka'",
+            "# local weight",
+            "",
+            "}"
+        ]
+    );
+    assert_eq!(load(&main).unwrap().font.family(), "Iosevka");
+}
+
+#[test]
 fn winner_matches_merge() {
     let scratch = Scratch::new("edit-winner");
     let main = scratch.0.join("sumie.toml");

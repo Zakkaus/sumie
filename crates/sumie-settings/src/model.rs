@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::{borrow::Cow, path::PathBuf};
 
-use sumie_config::{Category, EditValues, Value, WriteError, load, save, settings};
+use sumie_config::{Category, EditValues, Error, Problem, Value, WriteError, load, save, settings};
 use sumie_locale::Locale;
 
 use crate::{
@@ -35,6 +35,11 @@ impl Mode {
     }
 }
 
+enum Notice {
+    Message(&'static str),
+    Allowed(usize),
+}
+
 pub(crate) struct Model {
     main: PathBuf,
     values: EditValues,
@@ -47,7 +52,7 @@ pub(crate) struct Model {
     pub(crate) selected: usize,
     pub(crate) mode: Mode,
     matches: Vec<usize>,
-    error: Option<&'static str>,
+    error: Option<Notice>,
 }
 
 impl Model {
@@ -101,10 +106,24 @@ impl Model {
             .is_err();
     }
 
-    pub(crate) fn notice(&self) -> Option<&'static str> {
-        self.error
-            .or(self.invalid_config.then_some("ui.config-error"))
-            .map(|key| self.locale.text(key))
+    pub(crate) fn has_notice(&self) -> bool {
+        self.error.is_some() || self.invalid_config
+    }
+
+    pub(crate) fn notice(&self) -> Option<Cow<'static, str>> {
+        let locale = self.locale;
+        match self.error {
+            Some(Notice::Message(key)) => Some(locale.text(key).into()),
+            Some(Notice::Allowed(index)) => Some(
+                locale
+                    .text("ui.expected")
+                    .replace("{value}", &self.options[index].allowed(locale))
+                    .into(),
+            ),
+            None => self
+                .invalid_config
+                .then(|| locale.text("ui.config-error").into()),
+        }
     }
 
     pub(crate) fn visible(&self) -> &[usize] {
@@ -140,9 +159,6 @@ impl Model {
 
     /// Return false when the session should exit.
     pub(crate) fn key(&mut self, key: Key, page: usize) -> bool {
-        if key == Key::Interrupt {
-            return false;
-        }
         match &mut self.mode {
             Mode::Edit(line) => match key {
                 Key::Esc => {
@@ -279,24 +295,13 @@ impl Model {
     fn reset(&mut self) {
         let index = self.visible()[self.selected];
         let option = &self.options[index];
-        if self.values.get(&option.info.path).is_none() {
-            return;
-        }
-        if let Some(value) = option
-            .default
-            .clone()
-            .filter(|_| option.info.default_from.is_none())
+        let key = &option.info.path;
+        if self.values.get(key).is_some()
+            && let Some(source) = self.values.source(key)
         {
-            self.write(index, &value);
-        } else {
-            // Removing only the winner would expose a lower-priority override instead of the default.
-            let key = &option.info.path;
-            let result = self
-                .values
-                .definitions(key)
-                .try_for_each(|source| save(&self.main, source, key, None).map(|_| ()));
+            let result = save(&self.main, source, key, None);
             self.reload();
-            self.error = result.err().map(|error| self.write_error(&error));
+            self.error = result.err().map(|error| self.write_error(index, &error));
         }
     }
 
@@ -312,7 +317,7 @@ impl Model {
                 self.error = None;
             }
         } else {
-            self.error = Some("ui.rejected");
+            self.error = Some(Notice::Allowed(index));
         }
     }
 
@@ -323,7 +328,7 @@ impl Model {
             return true;
         }
         let Some(source) = self.values.source(&option.info.path) else {
-            self.error = Some("ui.config-blocked");
+            self.error = Some(Notice::Message("ui.config-blocked"));
             return false;
         };
         match save(&self.main, source, &option.info.path, Some(value)) {
@@ -332,7 +337,7 @@ impl Model {
                 true
             }
             Err(error) => {
-                self.error = Some(self.write_error(&error));
+                self.error = Some(self.write_error(index, &error));
                 if matches!(
                     error,
                     WriteError::Conflict { .. } | WriteError::Unconfirmed { .. }
@@ -345,14 +350,26 @@ impl Model {
         }
     }
 
-    fn write_error(&self, error: &WriteError) -> &'static str {
+    fn write_error(&self, index: usize, error: &WriteError) -> Notice {
         self.log.error(error);
-        match error {
+        let key = match error {
             WriteError::Conflict { .. } => "ui.save-conflict",
             WriteError::Unconfirmed { .. } => "ui.unconfirmed",
+            WriteError::Invalid(problems)
+                if problems.iter().any(|error| {
+                    let Error::Invalid { message, .. } = error else {
+                        return false;
+                    };
+                    matches!(message, Problem::Range { .. } | Problem::FontSize)
+                        && message.key() == Some(self.options[index].info.path.as_str())
+                }) =>
+            {
+                return Notice::Allowed(index);
+            }
             WriteError::Invalid(_) if self.invalid_config => "ui.config-blocked",
             WriteError::Invalid(_) => "ui.rejected",
             _ => "ui.save-error",
-        }
+        };
+        Notice::Message(key)
     }
 }

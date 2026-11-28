@@ -30,11 +30,11 @@ Two edges are deliberately closed:
 
 ## Settings terminal UI
 
-`main` calls `sumie_settings::run` before any window, worker thread or GUI logger starts. It owns stdin, stdout and signal registrations on that thread until it returns. The terminal adapter uses rustix for termios, size and polling, and the already-locked `signal-hook` for self-pipe notification without unsafe code. A scope guard leaves the alternate screen and restores termios on return or unwind. Signal handlers only wake the loop; cleanup runs on the owner thread.
+`main` calls `sumie_settings::run` before any window, worker thread or GUI logger starts. It owns stdin, stdout and signal registrations on that thread until it returns. The terminal adapter uses rustix for termios, size and polling, and `signal-hook` for self-pipe notification. The scope guard restores termios and leaves the alternate screen on return; the panic hook restores both before forwarding the diagnostic. Hangup, interrupt, and termination exit with `128 + signal` after cleanup. Bracketed paste treats pasted line breaks as spaces rather than Enter.
 
-`sumie-config::EditValues` supplies each visible value and the snapshot of the file that defines it. The editor calls `sumie-config::save` synchronously on that snapshot, then rereads the settings. The GUI picks up writes through its existing hot reload; no IPC is involved. Typed-invalid values from parseable files can be edited subject to the same write validation. Files with syntax or include errors must be repaired before the writer can validate changes.
+`sumie-config::EditValues` supplies each visible value and the snapshot of the file that defines it, using the same include traversal as write-back conflict detection. The editor calls `sumie-config::save` synchronously on that snapshot, then rereads the settings. Reset removes only the winning assignment, exposing an earlier include or the built-in default. The GUI picks up writes through its existing hot reload; no IPC is involved. Typed-invalid values from parseable files can be edited subject to the same write validation. Files with syntax or include errors must be repaired before the writer can validate changes.
 
-The in-memory screen uses the already-locked `unicode-width` and `unicode-segmentation` for cell widths and grapheme boundaries. Its text slots truncate before terminal output. Locale tests and settings tests run in the workspace test gate; the targeted negative controls check for English fallback and immediate persistence.
+The in-memory screen uses `unicode-width` and `unicode-segmentation` for cell widths and grapheme boundaries. Its text slots truncate before terminal output. The workspace test gate includes PTY cleanup checks. The settings negative controls check for termios restoration, English fallback, and immediate persistence.
 
 ## Tabbed Linux window
 

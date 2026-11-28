@@ -59,10 +59,19 @@ impl Snapshot {
     /// Returns an error if the file or its directory cannot be read.
     pub fn read(path: &Path) -> io::Result<Self> {
         let real_path = resolve_path(path)?;
-        let (bytes, stat) = match File::open(&real_path) {
+        // Opened non-blocking and read only if regular, so a FIFO include cannot block here.
+        let opened = OpenOptions::new()
+            .read(true)
+            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits().cast_signed())
+            .open(&real_path);
+        let (bytes, stat) = match opened {
             // Stat before reading: a save during the read then changes the stat a write compares.
             Ok(mut file) => {
-                let stat = Stat::of(&file.metadata()?);
+                let metadata = file.metadata()?;
+                if !metadata.is_file() {
+                    return Err(io::Error::other("not a regular file"));
+                }
+                let stat = Stat::of(&metadata);
                 let mut bytes = Vec::new();
                 io::Read::read_to_end(&mut file, &mut bytes)?;
                 (bytes, Some(stat))
