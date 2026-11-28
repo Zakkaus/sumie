@@ -173,9 +173,9 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
         shift: true,
         ..plain
     };
-    let commit = |generation| Event::ImeCommit {
+    let commit = |recipient| Event::ImeCommit {
         text: "水".into(),
-        generation,
+        recipient,
     };
     let preedit = |generation| Event::ImePreedit {
         text: "ㄅ".into(),
@@ -459,7 +459,7 @@ pub(crate) fn ready_pane(
     pane
 }
 
-fn wait_for_line(pane: &mut LocalPane, expected: &str) {
+pub(crate) fn wait_for_line(pane: &mut LocalPane, expected: &str) {
     // Shared CI runners can take several seconds to start a shell under parallel tests.
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {

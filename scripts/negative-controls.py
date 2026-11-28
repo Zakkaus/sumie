@@ -226,6 +226,19 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                        "== next.minimum_contrast().to_bits()"),
           "test changes::tests::applies_only_changed_settings ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("queued IME commit uses the focused pane", "test", "src/app/tabs.rs",
+              replace_once("        | Event::ImeCommit {\n            recipient: generation,\n            ..\n        } = event",
+                           "        = event"),
+              "test app::tabs::tests::queued_ime_commit_reaches_the_original_pane ... FAILED")
+        probe("old IME serial drops committed text", "test", "crates/sumie-wayland/src/ime.rs",
+              replace_once("        let recipient = if current {",
+                           "        if !current { return; }\n        let recipient = if current {"),
+              "test ime::tests::late_done_delivers_commit_to_its_serial_owner_without_preedit ... FAILED")
+        probe("reaping a child skips ready output", "test", "src/app/tabs.rs",
+              replace_once("            serviced.exited = self.pane.pty.exit_fd().is_none();",
+                           "            serviced.exited = self.pane.pty.exit_fd().is_none();\n"
+                           "            if serviced.exited { return Ok(serviced); }"),
+              "test app::tabs::tests::exit_readiness_keeps_final_terminal_clipboard_write ... FAILED")
         probe("IME caret loses the right edge at fractional scale", "test", "src/view/geometry.rs",
               replace_once("bounds.end[i] * logical + device - 1", "bounds.end[i] * logical"),
               "test view::geometry::tests::caret_covers_the_cell_on_a_rounded_fractional_buffer ... FAILED")

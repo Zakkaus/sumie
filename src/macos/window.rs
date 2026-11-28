@@ -73,6 +73,7 @@ pub(super) struct MacWindow {
     slot: FrameSlot,
     batch: VecDeque<Queued>,
     generation: u64,
+    text_recipient: u64,
     composition: Composition,
     ime: ImeWindow,
     focused: bool,
@@ -98,6 +99,7 @@ impl MacWindow {
             readiness,
             batch: VecDeque::new(),
             generation: 0,
+            text_recipient: 0,
             composition: Composition::default(),
             ime: ImeWindow::default(),
             focused: platform.has_focus(),
@@ -133,7 +135,7 @@ impl MacWindow {
     /// Queue finished pastes, stamped with their request's recipient, for this turn.
     pub(super) fn service_pasteboard(&mut self) -> Result<()> {
         for pasted in self.pasteboard.service(&mut self.watches)? {
-            self.push(paste_event(pasted, self.generation));
+            self.push(paste_event(pasted, self.text_recipient));
         }
         Ok(())
     }
@@ -199,13 +201,12 @@ impl MacWindow {
             .push_back(Queued::Ime(ime, Platform::input_source()));
     }
 
-    /// Text for the focused pane, stamped with the current input generation: the runner's
-    /// `type`, as if typed without an input method.
+    /// Text for the focused recipient: the runner's `type`, as if typed without an input method.
     #[cfg(feature = "macos-ci")]
     pub(super) fn commit_text(&mut self, text: String) {
         self.push(Event::ImeCommit {
             text,
-            generation: self.generation,
+            recipient: self.text_recipient,
         });
     }
 
@@ -273,18 +274,23 @@ impl MacWindow {
             Queued::Ime(ime, source) => self.composition.ime(ime, source, &mut inputs),
             Queued::FocusLost => inputs.extend(self.composition.cancel()),
         }
-        events.extend(inputs.into_iter().map(|input| match input {
-            Input::Key(key) => key_event(key),
+        events.extend(inputs.into_iter().filter_map(|input| match input {
+            Input::Key(key) => Some(key_event(key)),
             Input::Preedit {
                 text,
                 cursor,
                 generation,
-            } => Event::ImePreedit {
+            } => Some(Event::ImePreedit {
                 text,
                 cursor,
                 generation,
-            },
-            Input::Commit { text, generation } => Event::ImeCommit { text, generation },
+            }),
+            Input::Commit { text, generation } => {
+                (generation == self.generation).then_some(Event::ImeCommit {
+                    text,
+                    recipient: self.text_recipient,
+                })
+            }
         }));
     }
 
@@ -430,11 +436,12 @@ impl WindowOps for MacWindow {
 
     /// Cancel a composition of an older generation natively; its events keep their generation
     /// until winit reports the cancel.
-    fn set_input_generation(&mut self, generation: u64) {
+    fn set_input_generation(&mut self, generation: u64, recipient: u64) {
         if self.composition.set_generation(generation) && self.ime.enabled && self.focused {
             self.platform.cancel_composition();
         }
         self.generation = generation;
+        self.text_recipient = recipient;
     }
 
     fn read_clipboard(&mut self, recipient: u64) {

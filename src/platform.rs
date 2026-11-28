@@ -50,7 +50,8 @@ pub(crate) trait WindowOps: PaneWatches + crate::frame_window::FrameWindow {
     /// keeps the caret where the screen shows it until then; Wayland places it at once.
     fn cursor_rectangle_presented(&mut self) {}
     fn set_pointer_icon(&mut self, icon: CursorIcon);
-    fn set_input_generation(&mut self, generation: u64);
+    /// Preedit follows focus; committed text keeps its recipient while that input field lives.
+    fn set_input_generation(&mut self, generation: u64, recipient: u64);
     fn read_clipboard(&mut self, recipient: u64);
     fn has_primary_selection(&self) -> bool {
         false

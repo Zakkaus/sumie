@@ -87,7 +87,7 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
             cursor: None,
             generation,
         },
-        Native::ImeCommit { text, generation } => Event::ImeCommit { text, generation },
+        Native::ImeCommit { text, recipient } => Event::ImeCommit { text, recipient },
     };
     Some((event, copy_serial))
 }

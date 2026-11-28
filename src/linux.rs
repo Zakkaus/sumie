@@ -123,8 +123,8 @@ impl WindowOps for LinuxWindow {
         });
     }
 
-    fn set_input_generation(&mut self, generation: u64) {
-        self.platform.set_input_generation(generation);
+    fn set_input_generation(&mut self, generation: u64, recipient: u64) {
+        self.platform.set_input_generation(generation, recipient);
     }
 
     fn read_clipboard(&mut self, recipient: u64) {
