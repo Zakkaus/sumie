@@ -376,8 +376,8 @@ impl Running {
         loop {
             match socket.read(&mut buffer) {
                 Ok(0) => break,
-                Ok(read) => {
-                    if let Err(error) = self.decoder.feed(&buffer[..read], &mut frames) {
+                Ok(count) => {
+                    if let Err(error) = self.decoder.feed(&buffer[..count], &mut frames) {
                         return Ok(Outcome::Failed(error.to_string()));
                     }
                     if let Some(reply) = frames.pop() {

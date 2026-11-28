@@ -198,8 +198,10 @@ def macos_controls():
                            "        let _ = (self.master()?, size);\n        Ok(())\n"),
               "size 2: stty size says ")
         probe("no fallback for CJK, kana and Hangul", "macos-shell", "crates/sumie-font/src/discovery/core_text.rs",
-              replace_once("        let mut rejected = Vec::new();\n        if let Some(matched) = self\n",
-                           "        let mut rejected = Vec::new();\n"
+              replace_once("            return matched.ok_or_else(|| missing_glyph(ch, rejected, false));\n"
+                           "        }\n        if let Some(matched) = self\n",
+                           "            return matched.ok_or_else(|| missing_glyph(ch, rejected, false));\n"
+                           "        }\n"
                            "        if ch >= '\\u{2e80}' {\n"
                            "            return Err(missing_glyph(ch, rejected, false));\n        }\n"
                            "        if let Some(matched) = self\n"),

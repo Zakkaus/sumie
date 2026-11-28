@@ -19,14 +19,12 @@ use objc2_core_text::{
     CTFont, CTFontCollection, CTFontDescriptor, CTFontSymbolicTraits, kCTFontCharacterSetAttribute,
     kCTFontFamilyNameAttribute, kCTFontURLAttribute,
 };
-use skrifa::{
-    FontRef, MetadataProvider as _,
-    raw::{TableProvider as _, tables::head::Flags},
-};
+use skrifa::{FontRef, raw::TableProvider as _};
 
 use super::{Font, FontError, FontStyle, Match, Request, Style, is_nerd_family, is_private_use};
 use crate::Rejection;
-use file::FontFile;
+pub(super) use file::has_sbix;
+use file::{FontFile, covers};
 
 mod file;
 mod primary;
@@ -548,29 +546,6 @@ fn require_coverage(matched: Match, ch: Option<char>) -> Result<Match, FontError
         return Err(missing_glyph(ch, Vec::new(), false));
     }
     Ok(matched)
-}
-
-fn covers(matched: &Match, ch: char) -> bool {
-    let Ok(face) = FontRef::from_index(&matched.bytes, matched.index) else {
-        return false;
-    };
-    face.head()
-        .is_ok_and(|head| !head.flags().contains(Flags::LAST_RESORT_FONT))
-        && face.charmap().map(ch).is_some_and(|glyph| {
-            face.outline_glyphs().get(glyph).is_some()
-                || (matched.color_name.is_some() && has_sbix(&face, glyph))
-        })
-}
-
-pub(super) fn has_sbix(face: &FontRef<'_>, glyph: skrifa::GlyphId) -> bool {
-    // Core Text decodes private image types too; only check that the strike has data.
-    face.sbix().is_ok_and(|table| {
-        table
-            .strikes()
-            .iter()
-            .flatten()
-            .any(|strike| strike.glyph_data(glyph).ok().flatten().is_some())
-    })
 }
 
 fn file_match(
