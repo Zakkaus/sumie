@@ -268,6 +268,13 @@ impl FontSystem {
             .map(|face| face.matched.family.as_str())
     }
 
+    /// Whether the requested family was not found and a monospaced system face replaced it.
+    /// Only Core Text substitutes here; on Linux, fontconfig's rules choose.
+    #[must_use]
+    pub const fn substituted(&self) -> bool {
+        self.discovery.substituted()
+    }
+
     /// Load the ten digit glyphs of a secondary monospaced face into this atlas's namespace.
     /// The size and returned common advance are in device pixels.
     ///

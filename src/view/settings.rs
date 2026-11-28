@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::discriminant};
+use std::{borrow::Cow, cell::Cell, mem::discriminant};
 
 use sumie_config::POINT_TO_PX;
 use sumie_core::FontZoom;
@@ -10,6 +10,8 @@ pub(crate) struct FontSettings {
     family: Cow<'static, str>,
     px: f32,
     options: FontOptions,
+    /// Whether the missing family was logged; each scale and zoom loads the font again.
+    missing_logged: Cell<bool>,
 }
 
 impl FontSettings {
@@ -36,6 +38,7 @@ impl FontSettings {
             family,
             px,
             options: FontOptions { hinting, weight },
+            missing_logged: Cell::new(false),
         })
     }
 
@@ -68,6 +71,13 @@ impl FontSettings {
             f32::from(scale_units) / 120.0,
             self.options,
         )?;
+        if font.substituted() && !self.missing_logged.replace(true) {
+            tracing::warn!(
+                requested = %self.family,
+                family = font.family(font.primary_face()),
+                "font family not found; using a monospaced system face"
+            );
+        }
         let metrics = font.metrics();
         tracing::info!(
             family = font.family(font.primary_face()),
