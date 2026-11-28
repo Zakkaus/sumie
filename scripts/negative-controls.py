@@ -147,6 +147,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("Super matches a shortcut", "test", "crates/sumie-core/src/shortcuts.rs",
           replace_once("            Platform::Linux if modifiers.super_key => return Ok(None),\n", ""),
           "test shortcuts::tests::super_never_matches_a_shortcut ... FAILED")
+    probe("Cmd+Z zooms the pane on macOS", "test", "crates/sumie-core/src/shortcuts.rs",
+          replace_once("        'w' => Shortcut::Tab(TabAction::Close),\n",
+                       "        'w' => Shortcut::Tab(TabAction::Close),\n        'z' => Shortcut::Pane(PaneAction::Zoom),\n"),
+          "test shortcuts::tests::macos_binds_the_linux_actions_to_command_by_position_then_character ... FAILED")
     probe("closing an earlier tab loses the active pane", "test", "crates/sumie-core/src/tabs.rs",
           replace_once("self.active -= 1;", "self.active = 0;"),
           "test tabs::tests::close_preserves_active_identity_or_selects_a_neighbor ... FAILED")

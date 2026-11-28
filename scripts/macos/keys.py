@@ -18,6 +18,9 @@ Starts the terminal runner like frames.py, then runs keyrec.py in its shell and 
            repeat or release, even when Command is lifted before the key. a pressed before
            Command sends its press and release, but not the repeat it makes with Command down,
            posted once the press reached the PTY.
+  zoom     In a pane split with Cmd+E, under Kitty flags 11: Cmd+Z (Undo elsewhere on macOS)
+           leaves the focused pane's grid as it is and sends nothing; Cmd+Shift+Return shows
+           the pane at the full tab size and again restores the split, sending nothing either.
   option   Left Option is Meta once: a and 1 give 1b61 1b31 (1 does not select a tab). Right
            Option, and an Option flag without a side, type the layout's characters: a gives
            c3a5 (å on Latin layouts), and 1 one character without ESC (¡ on US, 1 on some
@@ -48,7 +51,7 @@ from frames import CannotCheck, Runner, build_tools  # noqa: E402
 
 KEYREC = Path(__file__).resolve().parent / "keyrec.py"
 # AppKit virtual key codes.
-A, B, C, K, DIGIT1 = 0x00, 0x0B, 0x08, 0x28, 0x12
+A, B, C, E, K, W, Z, DIGIT1 = 0x00, 0x0B, 0x08, 0x0E, 0x28, 0x0D, 0x06, 0x12
 TAB, ENTER, BACKSPACE, LEFT, UP = 0x30, 0x24, 0x33, 0x7B, 0x7E
 SHIFT, CONTROL, COMMAND, LEFT_OPTION, RIGHT_OPTION = 0x38, 0x3B, 0x37, 0x3A, 0x3D
 KITTY_A = "1b5b3937751b5b39373b313a3375"
@@ -107,6 +110,18 @@ class Keys:
             self.mouse("drag", cell, mods)
         self.mouse("up", cells[-1], mods)
         time.sleep(0.7)
+
+    def grid(self, name, changed_from=None, timeout=5.0):
+        """The focused pane's columns and rows, once they differ from `changed_from`."""
+        end = time.monotonic() + timeout
+        while True:
+            report = self.runner.report()
+            grid = (report["columns"], report["rows"])
+            if grid != changed_from:
+                return grid
+            if time.monotonic() >= end:
+                raise Violation(f"keys: {name}: the focused pane stayed {grid[0]}x{grid[1]}")
+            time.sleep(0.05)
 
     def focus(self, focused):
         asked = time.monotonic()
@@ -222,6 +237,35 @@ def case_command(keys):
     expect("a held into Command", keys.stop("command"), KITTY_A)
 
 
+def case_zoom(keys):
+    def zoom():
+        keys.key(COMMAND, "down", "command")
+        keys.key(SHIFT, "down", "command+shift")
+        keys.tap(ENTER, "command+shift")
+        keys.key(SHIFT, "up", "command")
+        keys.key(COMMAND, "up")
+
+    whole = keys.grid("zoom: before the split")
+    keys.chord(COMMAND, "command", E)
+    split = keys.grid("zoom: after Cmd+E", whole)
+    keys.start("zoom", "kitty")
+    keys.chord(COMMAND, "command", Z)
+    time.sleep(SETTLE)
+    if (got := keys.grid("zoom: after Cmd+Z")) != split:
+        raise Violation(f"keys: zoom: Cmd+Z resized the focused pane from {split} to {got}")
+    print("keys: zoom: Cmd+Z leaves the split")
+    zoom()
+    if (got := keys.grid("zoom: after Cmd+Shift+Return", split)) != whole:
+        raise Violation(f"keys: zoom: Cmd+Shift+Return gave {got} instead of the full tab's {whole}")
+    zoom()
+    if (got := keys.grid("zoom: after the second Cmd+Shift+Return", whole)) != split:
+        raise Violation(f"keys: zoom: the second Cmd+Shift+Return gave {got} instead of the split's {split}")
+    print(f"keys: zoom: Cmd+Shift+Return gives {whole[0]}x{whole[1]}, then the split's {split[0]}x{split[1]}")
+    expect("zoom: chords", keys.stop("zoom"), "")
+    keys.chord(COMMAND, "command", W)
+    keys.grid("zoom: after Cmd+W", split)
+
+
 def case_option(keys):
     out = keys.start("option", "plain")
     meta, composed = "1b611b31", "c3a5"
@@ -297,8 +341,8 @@ def case_tracking(keys):
     expect("tracking", keys.stop("tracking"), want)
 
 
-CASES = (case_plain, case_deckm, case_kitty, case_focus, case_command, case_option, case_links,
-         case_tracking)
+CASES = (case_plain, case_deckm, case_kitty, case_focus, case_command, case_zoom, case_option,
+         case_links, case_tracking)
 
 
 def main():

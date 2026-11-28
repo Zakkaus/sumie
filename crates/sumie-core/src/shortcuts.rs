@@ -159,7 +159,8 @@ const fn command_key(physical: PhysicalKey) -> bool {
 }
 
 /// The Linux Ctrl+Shift letters, zoom, tab digits and pane focus with Command alone, matched by
-/// named position first and then by the layout's character.
+/// named position first and then by the layout's character. Pane zoom is Cmd+Shift+Return, as
+/// in Ghostty and iTerm2: Cmd+Z is Undo everywhere on macOS, so it matches nothing.
 fn command_shortcut(
     physical: PhysicalKey,
     symbol: Option<char>,
@@ -174,6 +175,9 @@ fn command_shortcut(
         && let Some(focus) = directional_shortcut(physical, false)
     {
         return Some(focus);
+    }
+    if modifiers.shift && physical == PhysicalKey::Code(KeyCode::Enter) {
+        return Some(Shortcut::Pane(PaneAction::Zoom));
     }
     let key = command_position(physical).or_else(|| symbol.map(|ch| ch.to_ascii_lowercase()))?;
     let shortcut = match (key, modifiers.shift) {
@@ -204,6 +208,7 @@ const fn command_position(physical: PhysicalKey) -> Option<char> {
         K::KeyT => 't',
         K::KeyV => 'v',
         K::KeyW => 'w',
+        // Unbound, but named: Cmd at Z on AZERTY, which types w, must not close the tab.
         K::KeyZ => 'z',
         K::Equal | K::NumpadAdd => '=',
         K::Minus | K::NumpadSubtract => '-',
@@ -222,7 +227,7 @@ const fn command_position(physical: PhysicalKey) -> Option<char> {
 }
 
 /// The letter actions both tables share: Ctrl+Shift+<letter> on Linux, Command+<letter> on
-/// macOS.
+/// macOS. Linux adds Ctrl+Shift+Z for pane zoom.
 fn letter_shortcut(letter: char) -> Option<Shortcut> {
     Some(match letter {
         'c' => Shortcut::Copy,
@@ -232,7 +237,6 @@ fn letter_shortcut(letter: char) -> Option<Shortcut> {
         'v' => Shortcut::Paste,
         't' => Shortcut::Tab(TabAction::Open),
         'w' => Shortcut::Tab(TabAction::Close),
-        'z' => Shortcut::Pane(PaneAction::Zoom),
         _ => return None,
     })
 }
@@ -270,7 +274,10 @@ fn control_shortcut(physical: PhysicalKey, symbol: Option<char>, shift: bool) ->
             _ => None,
         },
     };
-    letter_shortcut(key?.to_ascii_lowercase())
+    match key?.to_ascii_lowercase() {
+        'z' => Some(Shortcut::Pane(PaneAction::Zoom)),
+        letter => letter_shortcut(letter),
+    }
 }
 
 /// Ctrl+Tab and Ctrl+`PageDown` select the next tab, Ctrl+Shift+Tab and Ctrl+`PageUp` the
@@ -450,6 +457,7 @@ mod tests {
             (K::KeyE, Some('e'), cmd, false, "pane Split(Horizontal)"),
             (K::KeyO, Some('o'), cmd, false, "pane Split(Vertical)"),
             (K::KeyF, Some('f'), cmd, false, "search"),
+            (K::Enter, None, cmd_shift, true, "pane Zoom"),
             // A named position wins over the layout: Dvorak types j on the C key.
             (K::KeyC, Some('j'), cmd, false, "copy"),
             // Non-Latin layouts keep the position.
@@ -468,6 +476,11 @@ mod tests {
             // An action that cannot run, or no action, still keeps Command out of the PTY.
             (K::ArrowLeft, None, cmd, false, "consume"),
             (K::KeyK, Some('k'), cmd, false, "consume"),
+            // Cmd+Z is Undo on macOS, not pane zoom, at its position or by its character.
+            (K::KeyZ, Some('z'), cmd, true, "consume"),
+            (K::Backquote, Some('z'), cmd, true, "consume"),
+            (K::KeyZ, Some('w'), cmd, false, "consume"),
+            (K::Enter, None, cmd, true, "consume"),
             (K::KeyC, Some('C'), cmd_shift, false, "consume"),
             (K::MetaLeft, None, none, false, "consume"),
             // Without Command the Linux-only chords reach the program.

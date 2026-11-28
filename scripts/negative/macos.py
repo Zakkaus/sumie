@@ -219,6 +219,15 @@ def macos_controls():
               replace_once("            Platform::MacOS => macos_shortcut(physical, modifiers, has_splits),\n",
                            "            Platform::MacOS => linux_shortcut(physical, symbol, modifiers, has_splits),\n"),
               "keys: option: left Option: recorded 1b61 instead of 1b611b31")
+        probe("Cmd+Z zooms the pane", "macos-keys", "crates/sumie-core/src/shortcuts.rs",
+              replace_once("        'w' => Shortcut::Tab(TabAction::Close),\n",
+                           "        'w' => Shortcut::Tab(TabAction::Close),\n"
+                           "        'z' => Shortcut::Pane(PaneAction::Zoom),\n"),
+              "keys: zoom: Cmd+Z resized the focused pane")
+        probe("Cmd+Shift+Return unbound", "macos-keys", "crates/sumie-core/src/shortcuts.rs",
+              replace_once("    if modifiers.shift && physical == PhysicalKey::Code(KeyCode::Enter) {\n",
+                           "    if false && modifiers.shift && physical == PhysicalKey::Code(KeyCode::Enter) {\n"),
+              "keys: zoom: after Cmd+Shift+Return: the focused pane stayed")
         probe("open a link released after a drag off it", "macos-keys", "crates/sumie-core/src/mouse.rs",
               replace_once("            self.link_press = None;\n            self.selecting = Some((SelectionUnit::Cell, cell));\n",
                            "            self.selecting = Some((SelectionUnit::Cell, cell));\n"),
