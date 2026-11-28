@@ -130,7 +130,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="sumie-routes.") as scratch:
         try:
             tool = cgtool(scratch)
-            runner = Runner(binary, str(Path(scratch) / "home"))
+            # The routes, not the confirmation, are under test; macos-repeat covers asking.
+            runner = Runner(binary, str(Path(scratch) / "home"), False)
         except (OSError, subprocess.CalledProcessError) as error:
             print(f"routes: could not start: {error}", file=sys.stderr)
             return 2
