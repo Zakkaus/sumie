@@ -102,4 +102,4 @@ naga-types = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c
 wgpu-hal = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
 wgpu-naga-bridge = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
 wgpu-types = { git = "https://github.com/Zakkaus/wgpu", rev = "391fb61f4c0bec28c8c2a368a5a90f525c2fd1eb" }
-winit = { git = "https://github.com/Zakkaus/winit", rev = "c18544847de12d637b866278c80f4d437ad43a35" }
+winit = { git = "https://github.com/Zakkaus/winit", rev = "d804d830ac7c3cbdfa1c67ecfd8b2fa61be8a26c" }
