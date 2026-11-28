@@ -12,7 +12,7 @@ use crate::{
     platform::Position,
 };
 
-fn view() -> View {
+pub(super) fn view() -> View {
     let mut view = scaled_view(150, [800, 500], [1000, 625]);
     view.set_tab_count(2).unwrap();
     view
