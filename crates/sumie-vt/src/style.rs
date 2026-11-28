@@ -115,8 +115,8 @@ impl Terminal {
             return Ok(colors[usize::from(index)]);
         }
         let mut rgb = [0; 3];
-        // SAFETY: The terminal is live and the bridge writes exactly one RGB value.
-        check(unsafe { ffi::sumie_palette_color(self.raw, index, &raw mut rgb) })?;
+        // SAFETY: The render state is live and the bridge writes exactly one captured RGB value.
+        check(unsafe { ffi::sumie_palette_color(self.render, index, &raw mut rgb) })?;
         Ok(rgb)
     }
 

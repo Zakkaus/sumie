@@ -150,6 +150,7 @@ impl Terminal {
                 null(),
                 &raw mut terminal.cell_iter,
             ))?;
+            (*terminal.effects).render = terminal.render;
             check(ffi::ghostty_terminal_set(
                 terminal.raw,
                 ffi::TERMINAL_OPT_USERDATA,
@@ -183,8 +184,7 @@ impl Terminal {
         // SAFETY: The terminal is live and exclusive; the bridge only reads its grid.
         let grid = unsafe { ffi::sumie_screen_stamp(self.raw, &raw mut has_placements) };
         let images = if has_placements {
-            // SAFETY: Both handles are live and exclusively borrowed.
-            check(unsafe { ffi::ghostty_render_state_update(self.render, self.raw) })?;
+            self.update_render()?;
             let images = self.snapshot_images()?;
             (!images.is_empty()).then_some(images)
         } else {
@@ -372,9 +372,9 @@ impl Terminal {
 
         let mut cols = 0_u16;
         let mut rows = 0_u16;
+        self.update_render()?;
         // SAFETY: Both handles are live and exclusive. Each key matches the output slot type.
         unsafe {
-            check(ffi::ghostty_render_state_update(self.render, self.raw))?;
             check(ffi::ghostty_render_state_get(
                 self.render,
                 ffi::RENDER_STATE_DATA_COLS,

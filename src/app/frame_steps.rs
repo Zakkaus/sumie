@@ -134,6 +134,13 @@ impl App {
         retry
             .into_iter()
             .chain(paced)
+            .chain(
+                session
+                    .into_iter()
+                    .flat_map(|s| s.tabs.as_slice())
+                    .flat_map(|tab| &tab.panes)
+                    .filter_map(|pane| pane.pane.terminal.render_hold_deadline()),
+            )
             .chain(session.and_then(Session::closing_deadline))
             .chain(session.and_then(Session::progress_deadline))
             .chain(

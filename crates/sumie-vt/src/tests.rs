@@ -7,6 +7,46 @@ use sumie_core::graphics::{ImageSource, PixelFormat};
 use super::Terminal;
 
 #[test]
+fn synchronized_output_holds_consecutive_frames_on_the_same_row() {
+    let mut vt = Terminal::new(6, 2).unwrap();
+    vt.resize_pixels(6, 2, [8, 16]).unwrap();
+    vt.write(format!("\x1b_G{KITTY_RED}\x1b\\A").as_bytes());
+    let normal = vt.render_snapshot().unwrap();
+    assert_eq!(normal.rows[0][0].text, "A");
+
+    vt.write(b"\rB\x1b[?2026h\rC\x1b]4;3;rgb:ab/cd/ef\x07");
+    vt.screen_contents().unwrap(); // Background activity also inspects placements.
+    let held = vt.render_snapshot().unwrap();
+    assert_eq!(held.rows[0][0].text, "B");
+    assert_eq!(held.ansi_yellow, normal.ansi_yellow);
+
+    vt.write(b"\x1b[?2026l\x1b[?2026h\rD");
+    let held = vt.render_snapshot().unwrap();
+    assert_eq!(held.rows[0][0].text, "C");
+    assert_eq!(held.ansi_yellow, [0xab, 0xcd, 0xef]);
+    vt.write(b"\x1b[?2026l");
+    assert_eq!(vt.snapshot().unwrap()[0][0].text, "D");
+}
+
+#[test]
+fn synchronized_output_resets_after_one_second_without_output() {
+    use std::time::{Duration, Instant};
+
+    let mut vt = Terminal::new(3, 1).unwrap();
+    let before = Instant::now();
+    vt.write(b"A\x1b[?2026h\rB");
+    let at = vt.render_hold_deadline().unwrap();
+    let second = Duration::from_secs(1);
+    assert!((before + second..=Instant::now() + second).contains(&at));
+    let just_before = at.checked_sub(Duration::from_nanos(1)).unwrap();
+    assert!(!vt.expire_render_hold(just_before).unwrap());
+    assert!(vt.expire_render_hold(at).unwrap());
+    assert_eq!(vt.snapshot().unwrap()[0][0].text, "B");
+    vt.write(b"\x1b[?2026h\rC"); // A fresh set must start another hold without a reset.
+    assert_eq!(vt.snapshot().unwrap()[0][0].text, "B");
+}
+
+#[test]
 fn snapshot_updates_ansi_yellow_without_changing_screen_contents() {
     let mut terminal = Terminal::new(5, 2).unwrap();
     let mut palette = [[0; 3]; 16];

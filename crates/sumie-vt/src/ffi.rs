@@ -238,6 +238,8 @@ pub const TERMINAL_OPT_DESKTOP_NOTIFICATION: c_int = 30;
 pub const TERMINAL_OPT_PROGRESS_REPORT: c_int = 31;
 pub const TERMINAL_OPT_CLIPBOARD_READ: c_int = 39;
 pub const TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES: c_int = 40;
+pub const TERMINAL_OPT_MODE: c_int = 35;
+pub const TERMINAL_OPT_RENDER_HOLD: c_int = 42;
 pub const TERMINAL_DATA_COLS: c_int = 1;
 pub const TERMINAL_DATA_TITLE: c_int = 12;
 pub const TERMINAL_DATA_TOTAL_ROWS: c_int = 14;
@@ -254,6 +256,7 @@ pub const CLIPBOARD_WRITE_UNSUPPORTED: c_int = 2;
 pub const CLIPBOARD_READ_DENIED: c_int = 1;
 pub const MODE_FOCUS_EVENT: u16 = 1004;
 pub const MODE_BRACKETED_PASTE: u16 = 2004;
+pub const MODE_SYNCHRONIZED_OUTPUT: u16 = 2026;
 pub const FOCUS_GAINED: c_int = 0;
 pub const FOCUS_LOST: c_int = 1;
 pub const STYLE_COLOR_NONE: u8 = 0;
@@ -336,7 +339,7 @@ unsafe extern "C" {
     ) -> u64;
     pub fn sumie_screen_clear_epoch(terminal: Terminal) -> u64;
     pub fn sumie_screen_stamp(terminal: Terminal, has_placements: *mut bool) -> u64;
-    pub fn sumie_palette_color(terminal: Terminal, index: u8, out: *mut [u8; 3]) -> c_int;
+    pub fn sumie_palette_color(render: RenderState, index: u8, out: *mut [u8; 3]) -> c_int;
     pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
     pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
     pub fn ghostty_terminal_point_from_grid_ref(

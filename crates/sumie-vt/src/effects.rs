@@ -2,10 +2,11 @@ use std::ffi::{c_int, c_void};
 use std::mem::{size_of, take};
 use std::ptr::{from_mut, null};
 use std::slice;
+use std::time::{Duration, Instant};
 
 use sumie_core::notify::{Notification, Progress, ProgressState};
 
-use crate::ffi;
+use crate::{Error, Terminal, check, ffi};
 
 pub(super) const OUTPUT_LIMIT: usize = 1024 * 1024;
 const NOTIFICATION_LIMIT: usize = 8;
@@ -33,6 +34,8 @@ pub(super) struct Effects {
     progress: Option<Progress>,
     progress_pending: bool,
     pub(super) version: &'static str,
+    pub(super) render: ffi::RenderState,
+    hold: Option<(Instant, Result<(), Error>)>,
 }
 
 impl Effects {
@@ -109,6 +112,7 @@ pub(super) unsafe fn register(terminal: ffi::Terminal) -> c_int {
             queue_title as *const c_void,
         ),
         (ffi::TERMINAL_OPT_BELL, queue_bell as *const c_void),
+        (ffi::TERMINAL_OPT_RENDER_HOLD, render_hold as *const c_void),
         (
             ffi::TERMINAL_OPT_DESKTOP_NOTIFICATION,
             queue_notification as *const c_void,
@@ -125,6 +129,55 @@ pub(super) unsafe fn register(terminal: ffi::Terminal) -> c_int {
         }
     }
     ffi::SUCCESS
+}
+
+unsafe extern "C" fn render_hold(terminal: ffi::Terminal, data: *mut c_void, held: bool) {
+    // SAFETY: Ghostty calls synchronously under the owner's exclusive terminal borrow.
+    let effects = unsafe { &mut *data.cast::<Effects>() };
+    effects.hold = held.then(|| {
+        // SAFETY: The callback may capture this live render state before the write continues.
+        let captured = check(unsafe { ffi::ghostty_render_state_update(effects.render, terminal) });
+        (Instant::now() + Duration::from_secs(1), captured)
+    });
+}
+
+impl Terminal {
+    /// When the owner must reset mode 2026, even if no more output arrives.
+    #[must_use]
+    pub fn render_hold_deadline(&self) -> Option<Instant> {
+        // SAFETY: The boxed userdata outlives this borrow; only exclusive calls run callbacks.
+        unsafe { (*self.effects).hold.map(|(deadline, _)| deadline) }
+    }
+
+    /// Release an expired hold. A released frame needs a new snapshot.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot reset mode 2026.
+    pub fn expire_render_hold(&mut self, now: Instant) -> Result<bool, Error> {
+        if self.render_hold_deadline().is_none_or(|at| now < at) {
+            return Ok(false);
+        }
+        let mode = ffi::TerminalModeConfig {
+            mode: ffi::MODE_SYNCHRONIZED_OUTPUT,
+            value: false,
+        };
+        // SAFETY: OPT_MODE reads the config synchronously and does not invoke render_hold.
+        check(unsafe {
+            ffi::ghostty_terminal_set(self.raw, ffi::TERMINAL_OPT_MODE, (&raw const mode).cast())
+        })?;
+        self.effects().hold = None;
+        Ok(true)
+    }
+
+    pub(super) fn update_render(&mut self) -> Result<(), Error> {
+        if let Some((_, captured)) = self.effects().hold
+            && !self.expire_render_hold(Instant::now())?
+        {
+            return captured;
+        }
+        // SAFETY: Both handles are live and exclusively borrowed.
+        check(unsafe { ffi::ghostty_render_state_update(self.render, self.raw) })
+    }
 }
 
 pub(super) unsafe extern "C" fn queue_bell(_: ffi::Terminal, data: *mut c_void) {

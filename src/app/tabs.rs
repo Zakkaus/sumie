@@ -252,6 +252,7 @@ impl PaneState {
     ) -> Result<Serviced> {
         let now = alerts.now;
         self.snapshot_dirty |= self.snapshot_pace.released(now);
+        self.snapshot_dirty |= self.pane.terminal.expire_render_hold(now)?;
         let ready = window.take_ready(self.id);
         let mut serviced = Serviced::default();
         if ready.exit {
