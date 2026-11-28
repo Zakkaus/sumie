@@ -86,25 +86,37 @@ fn focus(id: u64, active: bool) -> PaneFocus<'static> {
 #[test]
 fn osc8_target_is_drawn_in_the_banner_row() {
     let mut view = view();
-    let rect = view.content_rect();
+    let rect = Rect {
+        width: 20 * view.cell[0] + 2 * view.pane_padding()[0],
+        ..view.content_rect()
+    };
     let snapshot = snapshot(&view, rect);
-    for target in [Some("https://ex.io/actual"), None] {
+    let mut draw = |target, banner| {
+        view.begin_frame([], snapshot.background);
         let link = LinkHighlight {
             target,
             ..LinkHighlight::default()
         };
-        view.begin_frame([], snapshot.background);
-        view.build_pane(rect, &snapshot, None, link, None, focus(1, false));
+        view.build_pane(rect, &snapshot, None, link, banner, focus(1, true));
         view.end_frame();
         let draw = view.draw_list(false);
-        let row_color = if target.is_some() {
-            snapshot.foreground
-        } else {
-            snapshot.background
-        };
-        assert_eq!(draw.backgrounds[0][..3], row_color);
-        assert_eq!(draw.glyphs.is_empty(), target.is_none());
-    }
+        (draw.backgrounds[0], draw.glyphs.to_vec())
+    };
+    let preview = draw(Some("https://long-user-name@actual.test/a@b"), None);
+    assert_eq!(preview.0[..3], snapshot.foreground);
+    assert_ne!(preview.1, []);
+    assert_eq!(preview, draw(None, Some("…actual.test")));
+    assert_eq!(
+        draw(Some("https://actual.test"), None),
+        draw(None, Some("https://actual.test")),
+    );
+    assert_eq!(
+        draw(Some(r"https://actual.test\segment@other.test/path"), None),
+        draw(None, Some("https://actual.test…")),
+    );
+    let (background, glyphs) = draw(None, None);
+    assert_eq!(background[..3], snapshot.background);
+    assert_eq!(glyphs, []);
 }
 
 #[test]

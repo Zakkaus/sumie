@@ -202,12 +202,18 @@ impl PanePainter<'_> {
         ];
     }
 
-    pub(super) fn draw_banner(&mut self, snapshot: &Snapshot, message: &str) {
+    pub(super) fn draw_banner(&mut self, snapshot: &Snapshot, message: &str, link: bool) {
         let (background, foreground) = (rgba(snapshot.foreground), rgba(snapshot.background));
         self.pane
             .backgrounds
             .extend(std::iter::repeat_n(background, self.pane.grid[0] as usize));
-        self.line.ellipsize(message, self.pane.grid[0]);
+        let columns = self.pane.grid[0];
+        if let Some(host) = link.then(|| link_banner_host(message, columns)).flatten() {
+            self.line
+                .ellipsize(std::iter::once('…').chain(host.chars()), columns);
+        } else {
+            self.line.ellipsize(message.chars(), columns);
+        }
         self.line.draw(
             self.font,
             self.font_errors,
@@ -267,7 +273,7 @@ impl PanePainter<'_> {
         let (query, count) = label.rsplit_once('\t').unwrap_or((label, ""));
         let left = panel.left + u32::from(panel.width >= 12);
         let room = rail - left;
-        let count_width = self.line.ellipsize(count, room.saturating_sub(4));
+        let count_width = self.line.ellipsize(count.chars(), room.saturating_sub(4));
         let count_column = rail - u32::from(room >= 8) - count_width;
         let color = rgba(ink);
         self.line.draw(
@@ -436,14 +442,14 @@ impl Line {
         }
     }
 
-    pub(super) fn ellipsize(&mut self, text: &str, columns: u32) -> u32 {
+    fn ellipsize(&mut self, text: impl Iterator<Item = char>, columns: u32) -> u32 {
         self.clear();
         if columns == 0 {
             return 0;
         }
         let mut cells = 0;
         let mut last = (0, 0);
-        for ch in text.chars().map(display_char) {
+        for ch in text.map(display_char) {
             let width = codepoint_width(ch);
             if cells + u32::from(width) > columns {
                 if cells == columns {
@@ -475,6 +481,18 @@ fn width(text: &str) -> u32 {
     text.chars()
         .map(|ch| u32::from(codepoint_width(display_char(ch))))
         .sum()
+}
+
+fn link_banner_host(uri: &str, columns: u32) -> Option<&str> {
+    let rest = uri.split_once(':')?.1.strip_prefix("//")?;
+    // Browsers also end an HTTP authority at a backslash.
+    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or_default();
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let end = uri.len() - rest.len() + authority.len();
+    let width_needed = width(&uri[..end]) + u32::from(end != uri.len());
+    (!host.is_empty() && width_needed > columns).then_some(host)
 }
 
 fn visible_suffix(text: &str, columns: u32) -> (&str, u32) {
