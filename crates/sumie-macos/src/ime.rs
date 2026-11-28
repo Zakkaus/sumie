@@ -5,11 +5,12 @@
 //! preedit. Every event of it carries that generation until it ends, its preedits, the empty
 //! one and its one commit alike, so the session drops all of them once the recipient changed,
 //! in whatever order they arrive. It ends at its commit, when winit reports it disabled, at
-//! focus loss, or at its first event under another input source; a commit without an owner is
-//! dropped. A new generation does not end it: the window cancels it natively, and winit's
-//! `Disabled` for that cancel follows every event of it that winit delivered. The window
-//! converts events in the order it delivers them, so a new generation applies from the event
-//! that caused it, and a composition the next key starts belongs to the new recipient.
+//! focus loss, or at its first event under another input source. A new generation does not
+//! end it: the window cancels it natively, and winit's `Disabled` for that cancel follows
+//! every event of it that winit delivered. A commit without an owner answers a composition
+//! that was cancelled, so it is stale and dropped. The window converts events in the order it
+//! delivers them, so a new generation applies from the event that caused it, and a
+//! composition the next key starts belongs to the new recipient.
 //!
 //! winit forwards no key-up while the input method composes, so a press reported before the
 //! composition took over would never end. Its release is sent when the composition starts,
@@ -135,6 +136,10 @@ impl Composition {
                 if let Some((generation, _)) = self.owner.take() {
                     out.push(Input::Commit { text, generation });
                 } else {
+                    // Its composition was cancelled: natively at a recipient change or focus
+                    // loss, or by another input source. A cancelled composition commits
+                    // nothing, so this is stale; Ghostty and iTerm2 likewise never commit
+                    // marked text on focus loss.
                     tracing::debug!("dropped an input-method commit without an owner");
                 }
             }
