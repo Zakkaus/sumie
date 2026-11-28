@@ -200,16 +200,23 @@ impl LocalPane {
         reports: &[(MouseEvent, MouseAction, Option<Button>)],
     ) -> Result<bool> {
         let mouse = &mut self.mouse;
-        mouse.bytes.clear();
-        for &(event, action, button) in reports {
+        // One report goes straight from the encoder.
+        let bytes = if let [(event, action, button)] = *reports {
             let report = mouse.report(event, action, button.map(native_button));
-            let bytes = mouse.encoder.encode(report)?;
-            mouse.bytes.extend_from_slice(bytes);
-        }
-        if mouse.bytes.is_empty() {
+            mouse.encoder.encode(report)?
+        } else {
+            mouse.bytes.clear();
+            for &(event, action, button) in reports {
+                let report = mouse.report(event, action, button.map(native_button));
+                let bytes = mouse.encoder.encode(report)?;
+                mouse.bytes.extend_from_slice(bytes);
+            }
+            &mouse.bytes
+        };
+        if bytes.is_empty() {
             return Ok(false);
         }
-        self.pty.enqueue_input(&mouse.bytes)?;
+        self.pty.enqueue_input(bytes)?;
         mouse.last_report = reports.last().map(|&(event, ..)| event);
         Ok(true)
     }
