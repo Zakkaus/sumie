@@ -166,6 +166,17 @@ cargo test --release --locked --offline
 The tests that draw need a GPU; CI runs them on Mesa software drivers (`lavapipe` for Vulkan)
 with `SUMIE_REQUIRE_GPU=1`. Without a driver those tests skip.
 
+## The macOS bundle's font
+
+`scripts/macos/bundle.sh` copies JetBrains Mono 2.304 (SIL Open Font License 1.1) into
+`sumie.app/Contents/Resources/Fonts/` (Regular, Bold, Italic, BoldItalic and `OFL.txt`) and
+registers the directory with `ATSApplicationFontsPath`, because stock macOS lacks the default
+`font.family`. The script downloads
+`https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip`
+and checks its SHA-256 (`6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf`);
+set `SUMIE_FONT_ZIP` to a local copy of that file for an offline build. The checksum is still
+enforced. The constants are `FONT_VERSION`, `FONT_URL` and `FONT_SHA256` at the top of the script.
+
 ## Cutting a release
 
 1. Set `version` under `[workspace.package]` in `Cargo.toml`, refresh `Cargo.lock`, and merge.

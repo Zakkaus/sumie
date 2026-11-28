@@ -7,6 +7,8 @@ Checksums are in `SHA256SUMS`.
 - arm64 (Apple silicon) only.
 - The app is ad-hoc signed and not notarized. Gatekeeper blocks the first launch: right-click
   `sumie.app` and choose Open, or run `xattr -dr com.apple.quarantine /Applications/sumie.app`.
+- The app bundles JetBrains Mono, the default font, under the SIL Open Font License 1.1; the
+  license is in `sumie.app/Contents/Resources/Fonts/OFL.txt`.
 - The declared minimum is macOS 13. Only macOS 26 and 27 are tested.
 
 ## Linux

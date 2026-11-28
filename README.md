@@ -217,3 +217,7 @@ IDs, with no terminal content, for the multi-pane frame budget harness.
 
 The icon is outline art from the Yuji Syuku typeface (SIL Open Font License 1.1); see
 [assets/icons/README.md](assets/icons/README.md).
+
+The macOS app bundles JetBrains Mono 2.304 (SIL Open Font License 1.1, Copyright 2020 The
+JetBrains Mono Project Authors) because stock macOS lacks the default font. Its license ships
+in `sumie.app/Contents/Resources/Fonts/OFL.txt`.

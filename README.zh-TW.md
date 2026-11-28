@@ -175,3 +175,5 @@ blink = true
 [GNU Affero 通用公眾授權條款第 3 版或更新版本](LICENSE)（`AGPL-3.0-or-later`）。
 
 圖示取自 Yuji Syuku 字型的輪廓設計（SIL Open Font License 1.1），見 [assets/icons/README.md](assets/icons/README.md)。
+
+macOS 版應用程式內含 JetBrains Mono 2.304（SIL Open Font License 1.1，Copyright 2020 The JetBrains Mono Project Authors），因為 macOS 沒有預設字型。授權文字在 `sumie.app/Contents/Resources/Fonts/OFL.txt`。

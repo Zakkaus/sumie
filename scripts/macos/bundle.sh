@@ -7,7 +7,16 @@
 # sumie.app and, with --dmg, sumie-VERSION-aarch64-macos.dmg. VERSION defaults to the
 # workspace version in Cargo.toml. SUMIE_REQUIRE_ICON=1 turns a missing icon toolchain
 # (rsvg-convert, iconutil) into an error; the release workflow sets it.
+#
+# The bundle carries JetBrains Mono, the default font.family, because stock macOS lacks it.
+# The release zip is downloaded and checked against FONT_SHA256; SUMIE_FONT_ZIP points at an
+# already-downloaded copy of the same file for offline builds (the hash is still enforced).
 set -eu
+
+# JetBrains Mono, SIL Open Font License 1.1. Bump the three values together.
+FONT_VERSION=2.304
+FONT_URL=https://github.com/JetBrains/JetBrainsMono/releases/download/v$FONT_VERSION/JetBrainsMono-$FONT_VERSION.zip
+FONT_SHA256=6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf
 
 make_dmg=false
 if [ "${1-}" = --dmg ]; then
@@ -46,6 +55,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>ATSApplicationFontsPath</key>
+    <string>Fonts</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
@@ -76,6 +87,30 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 plutil -lint "$app/Contents/Info.plist" >/dev/null
+
+# JetBrains Mono: the static TTFs (Core Text names the family "JetBrains Mono" for all four
+# faces, which the variable files would not give a bold or italic request) and its license.
+# ATSApplicationFontsPath in Info.plist registers Resources/Fonts for this app only.
+fonts=$app/Contents/Resources/Fonts
+work=$(mktemp -d)
+zip=${SUMIE_FONT_ZIP-}
+if [ -z "$zip" ]; then
+    zip=$work/JetBrainsMono-$FONT_VERSION.zip
+    curl -fsSL --retry 3 -o "$zip" "$FONT_URL" || { echo "bundle: cannot download $FONT_URL" >&2; exit 1; }
+fi
+[ -f "$zip" ] || { echo "bundle: SUMIE_FONT_ZIP $zip is not a file" >&2; exit 2; }
+actual=$(shasum -a 256 "$zip" | cut -d ' ' -f 1)
+if [ "$actual" != "$FONT_SHA256" ]; then
+    echo "bundle: $zip has SHA-256 $actual, expected $FONT_SHA256 (JetBrains Mono $FONT_VERSION)" >&2
+    exit 1
+fi
+unzip -q "$zip" -d "$work/x"
+mkdir -p "$fonts"
+for face in Regular Bold Italic BoldItalic; do
+    cp "$work/x/fonts/ttf/JetBrainsMono-$face.ttf" "$fonts/"
+done
+cp "$work/x/OFL.txt" "$fonts/OFL.txt"
+rm -rf "$work"
 
 # The icon master is assets/icons/macos/sumie.svg on a 1024 px grid. Only an SVG renderer
 # turns it into the iconset sizes, so a Mac without rsvg-convert (brew install librsvg)
