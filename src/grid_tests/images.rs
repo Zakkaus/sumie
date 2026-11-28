@@ -159,6 +159,7 @@ fn a_4k_kitty_frame_expands_on_the_gpu() {
     // Recorded for comparison only; wall time depends on the host.
     eprintln!("4K RGB frame on the main thread: worst {worst:?}");
     assert_eq!(renderer.image_expansion().scratch_allocations, 1);
+    assert_eq!(renderer.image_expansion().scratch_bindings, 1);
 }
 
 #[test]

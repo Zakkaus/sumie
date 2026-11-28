@@ -6,7 +6,8 @@
 use std::num::NonZeroU64;
 
 use sumie_core::graphics::Image;
-use wgpu::util::DeviceExt;
+
+const SOURCE_BYTES: NonZeroU64 = NonZeroU64::new(16).unwrap();
 
 /// Scratch rows are allocated in steps of this many rows to limit reallocation.
 const ROW_STEP: u32 = 64;
@@ -22,13 +23,15 @@ pub struct ImageExpansion {
     pub bytes: u64,
     /// Scratch textures created.
     pub scratch_allocations: u64,
+    /// Scratch bind groups created.
+    pub scratch_bindings: u64,
 }
 
 #[derive(Default)]
 pub(crate) struct Expander {
     pipeline: Option<Pipeline>,
     /// Packed source words. Kept between frames while small and in use.
-    scratch: Option<wgpu::Texture>,
+    scratch: Option<(wgpu::Texture, wgpu::BindGroup)>,
     /// The last partial scratch row, padded to whole words.
     tail: Vec<u8>,
     idle_frames: u32,
@@ -44,7 +47,7 @@ impl Expander {
     /// submission still holds its own reference until the GPU is done with it.
     pub(crate) fn begin_frame(&mut self) {
         self.idle_frames = self.idle_frames.saturating_add(1);
-        if self.scratch.as_ref().is_some_and(|scratch| {
+        if self.scratch.as_ref().is_some_and(|(scratch, _)| {
             !retains(
                 u64::from(scratch.width()) * u64::from(scratch.height()) * 4,
                 self.idle_frames,
@@ -73,7 +76,7 @@ impl Expander {
         self.idle_frames = 0;
         self.stats.bytes += pixels.len() as u64;
         let scratch = match &self.scratch {
-            Some(scratch) if *row + rows <= scratch.height() => scratch,
+            Some((scratch, _)) if *row + rows <= scratch.height() => scratch,
             // Earlier images in this submission keep the old texture alive. The new one keeps
             // their rows unused, so a repeat of this frame fits without reallocating.
             _ => {
@@ -82,7 +85,10 @@ impl Expander {
                 }
                 let height = (*row + rows).next_multiple_of(ROW_STEP).min(stride);
                 self.stats.scratch_allocations += 1;
-                self.scratch.insert(scratch(device, [stride, height]))
+                self.stats.scratch_bindings += 1;
+                let pipeline = self.pipeline.get_or_insert_with(|| Pipeline::new(device));
+                let scratch = scratch(device, [stride, height], pipeline);
+                &self.scratch.insert(scratch).0
             }
         };
         let base = *row;
@@ -123,51 +129,30 @@ impl Expander {
         base * stride
     }
 
-    /// Records a pass that expands the staged words starting at `base` into `texture`.
+    /// Records a pass that expands the staged words starting at `base` into `view`.
     pub(super) fn draw(
-        &mut self,
-        device: &wgpu::Device,
+        &self,
+        staging: &mut wgpu::util::StagingBelt,
         encoder: &mut wgpu::CommandEncoder,
-        texture: &wgpu::Texture,
+        view: &wgpu::TextureView,
         image: &Image,
         base: u32,
     ) {
-        let scratch = self.scratch.as_ref().expect("staged before drawing");
-        let pipeline = self.pipeline.get_or_insert_with(|| Pipeline::new(device));
+        let (scratch, bindings) = self.scratch.as_ref().expect("staged before drawing");
+        let pipeline = self.pipeline.as_ref().expect("staged before drawing");
         let channels = u32::try_from(image.format.channels()).unwrap();
-        let source: Vec<u8> = [image.size[0], channels, base, scratch.width()]
-            .iter()
-            .flat_map(|word| word.to_ne_bytes())
-            .collect();
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("sumie image expansion source"),
-            contents: &source,
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sumie image expansion"),
-            layout: &pipeline.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(
-                        &scratch.create_view(&wgpu::TextureViewDescriptor::default()),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: uniform.as_entire_binding(),
-                },
-            ],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let source = [image.size[0], channels, base, scratch.width()];
+        // Record the copy before its pass so images in one submission can share the uniform.
+        staging
+            .write_buffer(encoder, &pipeline.uniform, 0, SOURCE_BYTES)
+            .copy_from_slice(bytemuck::bytes_of(&source));
         // Like a staged copy, this pass follows earlier uploads and precedes the frame's draw.
         // It writes every texel; `DontCare` would need unsafe code and `Load` would make wgpu
         // zero a new texture first, so `Clear` is the cheapest load.
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sumie image expansion"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
+                view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -177,15 +162,16 @@ impl Expander {
             })],
             ..Default::default()
         });
-        pass.set_pipeline(&pipeline.pipeline);
-        pass.set_bind_group(0, &bindings, &[]);
+        pass.set_pipeline(&pipeline.render);
+        pass.set_bind_group(0, bindings, &[]);
         pass.draw(0..3, 0..1);
     }
 }
 
 struct Pipeline {
-    pipeline: wgpu::RenderPipeline,
+    render: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
+    uniform: wgpu::Buffer,
 }
 
 impl Pipeline {
@@ -209,7 +195,7 @@ impl Pipeline {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(16),
+                        min_binding_size: Some(SOURCE_BYTES),
                     },
                     count: None,
                 },
@@ -224,7 +210,7 @@ impl Pipeline {
             label: Some("sumie image expansion"),
             source: wgpu::ShaderSource::Wgsl(include_str!("expand.wgsl").into()),
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let render = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sumie image expansion"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -245,12 +231,26 @@ impl Pipeline {
             multiview_mask: None,
             cache: None,
         });
-        Self { pipeline, layout }
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sumie image expansion source"),
+            size: SOURCE_BYTES.get(),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            render,
+            layout,
+            uniform,
+        }
     }
 }
 
-fn scratch(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
+fn scratch(
+    device: &wgpu::Device,
+    size: [u32; 2],
+    pipeline: &Pipeline,
+) -> (wgpu::Texture, wgpu::BindGroup) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("sumie image expansion scratch"),
         size: crate::atlas::extent(size),
         mip_level_count: 1,
@@ -259,7 +259,24 @@ fn scratch(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
         format: wgpu::TextureFormat::R32Uint,
         usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
-    })
+    });
+    let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sumie image expansion"),
+        layout: &pipeline.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(
+                    &texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                ),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: pipeline.uniform.as_entire_binding(),
+            },
+        ],
+    });
+    (texture, bindings)
 }
 
 /// Usage of an image texture; packed images also render into theirs.

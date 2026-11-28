@@ -3,7 +3,7 @@ use std::num::NonZeroU64;
 use sumie_core::graphics::{Image, PixelFormat};
 use wgpu::util::StagingBelt;
 
-use super::expand::Expander;
+use super::{BoundTexture, expand::Expander};
 
 const CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -40,15 +40,16 @@ impl<'a> Upload<'a> {
 
     pub(super) fn write(
         &mut self,
-        texture: &wgpu::Texture,
+        bound: &BoundTexture,
         image: &Image,
         pixels: &[u8],
         recycled: bool,
         expander: &mut Expander,
     ) {
+        let texture = bound.view.texture();
         if image.format != PixelFormat::Rgba {
             let base = expander.stage(self.device, self.queue, &mut self.scratch_row, pixels);
-            expander.draw(self.device, self.encoder, texture, image, base);
+            expander.draw(self.staging, self.encoder, &bound.view, image, base);
             return;
         }
         if recycled && self.stage(texture, image, pixels) {

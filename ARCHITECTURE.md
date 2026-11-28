@@ -199,6 +199,8 @@ The renderer caches image textures separately from glyph atlases. The cache char
 
 On a cache miss, the renderer can overwrite a texture of the same dimensions, retaining its bind group. It reserves viewer textures first and never overwrites a texture already admitted to the current frame. It prefers to recycle off-screen revisions over pending candidates. An opaque inline placement can hide a lower placement of the same z-index and clipped bounds only after its own upload succeeds. `images::upload` copies RGBA pixels unchanged. RGB, gray and gray-alpha bytes go unchanged into an `R32Uint` scratch texture, kept between frames only while it is at most 64 MiB and used within the last 120 frames, and `images::expand` writes their RGBA texels in a render pass, so the main thread never touches individual pixels; each image in one submission takes its own scratch rows. Image textures are `Rgba8Unorm` holding sRGB bytes, which the image shader decodes after loading.
 
+Packed expansion reuses the scratch binding and cached image view. Each pass records a staged copy into the shared uniform before it reads that image's parameters.
+
 The workspace tests use the same pixel checks on the selected backend and on Linux GLES. Set `SUMIE_REQUIRE_GPU=1` to fail instead of skipping when an adapter is unavailable. Set `SUMIE_RENDER_ARTIFACT_DIR` to an existing directory to save `grid.png` from the selected backend test.
 
 The cursor bar and underline use the same device-pixel thickness as a light box line: `max(1, round(cell_height / 16))`. The hollow block uses one device pixel per edge.
