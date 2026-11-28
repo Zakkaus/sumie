@@ -4,24 +4,11 @@ use std::{borrow::Cow, collections::BTreeMap};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
-use sumie_core::{BINDINGS, Binding, Chord, Platform, Shortcut};
+use sumie_core::{BINDINGS, Binding, Chord, Shortcut};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-#[serde(try_from = "BTreeMap<String, String>")]
+#[serde(transparent)]
 pub struct Keybinds(BTreeMap<String, String>);
-
-impl TryFrom<BTreeMap<String, String>> for Keybinds {
-    type Error = String;
-
-    fn try_from(values: BTreeMap<String, String>) -> Result<Self, Self::Error> {
-        for (id, text) in &values {
-            if binding(id).is_none() || Chord::parse(text).is_none() {
-                return Err(format!("invalid key binding {id}: {text:?}"));
-            }
-        }
-        Ok(Self(values))
-    }
-}
 
 impl JsonSchema for Keybinds {
     fn schema_name() -> Cow<'static, str> {
@@ -61,12 +48,4 @@ impl Keybinds {
 
 pub(super) fn binding(id: &str) -> Option<&'static Binding> {
     BINDINGS.iter().find(|binding| binding.id == id)
-}
-
-pub(super) const fn platform() -> Platform {
-    if cfg!(target_os = "macos") {
-        Platform::MacOS
-    } else {
-        Platform::Linux
-    }
 }

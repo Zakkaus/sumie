@@ -210,6 +210,7 @@ impl Chord {
         Self::from_terminal(key, mask)
     }
 
+    #[cfg(test)]
     pub(super) fn event(self) -> (PhysicalKey, Option<char>, KeyModifiers) {
         let mods = KeyModifiers {
             control: self.mods & CTRL != 0,

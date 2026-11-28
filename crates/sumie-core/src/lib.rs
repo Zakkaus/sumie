@@ -68,6 +68,16 @@ pub enum Platform {
 }
 
 impl Platform {
+    /// The platform this build runs on.
+    #[must_use]
+    pub const fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::MacOS
+        } else {
+            Self::Linux
+        }
+    }
+
     /// Whether the modifiers turn a left press into a link gesture: Ctrl on Linux, Command on
     /// macOS.
     #[must_use]

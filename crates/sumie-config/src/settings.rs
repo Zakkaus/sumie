@@ -174,7 +174,7 @@ fn info(path: String, leaf: &Value, table: &Value) -> SettingInfo {
         .unwrap_or_else(|| panic!("{path} has no category"));
     let kind = kind(&path, leaf);
     let default = match kind {
-        Kind::Binding(binding) => Some(binding.default_on(crate::keybinds::platform()).into()),
+        Kind::Binding(binding) => Some(binding.default_on(sumie_core::Platform::current()).into()),
         _ => leaf
             .get("default")
             .filter(|value| !value.is_null())
