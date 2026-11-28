@@ -256,11 +256,11 @@ def macos_controls():
         probe("start a helper for every repeated paste", "test", "src/macos/pasteboard.rs",
               replace_once("            && self.reading(recipient)\n", "            && self.reading(recipient) && false\n"),
               "test macos::pasteboard::tests::a_second_paste_for_the_same_recipient_joins_the_pending_one ... FAILED")
-        probe("stamp a paste with the current generation", "macos-pasteboard", "src/macos/window.rs",
-              replace_once("                generation: recipient,\n",
-                           "                generation: {\n                    let _ = recipient;\n"
-                           "                    self.generation\n                },\n"),
-              "pasteboard: stale: 1 stale and 1 fresh pastes")
+        # A unit test: whether the end-to-end stale case sees the reply arrive after the next
+        # request depends on timing it cannot control.
+        probe("stamp a paste with the current generation", "test", "src/macos/window/native.rs",
+              replace_once("        generation: recipient,\n", "        generation: current,\n"),
+              "test macos::window::native::tests::a_paste_keeps_its_request_generation ... FAILED")
         probe("send a paste unframed when the framed one does not fit", "macos-pasteboard", "src/pane.rs",
               replace_once("                self.pty.enqueue_input(&self.terminal.encode_paste(text)?)?;\n",
                            "                let unframed = text.clone().into_bytes();\n"

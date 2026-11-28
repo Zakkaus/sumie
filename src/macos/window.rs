@@ -6,7 +6,7 @@
 
 use std::{collections::VecDeque, os::fd::BorrowedFd, time::Instant};
 
-use native::{device_px, key_event, wheel_phase};
+use native::{device_px, key_event, paste_event, wheel_phase};
 use sumie_core::notify::Notification;
 #[cfg(feature = "macos-ci")]
 use sumie_macos::Symbol;
@@ -17,7 +17,7 @@ use sumie_macos::{
 };
 
 use super::{
-    pasteboard::{Pasteboard, Pasted, Request},
+    pasteboard::{Pasteboard, Request},
     sources::Watches,
     surface::FrameSlot,
 };
@@ -132,11 +132,8 @@ impl MacWindow {
 
     /// Queue finished pastes, stamped with their request's recipient, for this turn.
     pub(super) fn service_pasteboard(&mut self) -> Result<()> {
-        for Pasted { text, recipient } in self.pasteboard.service(&mut self.watches)? {
-            self.push(Event::ClipboardText {
-                text,
-                generation: recipient,
-            });
+        for pasted in self.pasteboard.service(&mut self.watches)? {
+            self.push(paste_event(pasted, self.generation));
         }
         Ok(())
     }

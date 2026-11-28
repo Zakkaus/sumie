@@ -1,8 +1,9 @@
-//! winit's keys, scrolling and positions in the shared event types.
+//! winit's keys, scrolling and positions, and finished pastes, in the shared event types.
 
 use sumie_core::mouse::MousePhase;
 use sumie_macos::{Scroll, Symbol};
 
+use super::super::pasteboard::Pasted;
 use crate::platform::{Event, LogicalKey, Position};
 
 /// Trackpad points per wheel notch, as Wayland counts logical units.
@@ -31,6 +32,19 @@ pub(super) fn wheel_phase(scroll: Scroll, scale: f64) -> MousePhase {
             MousePhase::Touch(-pixels / scale * (VALUE120_PER_NOTCH / POINTS_PER_NOTCH))
         }
         Scroll::Ended => MousePhase::TouchEnd,
+    }
+}
+
+/// A finished paste, stamped with the recipient its request named, not with `current`, the
+/// input generation when it arrives: a recipient that changed while the helper ran must not
+/// receive it.
+pub(super) fn paste_event(Pasted { text, recipient }: Pasted, current: u64) -> Event {
+    if recipient != current {
+        tracing::debug!("a paste arrived after the input generation changed");
+    }
+    Event::ClipboardText {
+        text,
+        generation: recipient,
     }
 }
 
@@ -81,5 +95,22 @@ mod tests {
             wheel_phase(Scroll::Ended, 2.0),
             MousePhase::TouchEnd
         ));
+    }
+
+    #[test]
+    fn a_paste_keeps_its_request_generation() {
+        for (recipient, current) in [(4, 4), (4, 5)] {
+            let pasted = Pasted {
+                text: "paste".into(),
+                recipient,
+            };
+            assert!(
+                matches!(
+                    paste_event(pasted, current),
+                    Event::ClipboardText { ref text, generation } if text == "paste" && generation == recipient
+                ),
+                "requested for {recipient}, arrived at {current}"
+            );
+        }
     }
 }
