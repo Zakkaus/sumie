@@ -78,8 +78,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               f"unsafe: {path}: only the raw window handle borrow may use unsafe")
     if sys.platform.startswith("linux"):
         probe("cursor surface resizes the window", "test", "crates/sumie-wayland/src/scale.rs",
-              replace_once("if window != surface || self.viewport.is_some()",
-                           "let _ = window;\n        if self.viewport.is_some()"),
+              replace_once("if !is_window || self.viewport.is_some()",
+                           "let _ = is_window;\n        if self.viewport.is_some()"),
               "test scale::tests::cursor_surface_scale_does_not_resize_the_window ... FAILED")
     probe("crate attributes after doc comment with BOM and CRLF", "structure", CORE,
           lambda source: ("\ufeff//! Core crate.\n#![doc(hidden)]\n" + source).replace("\n", "\r\n"),
@@ -220,7 +220,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     if sys.platform.startswith("linux"):
         probe("Kitty file transfer accepts hard links", "test", "crates/sumie-vt/src/image_file.zig",
               replace_once(" or stat.nlink != 1", ""),
-              "test tests::kitty_budget::kitty_file_transfers_keep_temporary_files_and_reject_links ... FAILED")
+              "Kitty hard-link query returned OK")
     probe("missing title event", "test", "crates/sumie-vt/src/effects.rs",
           replace_once(".chain(self.title.take().map(Event::Title))",
                        ".chain(self.title.take().filter(|_| false).map(Event::Title))"),

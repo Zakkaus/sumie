@@ -489,10 +489,8 @@ impl CompositorHandler for State {
         surface: &WlSurface,
         factor: i32,
     ) {
-        if self
-            .scale
-            .set_integer(self.window.wl_surface(), surface, factor)
-        {
+        let is_window = surface == self.window.wl_surface();
+        if self.scale.set_integer(is_window, surface.version(), factor) {
             self.emit_resize();
         }
     }
