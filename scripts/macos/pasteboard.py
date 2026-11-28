@@ -99,12 +99,6 @@ class Check:
     def paste(self):
         self.chord(V)
 
-    def await_recorded(self, out, length, timeout=5.0):
-        end = time.monotonic() + timeout
-        while time.monotonic() < end and len("".join(out.read_text().split())) < length:
-            time.sleep(0.05)
-        return self.keys.recorded(out)
-
     def shell(self, command):
         self.runner.send(f"type {command}")
         time.sleep(0.5)
@@ -135,7 +129,7 @@ def case_paste(check):
     for name, modes, want in (("paste", "plain", CONTENT.encode().hex()), ("framed", "paste", framed(CONTENT))):
         out = check.keys.start(name, modes)
         check.paste()
-        got = check.await_recorded(out, len(want))
+        got = check.keys.await_recorded(out, len(want))
         check.keys.stop(name)
         expect(name, got, want, "the board's string only" if modes == "plain" else "the string framed once")
 
@@ -148,7 +142,7 @@ def case_empty(check):
         time.sleep(1.0)
     check.board.set("after empty")
     check.paste()
-    got = check.await_recorded(out, len(framed("after empty")))
+    got = check.keys.await_recorded(out, len(framed("after empty")))
     check.keys.stop("empty")
     expect("empty", got, framed("after empty"), "nothing for no string and an empty one, then the next paste")
 
@@ -162,7 +156,7 @@ def case_oversized(check):
     fits = "x" * (LIMIT - 12)
     check.board.set(fits)
     check.paste()
-    got = check.await_recorded(out, len(framed(fits)), timeout=20.0)
+    got = check.keys.await_recorded(out, len(framed(fits)), timeout=20.0)
     check.keys.stop("oversized")
     expect("oversized", got, framed(fits), "nothing for 1 MiB + 1 and a framed 1 MiB + 1, then a whole 1 MiB")
 
@@ -181,10 +175,10 @@ def case_stale(check):
         # The session handles keys in order, so once b reaches the shell the paste before it has
         # been requested for the new recipient; only then does the provider answer the first.
         check.keys.tap(B)
-        if check.await_recorded(out, len("62")) != "62":
+        if check.keys.await_recorded(out, len("62")) != "62":
             raise CannotCheck("b did not reach the shell after the second paste")
         provider.send_signal(signal.SIGUSR1)
-        got = check.await_recorded(out, len("62") + 2 * len(framed("stale paste")), timeout=4.0)[len("62"):]
+        got = check.keys.await_recorded(out, len("62") + 2 * len(framed("stale paste")), timeout=4.0)[len("62"):]
     finally:
         provider.kill()
         provider.wait()
@@ -239,7 +233,7 @@ def case_stalled(check):
             errors.append(message)
     check.board.set("after stall")
     check.paste()
-    got = check.await_recorded(out, len(early) + len(framed("after stall")))
+    got = check.keys.await_recorded(out, len(early) + len(framed("after stall")))
     check.keys.stop("stalled")
     if errors:
         raise Violation("\n".join(errors))

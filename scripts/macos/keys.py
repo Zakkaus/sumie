@@ -16,7 +16,8 @@ Starts the terminal runner like frames.py, then runs keyrec.py in its shell and 
   command  Under Kitty flags 11, which report every key and release: Command itself, Cmd+C
            (a shortcut with nothing to copy) and Cmd+K (unbound) send nothing for their press,
            repeat or release, even when Command is lifted before the key. a pressed before
-           Command sends its press and release, but not the repeat it makes with Command down.
+           Command sends its press and release, but not the repeat it makes with Command down,
+           posted once the press reached the PTY.
   option   Left Option is Meta once: a and 1 give 1b61 1b31 (1 does not select a tab). Right
            Option, and an Option flag without a side, type the layout's characters: a gives
            c3a5 (å on Latin layouts), and 1 one character without ESC (¡ on US, 1 on some
@@ -125,6 +126,12 @@ class Keys:
         time.sleep(SETTLE)
         return "".join(out.read_text().split())
 
+    def await_recorded(self, out, length, timeout=5.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end and len("".join(out.read_text().split())) < length:
+            time.sleep(0.05)
+        return self.recorded(out)
+
     def stop(self, name):
         out = self.phases[name]
         out.with_name(out.name + ".stop").touch()
@@ -204,6 +211,10 @@ def case_command(keys):
     keys.key(K, "up")
     expect("command chords", keys.recorded(out), "")
     keys.key(A, "down")
+    # The press goes through the window server and the repeat through AppKit's queue, so the
+    # repeat could overtake a press still in flight and be dropped for lack of it.
+    press = KITTY_A[:len("1b5b393775")]
+    expect("a held into Command: press", keys.await_recorded(out, len(press)), press)
     keys.key(COMMAND, "down", "command")
     keys.key(A, "repeat", "command")
     keys.key(COMMAND, "up")
