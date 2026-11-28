@@ -89,6 +89,23 @@ impl Atlas {
         entry
     }
 
+    pub(crate) fn insert_color(
+        &mut self,
+        key: GlyphKey,
+        height: u32,
+        draw: impl FnOnce(&mut [u8], usize),
+    ) -> Result<AtlasGlyph, FontError> {
+        self.insert(
+            key,
+            Placement {
+                width: key.color_width,
+                height,
+                ..Default::default()
+            },
+            draw,
+        )
+    }
+
     pub(crate) fn insert(
         &mut self,
         key: GlyphKey,

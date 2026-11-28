@@ -442,7 +442,7 @@ impl FontSystem {
     ///
     /// # Errors
     /// Returns an error if the face, outline or atlas allocation is unavailable,
-    /// or an embedded PNG could not be decoded.
+    /// or the platform cannot draw the color bitmap.
     pub fn rasterize(&mut self, key: GlyphKey) -> Result<AtlasGlyph, FontError> {
         let atlas = if key.is_color() {
             &mut self.color_atlas

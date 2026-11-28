@@ -334,23 +334,23 @@ impl Segment<'_> {
             for (info, pos) in infos[start..end].iter().zip(&positions[start..end]) {
                 let id = GlyphId::new(info.glyph_id);
                 let mut key = GlyphKey::new(cell.face, id, ppem);
-                if crate::raster::png_strike(&self.face.font, id, self.metrics.height).is_some() {
+                if self.face.has_color(id) {
                     key.color_width = cells.max(1) * self.metrics.width;
                 }
-                let (x, y) = glyph_position(
-                    key,
-                    dx,
-                    self.face.baseline,
-                    relative + pos.x_offset,
-                    pos.y_offset,
-                    scale,
-                );
+                let (x, y) = if key.is_color() {
+                    (anchor, 0)
+                } else {
+                    (
+                        anchor + dx + px(relative + pos.x_offset, scale).round() as i32,
+                        self.face.baseline - px(pos.y_offset, scale).round() as i32,
+                    )
+                };
                 glyphs.push(ShapedGlyph {
                     key,
                     cluster: cell.byte,
                     column: cell.column,
                     cells,
-                    x: anchor + x,
+                    x,
                     y,
                 });
                 relative += pos.x_advance;
@@ -423,9 +423,7 @@ impl Segment<'_> {
             let key = GlyphKey::new(face, GlyphId::new(info.glyph_id), ppem);
             let (left, top, width, height) = if let Some(mask) = self.atlas.get(key) {
                 (mask.left, mask.top, mask.rect.width, mask.rect.height)
-            } else if crate::raster::png_strike(&self.face.font, key.glyph, self.metrics.height)
-                .is_some()
-            {
+            } else if self.face.has_color(key.glyph) {
                 continue;
             } else {
                 let (_, mask) = self.rasterizer.prepare(self.face, key)?;
@@ -445,18 +443,6 @@ impl Segment<'_> {
         } else {
             bounds
         })
-    }
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn glyph_position(key: GlyphKey, dx: i32, baseline: i32, x: i32, y: i32, scale: f32) -> (i32, i32) {
-    if key.is_color() {
-        (0, 0)
-    } else {
-        (
-            dx + px(x, scale).round() as i32,
-            baseline - px(y, scale).round() as i32,
-        )
     }
 }
 

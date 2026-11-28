@@ -54,9 +54,16 @@ impl Rasterizer {
         }
         let face = faces.get(key.face.0).ok_or(FontError::UnknownFace)?;
         if key.is_color() {
-            let png =
-                png_strike(&face.font, key.glyph, metrics.height).ok_or(FontError::ColorGlyph)?;
-            return draw_color(png, key, metrics.height, atlas, &mut self.trial);
+            #[cfg(target_os = "macos")]
+            return face
+                .matched
+                .draw_color(key, metrics.height, atlas, &mut self.trial);
+            #[cfg(target_os = "linux")]
+            {
+                let png = png_strike(&face.font, key.glyph, metrics.height)
+                    .ok_or(FontError::ColorGlyph)?;
+                return draw_color(png, key, metrics.height, atlas, &mut self.trial);
+            }
         }
         let (offset, placement) = self.prepare(face, key)?;
         if placement.width == 0 || placement.height == 0 {
@@ -220,9 +227,10 @@ impl Rasterizer {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn png_strike(font: &Font, glyph: skrifa::GlyphId, height: u32) -> Option<&[u8]> {
     use skrifa::font::glyph::{GlyphSource, GlyphSourceOrder, bitmap::Pixels};
-    const COLOR: GlyphSourceOrder = GlyphSourceOrder::new(&[GlyphSource::Sbix, GlyphSource::Cbdt]);
+    const COLOR: GlyphSourceOrder = GlyphSourceOrder::new(&[GlyphSource::Cbdt]);
     font.bitmap_strikes_with(COLOR)
         .iter()
         .filter_map(|strike| match strike.get(glyph)?.pixels() {
@@ -233,6 +241,7 @@ pub(crate) fn png_strike(font: &Font, glyph: skrifa::GlyphId, height: u32) -> Op
         .map(|(_, bytes)| bytes)
 }
 
+#[cfg(target_os = "linux")]
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn draw_color(
     png: &[u8],
@@ -246,6 +255,7 @@ fn draw_color(
         png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
     );
     let mut reader = decoder.read_info().map_err(|_| FontError::ColorGlyph)?;
+    // Decoder limits exclude the caller's output buffer.
     let len = reader
         .output_buffer_size()
         .filter(|&n| n <= png::Limits::default().bytes)
@@ -258,35 +268,60 @@ fn draw_color(
     let width = key.color_width;
     let step = (f64::from(frame.width) / f64::from(width))
         .min(f64::from(frame.height) / f64::from(height));
-    let centered = |src, dst| (f64::from(src) - (f64::from(dst) - 1.0) * step) * 0.5;
-    let x0 = centered(frame.width, width);
-    let y0 = centered(frame.height, height);
-    atlas.insert(
-        key,
-        Placement {
-            width,
-            height,
-            ..Default::default()
-        },
-        |dst, pitch| {
-            for (y, row) in (0..height).zip(dst.chunks_mut(pitch)) {
-                let sy = (y0 + f64::from(y) * step) as usize;
-                let src = &scratch[sy * frame.line_size..];
-                for (x, rgba) in (0..width).zip(row.as_chunks_mut::<4>().0) {
-                    let sx = (x0 + f64::from(x) * step) as usize * channels;
-                    let pixel = &src[sx..sx + channels];
-                    let a = pixel[channels - 1];
-                    let premul = |c| ((u16::from(c) * u16::from(a) + 127) / 255) as u8;
-                    *rgba = if let &[r, g, b, _] = pixel {
-                        [premul(r), premul(g), premul(b), a]
-                    } else {
-                        let gray = premul(pixel[0]);
-                        [gray, gray, gray, a]
-                    };
+    let span = |src: u32, dst: u32, i: u32| {
+        let start = (f64::from(src) - f64::from(dst) * step) * 0.5 + f64::from(i) * step;
+        if step < 1.0 {
+            let pixel = (start + step * 0.5) as usize;
+            pixel..pixel + 1
+        } else {
+            start.round() as usize..(start + step).round() as usize
+        }
+    };
+    atlas.insert_color(key, height, |dst, pitch| {
+        for (y, row) in (0..height).zip(dst.chunks_mut(pitch)) {
+            let ys = span(frame.height, height, y);
+            for (x, rgba) in (0..width).zip(row.as_chunks_mut::<4>().0) {
+                let xs = span(frame.width, width, x);
+                let count = (xs.len() * ys.len()) as u64;
+                let mut sum = [0_u64; 4];
+                for sy in ys.clone() {
+                    let src = &scratch[sy * frame.line_size..];
+                    for p in src[xs.start * channels..xs.end * channels].chunks_exact(channels) {
+                        let a = u64::from(p[channels - 1]);
+                        let [r, g, b] = if let [r, g, b, _] = *p {
+                            [r, g, b]
+                        } else {
+                            [p[0]; 3]
+                        };
+                        sum[0] += u64::from(r) * a;
+                        sum[1] += u64::from(g) * a;
+                        sum[2] += u64::from(b) * a;
+                        sum[3] += 255 * a;
+                    }
                 }
+                *rgba = sum.map(|s| ((s + 255 * count / 2) / (255 * count)) as u8);
             }
-        },
-    )
+        }
+    })
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[test]
+fn emoji_downsampling_averages_premultiplied_ink() {
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, 2, 2);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .unwrap()
+        .write_image_data(&[255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 0, 0, 255, 0])
+        .unwrap();
+    let mut key = GlyphKey::new(FaceId(0), skrifa::GlyphId::new(1), 1.0);
+    key.color_width = 1;
+    let mut atlas = Atlas::new(1, 4);
+    draw_color(&png, key, 1, &mut atlas, &mut Vec::new()).unwrap();
+    assert_eq!(atlas.pixels(), [64, 32, 0, 96]);
 }
 
 fn bold_stroke(key: GlyphKey) -> Stroke<'static> {
