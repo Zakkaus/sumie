@@ -122,6 +122,12 @@ jobs:
       - name: Binary reads its configuration without a window
         run: '"$CARGO_TARGET_DIR/release/sumie" config show --defaults > /dev/null'
 
+      - name: Generate notices for the locked Cargo dependencies
+        run: |
+          cargo install --locked --version 0.9.3 --features cli --root "$RUNNER_TEMP/license-tool" cargo-about
+          PATH="$RUNNER_TEMP/license-tool/bin:$PATH" cargo about generate --locked --fail \
+            -c third_party/about.toml third_party/licenses.hbs -o "$RUNNER_TEMP/THIRD-PARTY-LICENSES"
+
       - name: Package the Linux tarball
         if: runner.os == 'Linux'
         env:
@@ -129,8 +135,31 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           scripts/linux/package.sh "$CARGO_TARGET_DIR/release/sumie" "$RUNNER_TEMP/dist" \
-            "$VERSION" "${TARGET%-linux}"
-          tar -tzf "$RUNNER_TEMP"/dist/*.tar.gz
+            "$VERSION" "${TARGET%-linux}" "$RUNNER_TEMP/THIRD-PARTY-LICENSES"
+          archive="$RUNNER_TEMP/dist/sumie-$VERSION-$TARGET.tar.gz"
+          tar -tzf "$archive"
+          tar -xOzf "$archive" "sumie-$VERSION-$TARGET/THIRD-PARTY-LICENSES" |
+            cmp - "$RUNNER_TEMP/THIRD-PARTY-LICENSES"
+      - name: Run the Linux desktop install examples
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          install_root=$(mktemp -d "$RUNNER_TEMP/sumie-install.XXXXXX")
+          tar -xzf "$RUNNER_TEMP/dist/sumie-$VERSION-$TARGET.tar.gz" -C "$install_root"
+          for readme in README.md README.zh-TW.md; do
+            awk '/^\*\*Linux/{linux=1} /^\*\*macOS/{exit} linux && /^```sh$/{code=1;next} code && /^```$/{exit} code' "$readme" |
+              (
+                cd "$install_root/sumie-$VERSION-$TARGET"
+                export HOME="$install_root/$readme"
+                export XDG_DATA_HOME="$HOME/data" XDG_CONFIG_HOME="$HOME/.config" PATH="$HOME/.local/bin:$PATH"
+                sh -e
+                launcher=$(sed -n 's/^Exec=//p' "$XDG_DATA_HOME/applications/sumie.desktop")
+                test "$(command -v "$launcher")" = "$HOME/.local/bin/sumie"
+                "$launcher" config show --defaults >/dev/null
+              )
+          done
       # rsvg-convert renders the icon master; scripts/macos/bundle.sh fails without it.
       - name: Bundle sumie.app and create the disk image
         if: runner.os == 'macOS'
@@ -140,10 +169,17 @@ jobs:
         run: |
           brew install librsvg
           dmg=$(scripts/macos/bundle.sh --dmg "$CARGO_TARGET_DIR/release/sumie" \
-            "$RUNNER_TEMP/stage" "$VERSION")
+            "$RUNNER_TEMP/stage" "$RUNNER_TEMP/THIRD-PARTY-LICENSES" "$VERSION")
+          codesign --verify --verbose=2 "$dmg"
+          codesign --display --verbose=2 "$dmg"
+          mount=$(mktemp -d "$RUNNER_TEMP/sumie-dmg.XXXXXX")
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount"' EXIT
+          codesign --verify --deep --strict --verbose=2 "$mount/sumie.app"
+          test "$(readlink "$mount/Applications")" = /Applications
+          cmp "$RUNNER_TEMP/THIRD-PARTY-LICENSES" "$mount/sumie.app/Contents/Resources/THIRD-PARTY-LICENSES"
           mkdir -p "$RUNNER_TEMP/dist"
           mv "$dmg" "$RUNNER_TEMP/dist/"
-          codesign --display --verbose=2 "$RUNNER_TEMP/stage/sumie.app"
           ls -l "$RUNNER_TEMP/dist"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

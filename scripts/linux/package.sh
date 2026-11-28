@@ -1,25 +1,27 @@
 #!/bin/sh
 # Pack a release binary and its data files into sumie-VERSION-ARCH-linux.tar.gz.
 #
-#   scripts/linux/package.sh BINARY OUTPUT_DIR VERSION ARCH
+#   scripts/linux/package.sh BINARY OUTPUT_DIR VERSION ARCH LICENSES
 #
-# ARCH is x86_64 or aarch64. The tarball unpacks into one directory holding the stripped
-# binary, LICENSE, README.md, terminfo/, shell-integration/ and a share/ tree for the
-# desktop entry and icons. The binary installs its own terminfo and shell integration on
-# first launch, so the copies in the tarball are for packagers and for reading.
+# ARCH is x86_64 or aarch64. The tarball holds the stripped binary, LICENSE,
+# THIRD-PARTY-LICENSES, README.md, terminfo/, shell-integration/ and the desktop files
+# under share/. The binary installs its own terminfo and shell integration on first launch;
+# the copies in the tarball are for packagers and for reading.
 set -eu
 
-if [ "$#" -ne 4 ]; then
-    printf 'usage: %s BINARY OUTPUT_DIR VERSION ARCH\n' "$0" >&2
+if [ "$#" -ne 5 ]; then
+    printf 'usage: %s BINARY OUTPUT_DIR VERSION ARCH LICENSES\n' "$0" >&2
     exit 2
 fi
 binary=$1
 out=$2
 version=${3#v}
 arch=$4
+licenses=$5
 root=$(CDPATH='' cd "$(dirname "$0")/../.." && pwd -P)
 
 [ -f "$binary" ] && [ -x "$binary" ] || { echo "package: $binary is not an executable file" >&2; exit 2; }
+[ -s "$licenses" ] || { echo "package: missing or empty license report: $licenses" >&2; exit 2; }
 case $version in
     '' | *[!0-9A-Za-z.+-]*) echo "package: unusable version '$version'" >&2; exit 2 ;;
 esac
@@ -40,6 +42,7 @@ mkdir -p "$dir/share/applications" "$dir/share/icons/hicolor/scalable/apps" \
 cp "$binary" "$dir/sumie"
 strip "$dir/sumie"
 cp "$root/LICENSE" "$root/README.md" "$dir/"
+cp "$licenses" "$dir/THIRD-PARTY-LICENSES"
 cp -R "$root/terminfo" "$root/shell-integration" "$dir/"
 cp "$root/assets/sumie.desktop" "$dir/share/applications/"
 cp "$root/assets/icons/hicolor/scalable/apps/sumie.svg" "$dir/share/icons/hicolor/scalable/apps/"

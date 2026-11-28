@@ -1,7 +1,7 @@
 #!/bin/sh
 # Assemble an ad-hoc signed sumie.app from a release binary, and optionally a .dmg.
 #
-#   scripts/macos/bundle.sh [--dmg] BINARY OUTPUT_DIR [VERSION]
+#   scripts/macos/bundle.sh [--dmg] BINARY OUTPUT_DIR LICENSES [VERSION]
 #
 # BINARY is the arm64 `sumie` executable (cargo build --release). OUTPUT_DIR receives
 # sumie.app and, with --dmg, sumie-VERSION-aarch64-macos.dmg. VERSION defaults to the
@@ -23,18 +23,20 @@ if [ "${1-}" = --dmg ]; then
     make_dmg=true
     shift
 fi
-if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-    printf 'usage: %s [--dmg] BINARY OUTPUT_DIR [VERSION]\n' "$0" >&2
+if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
+    printf 'usage: %s [--dmg] BINARY OUTPUT_DIR LICENSES [VERSION]\n' "$0" >&2
     exit 2
 fi
 binary=$1
 out=$2
+licenses=$3
 root=$(CDPATH='' cd "$(dirname "$0")/../.." && pwd -P)
-version=${3:-$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml" | head -n 1)}
+version=${4:-$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml" | head -n 1)}
 version=${version#v}
 
 [ -f "$binary" ] && [ -x "$binary" ] || { echo "bundle: $binary is not an executable file" >&2; exit 2; }
 [ "$(uname -s)" = Darwin ] || { echo 'bundle: codesign and hdiutil exist only on macOS' >&2; exit 2; }
+[ -s "$licenses" ] || { echo "bundle: missing or empty license report: $licenses" >&2; exit 2; }
 case $version in
     '' | *[!0-9A-Za-z.+-]*) echo "bundle: unusable version '$version'" >&2; exit 2 ;;
 esac
@@ -47,6 +49,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/sumie"
 chmod 755 "$app/Contents/MacOS/sumie"
 cp "$root/LICENSE" "$app/Contents/Resources/LICENSE"
+cp "$licenses" "$app/Contents/Resources/THIRD-PARTY-LICENSES"
 
 # CFBundleVersion must be dotted integers; a pre-release suffix stays in the short string.
 build=${version%%[-+]*}
@@ -147,6 +150,8 @@ if [ "$make_dmg" = true ]; then
     ln -s /Applications "$stage/Applications"
     hdiutil create -volname sumie -srcfolder "$stage" -ov -format UDZO "$dmg" >&2
     rm -rf "$stage"
+    codesign --force --sign - "$dmg" >&2
+    codesign --verify "$dmg" >&2
     printf '%s\n' "$dmg"
 else
     printf '%s\n' "$app"

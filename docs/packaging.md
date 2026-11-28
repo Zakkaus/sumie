@@ -177,6 +177,20 @@ and checks its SHA-256 (`6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb
 set `SUMIE_FONT_ZIP` to a local copy of that file for an offline build. The checksum is still
 enforced. The constants are `FONT_VERSION`, `FONT_URL` and `FONT_SHA256` at the top of the script.
 
+## Release archive notices
+
+Both release packagers take a `LICENSES` path and copy it next to `LICENSE` in the artifact.
+Install `cargo-about` 0.9.3 (`cargo install --locked --version 0.9.3 --features cli cargo-about`).
+From the repository root, generate the report for the locked Cargo dependencies:
+
+```sh
+cargo about generate --locked --fail -c third_party/about.toml third_party/licenses.hbs \
+  -o /path/to/THIRD-PARTY-LICENSES
+```
+
+Pass that file to `scripts/linux/package.sh BINARY OUTPUT_DIR VERSION ARCH LICENSES` or
+`scripts/macos/bundle.sh --dmg BINARY OUTPUT_DIR LICENSES VERSION`.
+
 ## Cutting a release
 
 1. Set `version` under `[workspace.package]` in `Cargo.toml`, refresh `Cargo.lock`, and merge.
@@ -185,6 +199,10 @@ enforced. The constants are `FONT_VERSION`, `FONT_URL` and `FONT_SHA256` at the 
 3. The workflow builds both Linux tarballs and the macOS disk image, then opens a draft
    release whose notes come from [release-notes.md](release-notes.md). Review the draft and
    publish it by hand.
+
+Before publishing, follow the draft's Gatekeeper instructions on a clean macOS 26 or 27
+session with a freshly downloaded copy. The initial launch should show the warning; the
+Privacy & Security override should then open the app without disabling Gatekeeper.
 
 The notes mark the release as a preview and state the macOS limits: arm64 only, ad-hoc signed,
 not notarized, declared minimum macOS 13 with only macOS 26 and 27 tested. Linux is Wayland only.

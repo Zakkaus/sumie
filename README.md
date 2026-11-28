@@ -83,9 +83,17 @@ check it against `SHA256SUMS`.
 
 **Linux.** `sumie-VERSION-x86_64-linux.tar.gz` and `sumie-VERSION-aarch64-linux.tar.gz` hold the
 binary, the terminfo source, the shell-integration scripts, a desktop entry and the icons.
-Unpack it anywhere and run `./sumie`, or copy the files under `share/` into `/usr/local/share`
-or `~/.local/share` to get the launcher entry. The binary needs a Wayland compositor; there is
-no X11 backend.
+Unpack the tarball and run `./sumie` from the extracted directory. It needs a Wayland
+compositor; there is no X11 backend.
+
+To add sumie to the application menu, make sure `~/.local/bin` is on your desktop session's
+`PATH`, then run these commands from the extracted directory:
+
+```sh
+install -Dm755 sumie "$HOME/.local/bin/sumie"
+mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}"
+cp -R share/. "${XDG_DATA_HOME:-$HOME/.local/share}/"
+```
 
 **macOS.** `sumie-VERSION-aarch64-macos.dmg` is for Apple silicon only. Open it and drag
 `sumie.app` to Applications. The app is signed ad hoc, not with a Developer ID, and is not
