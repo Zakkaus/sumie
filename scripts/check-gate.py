@@ -41,6 +41,7 @@ CLIPPY_CONFIGS = {"clippy.toml", ".clippy.toml"}
 TEST_SUMMARY = re.compile(r"^test result: (ok|FAILED)\. ([0-9]+) passed;")
 FULL_REV = re.compile(r"[0-9a-f]{40}")
 DEBUG_PRINT = re.compile(r"\b(?:e?print(?:ln)?|dbg)!")
+ADDED_FN = re.compile(r"^\+(\s*)(?:pub(?:\([\w:]+\))? )?fn (\w+)")
 # The test gate builds first, so this bounds only the test binaries: a hung test fails the
 # gate in minutes instead of running until the CI job limit.
 TEST_TIMEOUT = 600
@@ -223,8 +224,29 @@ def check_clippy_configs():
     return errors
 
 
+def unended_compositions(path, diff):
+    """Functions a vendored winit diff adds that leave the composition (report `Ime::Disabled`)
+    without ending it in `AppKit` (`discardMarkedText`), where the old text can stay marked."""
+    errors = []
+    lines = diff.splitlines()
+    for number, line in enumerate(lines, 1):
+        if not (added := ADDED_FN.match(line)):
+            continue
+        end = f"+{added[1]}}}"
+        body = []
+        for following in lines[number:]:
+            if not following.startswith("+") or following == end:
+                break
+            body.append(following)
+        if any("Ime::Disabled" in text for text in body) and not any("discardMarkedText" in text for text in body):
+            errors.append(f"patch: {path}:{number}: {added[2]} leaves the composition without "
+                          "discarding the input method's marked text")
+    return errors
+
+
 def check_patches():
-    """Git patches pin the locked commit; vendored diffs add no debug prints."""
+    """Git patches pin the locked commit; vendored diffs add no debug prints, and the winit
+    diff ends in `AppKit` every composition a function it adds leaves."""
     try:
         with (ROOT / "Cargo.toml").open("rb") as manifest:
             patches = tomllib.load(manifest).get("patch", {})
@@ -259,6 +281,8 @@ def check_patches():
         for number, line in enumerate(diff.splitlines(), 1):
             if line.startswith("+") and not line.startswith("+++") and DEBUG_PRINT.search(line):
                 errors.append(f"patch: {path}:{number}: debug print in an added line")
+        if path.parts[:2] == ("third_party", "winit"):
+            errors.extend(unended_compositions(path, diff))
     print(f"patches: scanned {entries} git patch entries and {len(diffs)} third_party patch files")
     return errors
 

@@ -477,7 +477,7 @@ index 83398030..38b8b9d0 100644
          // SAFETY: The runloop is valid, the mode is a `CFStringRef`, and the block is `'static`.
          unsafe { CFRunLoopPerformBlock(self.0, mode, &block) }
 diff --git a/src/platform_impl/macos/view.rs b/src/platform_impl/macos/view.rs
-index c7ca5bc6..073802c7 100644
+index c7ca5bc6..85d59f49 100644
 --- a/src/platform_impl/macos/view.rs
 +++ b/src/platform_impl/macos/view.rs
 @@ -7,13 +7,14 @@ use objc2::rc::{Retained, WeakId};
@@ -510,7 +510,7 @@ index c7ca5bc6..073802c7 100644
      marked_text: RefCell<Retained<NSMutableAttributedString>>,
      accepts_first_mouse: bool,
  
-@@ -177,6 +182,24 @@ declare_class!(
+@@ -177,6 +182,29 @@ declare_class!(
              self.ivars().tracking_rect.set(Some(tracking_rect));
          }
  
@@ -518,8 +518,10 @@ index c7ca5bc6..073802c7 100644
 +        fn input_source_did_change(&self, _notification: &NSNotification) {
 +            trace_scope!("inputSourceDidChange:");
 +            // The old input method's composition ended with it. Leave it now, as `keyDown:`
-+            // would at the next key, so its marked text does not wait for one; a commit the
-+            // old input method sends on deactivation finds no marked text and is dropped.
++            // would at the next key, so its marked text does not wait for one, and end it in
++            // AppKit too, as disallowing input methods does, or its text can stay marked there.
++            // Our state is clear first, so a commit the old input method sends on deactivation
++            // or while discarding finds no marked text and is dropped.
 +            let current_input_source = self.current_input_source();
 +            let mut prev_input_source = self.ivars().input_source.borrow_mut();
 +            if *prev_input_source == current_input_source || !self.is_ime_enabled() {
@@ -530,12 +532,15 @@ index c7ca5bc6..073802c7 100644
 +            *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
 +            self.ivars().ime_state.set(ImeState::Disabled);
 +            self.queue_event(WindowEvent::Ime(Ime::Disabled));
++            if let Some(input_context) = self.inputContext() {
++                input_context.discardMarkedText();
++            }
 +        }
 +
          #[method(frameDidChange:)]
          fn frame_did_change(&self, _event: &NSEvent) {
              trace_scope!("frameDidChange:");
-@@ -463,7 +486,11 @@ declare_class!(
+@@ -463,7 +491,11 @@ declare_class!(
              // we must send the `KeyboardInput` event during IME if it triggered
              // `doCommandBySelector`. (doCommandBySelector means that the keyboard input
              // is not handled by IME and should be handled by the application)
@@ -548,7 +553,7 @@ index c7ca5bc6..073802c7 100644
                  let events_for_nsview = NSArray::from_slice(&[&*event]);
                  unsafe { self.interpretKeyEvents(&events_for_nsview) };
  
-@@ -487,7 +514,15 @@ declare_class!(
+@@ -487,7 +519,15 @@ declare_class!(
                  _ => old_ime_state != self.ivars().ime_state.get(),
              };
  
@@ -565,7 +570,7 @@ index c7ca5bc6..073802c7 100644
                  let key_event = create_key_event(&event, true, unsafe { event.isARepeat() });
                  self.queue_event(WindowEvent::KeyboardInput {
                      device_id: DEVICE_ID,
-@@ -504,11 +539,21 @@ declare_class!(
+@@ -504,11 +544,21 @@ declare_class!(
              let event = replace_event(event, self.option_as_alt());
              self.update_modifiers(&event, false);
  
@@ -592,7 +597,7 @@ index c7ca5bc6..073802c7 100644
                  self.queue_event(WindowEvent::KeyboardInput {
                      device_id: DEVICE_ID,
                      event: create_key_event(&event, false, false),
-@@ -803,6 +848,7 @@ impl WinitView {
+@@ -803,6 +853,7 @@ impl WinitView {
              input_source: Default::default(),
              ime_allowed: Default::default(),
              forward_key_to_app: Default::default(),
@@ -600,7 +605,7 @@ index c7ca5bc6..073802c7 100644
              marked_text: Default::default(),
              accepts_first_mouse,
              _ns_window: WeakId::new(&window.retain()),
-@@ -818,7 +864,13 @@ impl WinitView {
+@@ -818,7 +869,13 @@ impl WinitView {
                  sel!(frameDidChange:),
                  Some(NSViewFrameDidChangeNotification),
                  Some(&this),
@@ -615,7 +620,7 @@ index c7ca5bc6..073802c7 100644
          }
  
          *this.ivars().input_source.borrow_mut() = this.current_input_source();
-@@ -893,6 +945,13 @@ impl WinitView {
+@@ -893,6 +950,13 @@ impl WinitView {
              self.ivars().ime_state.set(ImeState::Disabled);
              self.queue_event(WindowEvent::Ime(Ime::Disabled));
          }
@@ -629,7 +634,7 @@ index c7ca5bc6..073802c7 100644
      }
  
      pub(super) fn set_ime_cursor_area(&self, position: NSPoint, size: NSSize) {
-@@ -1140,3 +1199,7 @@ fn replace_event(event: &NSEvent, option_as_alt: OptionAsAlt) -> Retained<NSEven
+@@ -1140,3 +1204,7 @@ fn replace_event(event: &NSEvent, option_as_alt: OptionAsAlt) -> Retained<NSEven
          event.copy()
      }
  }
