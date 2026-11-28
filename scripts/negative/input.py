@@ -40,13 +40,13 @@ def input_controls():
           "test app::tabs::tests::paste_shortcut_restores_a_missing_recipient ... FAILED")
     probe("close ignores a running foreground job", "test", "src/app/window_events.rs",
           replace_once("None => local.pty.has_foreground_job(),", "None => false,"),
-          "test app::tabs::tests::window_close_uses_osc133_before_foreground_group ... FAILED")
+          "test app::tabs::tests::confirm::window_close_uses_osc133_before_foreground_group ... FAILED")
     probe("Enter confirms a close", "test", "src/app/window_events.rs",
           replace_once(" || (enter && !paste)", " || (enter && paste)"),
-          "test app::tabs::tests::window_close_uses_osc133_before_foreground_group ... FAILED")
+          "test app::tabs::tests::confirm::window_close_uses_osc133_before_foreground_group ... FAILED")
     probe("unbracketed multiline paste skips confirmation", "test", "src/app/pane_input.rs",
           replace_once("text.contains(['\\n', '\\r'])", "text.contains('\\0')"),
-          "test app::tabs::tests::multiline_paste_waits_unless_bracketed ... FAILED")
+          "test app::tabs::tests::confirm::multiline_paste_waits_unless_bracketed ... FAILED")
     probe("a timed-out frame publishes its scroll offset", "test", "src/app.rs",
           replace_once("if !matches!(frame, SurfaceFrame::Presented { .. }) {",
                        "if !matches!(frame, SurfaceFrame::Presented { .. } | SurfaceFrame::Timeout) {"),
