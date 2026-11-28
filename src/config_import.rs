@@ -13,6 +13,7 @@ use std::{
 };
 
 use sumie_config::{Config, EditValues, Value, WriteError, format_list, save, user_config_path};
+use sumie_core::{Platform, binding_conflict};
 use sumie_locale::Locale;
 
 use crate::Result;
@@ -48,6 +49,7 @@ fn import(source: Option<PathBuf>, destination: &Path, mut out: impl io::Write) 
         writeln!(out, "{path}:{line}: {key} ({label})")
     };
     let mut seen = BTreeSet::new();
+    let mut overrides: Vec<_> = config.keybinds.overrides().collect();
     let mut palette: Vec<Value> = Config::default()
         .colors
         .palette()
@@ -60,9 +62,26 @@ fn import(source: Option<PathBuf>, destination: &Path, mut out: impl io::Write) 
             Some((Target::Key(target), value))
                 if configured.get(&target).is_none() && seen.insert(target.clone()) =>
             {
+                let binding = keybinds::binding(&target, &value);
+                if let Some((target, chord)) = binding
+                    && binding_conflict(Platform::current(), chord, target, |binding| {
+                        overrides.iter().find_map(|&(chord, action)| {
+                            (action == binding.action).then_some(chord)
+                        })
+                    })
+                    .is_some()
+                {
+                    skipped(&mut out, setting.line, &setting.key)?;
+                    continue;
+                }
                 let snapshot = configured.source(&target).ok_or("no settings snapshot")?;
                 match save(destination, snapshot, &target, Some(&value)) {
-                    Ok(_) => writeln!(out, "{target} = {}", format_list(&value))?,
+                    Ok(_) => {
+                        if let Some((binding, chord)) = binding {
+                            overrides.push((chord, binding.action));
+                        }
+                        writeln!(out, "{target} = {}", format_list(&value))?;
+                    }
                     Err(WriteError::Invalid(_)) => skipped(&mut out, setting.line, &setting.key)?,
                     Err(error) => return Err(error.into()),
                 }

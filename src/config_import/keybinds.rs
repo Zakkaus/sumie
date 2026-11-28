@@ -1,7 +1,7 @@
 //! Translate a Ghostty `keybind` value to the sumie binding for the same action.
 
 use sumie_config::Value;
-use sumie_core::Chord;
+use sumie_core::{BINDINGS, Binding, Chord};
 
 use super::ghostty::Target;
 
@@ -50,6 +50,12 @@ pub(super) fn translate(value: &str) -> Option<(Target, Value)> {
         Target::Key(format!("keybinds.{id}")),
         Value::String(chord.to_string()),
     ))
+}
+
+pub(super) fn binding(target: &str, value: &Value) -> Option<(&'static Binding, Chord)> {
+    let id = target.strip_prefix("keybinds.")?;
+    let binding = BINDINGS.iter().find(|binding| binding.id == id)?;
+    Some((binding, Chord::parse(value.as_str()?)?))
 }
 
 /// Spell the trigger the way `Chord::parse` reads it; a sequence, prefix or unknown key fails.

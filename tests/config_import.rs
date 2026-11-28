@@ -7,7 +7,9 @@ use std::{
     process::{self, Command, Output},
 };
 
-use sumie_core::{KeyAction, KeyCode, KeyModifiers, PhysicalKey, Platform, Shortcut, Shortcuts};
+use sumie_core::{
+    Chord, KeyAction, KeyCode, KeyModifiers, PhysicalKey, Platform, Shortcut, Shortcuts,
+};
 
 /// A temporary directory that is also `HOME` and `XDG_CONFIG_HOME` for the command.
 struct Fixture(PathBuf);
@@ -66,6 +68,7 @@ fn translates_ghostty_config_and_keybinds() {
 # a comment
 font-family = "Primary Mono"
 font-family = Fallback Mono
+font-size = 12
 font-size = 13.5
 background = #aabbcc
 foreground = 112233
@@ -86,13 +89,13 @@ window-padding-x = 4
     assert_eq!(config.colors.foreground(), [0x11, 0x22, 0x33]);
     assert_eq!(config.colors.palette()[1], [0xee, 0x11, 0x22]);
     let path = source.display();
-    for skipped in [4, 10, 11] {
+    for skipped in [4, 5, 11, 12] {
         assert!(
             summary.contains(&format!("{path}:{skipped}: ")),
             "{summary}"
         );
     }
-    assert_eq!(summary.matches("(skipped)").count(), 3, "{summary}");
+    assert_eq!(summary.matches("(skipped)").count(), 4, "{summary}");
 
     let mut shortcuts = Shortcuts::new(Platform::Linux);
     shortcuts.set_bindings(config.keybinds.overrides());
@@ -118,6 +121,31 @@ fn keeps_what_the_sumie_config_already_sets() {
     let after = fs::read_to_string(fixture.sumie_config()).unwrap();
     assert!(after.starts_with(before), "{after}");
     assert!(after.contains("background = \"#010203\""), "{after}");
+}
+
+#[test]
+fn skips_conflicting_keybinds() {
+    let fixture = Fixture::new("conflict");
+    fixture.write("sumie/sumie.toml", "[keybinds]\nsearch = \"Ctrl+J\"\n");
+    let source = fixture.write(
+        "ghostty",
+        "keybind = ctrl+k=copy_to_clipboard\n\
+         keybind = ctrl+k=paste_from_clipboard\n\
+         keybind = ctrl+j=new_tab\n\
+         keybind = ctrl+tab=new_split:right\n",
+    );
+    let summary = stdout(&fixture.import(&source));
+    for line in 2..=4 {
+        assert!(summary.contains(&format!(":{line}: keybind (skipped)")));
+    }
+    let config = sumie_config::load(&fixture.sumie_config()).unwrap();
+    assert_eq!(
+        config.keybinds.overrides().collect::<Vec<_>>(),
+        [
+            (Chord::parse("Ctrl+K").unwrap(), Shortcut::Copy),
+            (Chord::parse("Ctrl+J").unwrap(), Shortcut::Search),
+        ]
+    );
 }
 
 #[test]

@@ -110,7 +110,9 @@ the built-in default. sumie saves each change immediately. Press Esc or `q` to q
 
 Run `sumie config import ghostty [PATH]` to copy the font, colors and shortcuts
 from your Ghostty config (default `~/.config/ghostty/config`). It writes only
-what your sumie config does not set yet, and lists each line it skipped.
+what your sumie config does not set yet, skips conflicting shortcuts, and lists
+each skipped line. For repeated scalar settings, the last value wins; for
+`font-family`, the first family wins.
 Includes, themes and sequence shortcuts are not read.
 
 Run `sumie config show --defaults` for all options. To enable editor completion,
