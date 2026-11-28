@@ -5,11 +5,13 @@
 //        pbfixture clear NAME
 //        pbfixture count NAME        (the change count; NAME `general` is the general board,
 //                                     whose contents this tool never reads or writes)
-//        pbfixture provide NAME WAIT (the string from stdin, promised lazily: each request
-//                                     prints `asked`, then waits before it provides the data:
-//                                     WAIT milliseconds, forever for -1, or until SIGUSR1 for
-//                                     `signal`. Prints `ready` once the promise is on the
-//                                     board; the check kills it.)
+//        pbfixture provide NAME WAIT (the strings from stdin, NUL-separated, promised lazily
+//                                     in turn: each request prints `asked`, then waits before
+//                                     it provides the data: WAIT milliseconds, forever for -1,
+//                                     or until SIGUSR1 for `signal`. After each answer but the
+//                                     last, the next string is promised in its place. Prints
+//                                     `ready` once the first promise is on the board; the
+//                                     check kills it.)
 #import <AppKit/AppKit.h>
 #include <signal.h>
 
@@ -18,7 +20,8 @@ static NSString *const kType = @"public.utf8-plain-text";
 // The owner API: a promise through `NSPasteboardItem` data providers returns nothing to the
 // first read of each reader (seen on macOS 27.0), then the cached data.
 @interface Provider : NSObject
-@property(copy) NSString *text;
+@property(copy) NSArray<NSString *> *texts;
+@property NSUInteger next;
 @property long long delay;
 @property BOOL onSignal;
 @end
@@ -40,7 +43,15 @@ static NSString *const kType = @"public.utf8-plain-text";
         }
     }
     usleep((useconds_t)(self.delay * 1000));
-    [board setString:self.text forType:type];
+    [board setString:self.texts[self.next] forType:type];
+    self.next += 1;
+    if (self.next < self.texts.count) {
+        // After this answer reaches its reader, promise the next string: a new change count,
+        // so the next read asks again instead of getting this one from the cache.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [board declareTypes:@[ kType ] owner:self];
+        });
+    }
 }
 
 @end
@@ -93,7 +104,8 @@ int main(int argc, const char *argv[]) {
         }
         if ([command isEqualToString:@"provide"] && argc == 4) {
             Provider *provider = [Provider new];
-            provider.text = readStdin();
+            NSString *separator = [NSString stringWithFormat:@"%C", (unichar)0];
+            provider.texts = [readStdin() componentsSeparatedByString:separator];
             provider.onSignal = strcmp(argv[3], "signal") == 0;
             provider.delay = atoll(argv[3]);
             sigset_t set;

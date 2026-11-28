@@ -14,7 +14,8 @@ violation, 2 if it cannot check. Contents never appear in its output.
   oversized  A string over 1 MiB sends nothing; in mode 2004, one whose framing makes it
              1 MiB + 1 sends nothing, and one that fills the 1 MiB FIFO exactly arrives whole.
   stale      A paste whose provider answers after search opened and closed, and after the
-             next paste was requested, sends nothing; that next paste arrives once.
+             next paste was requested, sends nothing; that next paste, promised with other
+             contents, arrives once and alone.
   stalled    A provider that never answers: nothing arrives, pings stay <= 100 ms, and within
              6.2 s of the request no helper is left; then a paste arrives again.
   copy       A mouse drag over row 0 selects it and its release leaves the sentinel; Cmd+C
@@ -27,6 +28,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import select
 import shlex
 import signal
 import subprocess
@@ -75,15 +77,23 @@ class Board:
     def general_count(self):
         return int(self.run("count", board="general").stdout)
 
-    def provide(self, text, wait):
-        """Promise `text`; each request waits `wait` ms, forever for -1, or for SIGUSR1 for `signal`."""
-        process = subprocess.Popen([self.tool, "provide", self.name, str(wait)], stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE)
-        process.stdin.write(text.encode())
+    def provide(self, wait, *texts):
+        """Promise `texts` in turn; each request waits `wait` ms, forever for -1, or for SIGUSR1
+        for `signal`."""
+        # Unbuffered, so `await_asked` can wait on the pipe for each line.
+        process = subprocess.Popen([self.tool, "provide", self.name, str(wait)], bufsize=0,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        process.stdin.write("\0".join(texts).encode())
         process.stdin.close()
         if process.stdout.readline().strip() != b"ready":
             raise CannotCheck("pbfixture could not promise the board")
         return process
+
+
+def await_asked(provider, which, timeout=5.0):
+    ready = select.select([provider.stdout], [], [], timeout)[0]
+    if not ready or provider.stdout.readline().strip() != b"asked":
+        raise CannotCheck(f"the provider was not asked for the {which} paste")
 
 
 class Check:
@@ -163,11 +173,11 @@ def case_oversized(check):
 
 def case_stale(check):
     out = check.keys.start("stale", "paste")
-    provider = check.board.provide("stale paste", "signal")
+    stale, fresh = framed("stale paste"), framed("fresh paste")
+    provider = check.board.provide("signal", "stale paste", "fresh paste")
     try:
         check.paste()
-        if provider.stdout.readline().strip() != b"asked":
-            raise CannotCheck("the provider was not asked")
+        await_asked(provider, "first")
         # A new recipient generation: search opens and closes, then the next paste is requested.
         check.chord(F)
         check.keys.tap(ESCAPE)
@@ -178,16 +188,20 @@ def case_stale(check):
         if check.keys.await_recorded(out, len("62")) != "62":
             raise CannotCheck("b did not reach the shell after the second paste")
         provider.send_signal(signal.SIGUSR1)
-        got = check.keys.await_recorded(out, len("62") + 2 * len(framed("stale paste")), timeout=4.0)[len("62"):]
+        # The session reads one paste at a time, so the next is asked for only after the first
+        # was answered, and then from its own promise.
+        await_asked(provider, "next")
+        provider.send_signal(signal.SIGUSR1)
+        check.keys.await_recorded(out, len("62") + len(stale) + len(fresh), timeout=4.0)
     finally:
         provider.kill()
         provider.wait()
-    check.keys.stop("stale")
-    count = got.count(framed("stale paste"))
-    if got != framed("stale paste"):
-        raise Violation(f"pasteboard: stale: {count} pastes ({len(got) // 2} bytes) instead of one: the paste "
-                        "requested before the recipient changed arrived")
-    print("pasteboard: stale: the paste requested before the recipient changed was dropped")
+    got = check.keys.stop("stale").removeprefix("62")
+    if got != fresh:
+        raise Violation(f"pasteboard: stale: {got.count(stale)} stale and {got.count(fresh)} fresh pastes "
+                        f"({len(got) // 2} bytes) instead of the fresh one alone")
+    print("pasteboard: stale: the paste requested before the recipient changed was dropped and the next "
+          "arrived alone")
 
 
 def helpers(runner):
@@ -201,14 +215,13 @@ def helpers(runner):
 
 def case_stalled(check):
     out = check.keys.start("stalled", "paste")
-    provider = check.board.provide("never", -1)
+    provider = check.board.provide(-1, "never")
     runner = check.runner
     try:
         runner.start_pings()
         asked = time.monotonic()
         check.paste()
-        if provider.stdout.readline().strip() != b"asked":
-            raise CannotCheck("the provider was not asked")
+        await_asked(provider, "stalled")
         time.sleep(max(0.0, asked + REAPED_BY - time.monotonic()))
         runner.pinging = False
         left = helpers(runner)

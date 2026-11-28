@@ -187,7 +187,7 @@ def macos_controls():
               replace_once("                generation: recipient,\n",
                            "                generation: {\n                    let _ = recipient;\n"
                            "                    self.generation\n                },\n"),
-              "pasteboard: stale: 2 pastes")
+              "pasteboard: stale: 1 stale and 1 fresh pastes")
         probe("send a paste unframed when the framed one does not fit", "macos-pasteboard", "src/pane.rs",
               replace_once("                self.pty.enqueue_input(&self.terminal.encode_paste(text)?)?;\n",
                            "                let unframed = text.clone().into_bytes();\n"
