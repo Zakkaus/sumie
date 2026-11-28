@@ -47,6 +47,11 @@ def controls():
     probe("spawn ignores descriptor creation", "test", "crates/sumie-pty/src/spawn.rs",
           replace_once("    let _spawning = spawning();\n    command.spawn()", "    command.spawn()"),
           "test spawn::tests::a_spawn_waits_for_a_descriptor_being_created ... FAILED")
+    if sys.platform in ("linux", "darwin"):
+        watcher = "watch.rs" if sys.platform == "linux" else "watch_macos.rs"
+        probe("ignore the dangling target", "test", f"crates/sumie-config/src/{watcher}",
+              replace_once("filter(|target| target != path)", "filter(|target| target != path && target.exists())"),
+              "test tests::creating_a_dangling_config_target_reloads_settings ... FAILED")
     probe("Bash 3.2 lacks [[ -v", "shell", "shell-integration/bash/sumie.bash",
           replace_once("[[ -n ${SUMIE_ORIG_ENV+set} ]]", "[[ -v SUMIE_ORIG_ENV ]]"),
           "bash/sumie.bash: [[ -v needs Bash 4.2; macOS has 3.2")
@@ -106,6 +111,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           "lines exceeds 600")
     probe("forbidden module", "structure", CORE, append("mod /* nested /* comment */ */ r#helper {}\n"),
           f"names: {CORE}: forbidden module name helper")
+    probe("literal tab tint", "structure", "crates/sumie-ui/src/palette.rs",
+          replace_once("black(u8::MAX), alpha", "black(u8::MAX), if is_light(luminance) { 10 } else { 56 }"),
+          "ui tokens: crates/sumie-ui/src/palette.rs: numeric styling argument to tint_over")
     probe("forbidden crate name", "structure", RENDER_MANIFEST, append('[lib]\nname = "common"\n'),
           "names: forbidden crate name common")
     probe("legal lookalike names", "structure", CORE,

@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::WriteError;
+use crate::{WriteError, load::resolve_path};
 
 /// A settings file as read, with the identity a later write compares against.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,11 +58,7 @@ impl Snapshot {
     /// # Errors
     /// Returns an error if the file or its directory cannot be read.
     pub fn read(path: &Path) -> io::Result<Self> {
-        let real_path = match fs::canonicalize(path) {
-            Ok(real_path) => real_path,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => absent(path)?,
-            Err(error) => return Err(error),
-        };
+        let real_path = resolve_path(path)?;
         let (bytes, stat) = match File::open(&real_path) {
             // Stat before reading: a save during the read then changes the stat a write compares.
             Ok(mut file) => {
@@ -81,41 +77,6 @@ impl Snapshot {
             stat,
         })
     }
-}
-
-/// Links a missing file may pass through before its target, as Linux's `MAXSYMLINKS`.
-const MAX_LINKS: usize = 40;
-
-/// Where a missing file will be created. A link to a missing target is followed, so saving
-/// creates the target and the link stays a link.
-fn absent(path: &Path) -> io::Result<PathBuf> {
-    let mut path = path.to_owned();
-    for _ in 0..MAX_LINKS {
-        let target = match fs::read_link(&path) {
-            Ok(target) => target,
-            // Not a link, or nothing there: this is the file to create.
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::InvalidInput | io::ErrorKind::NotFound
-                ) =>
-            {
-                return match (path.parent(), path.file_name()) {
-                    (Some(parent), Some(name)) if parent.exists() => {
-                        Ok(fs::canonicalize(parent)?.join(name))
-                    }
-                    _ => Ok(path),
-                };
-            }
-            Err(error) => return Err(error),
-        };
-        // A relative target is relative to the link's directory; joining keeps an absolute one.
-        path = path.parent().unwrap_or(Path::new("")).join(target);
-    }
-    Err(io::Error::other(format!(
-        "{}: more than {MAX_LINKS} symbolic links",
-        path.display()
-    )))
 }
 
 pub(crate) enum Replaced {

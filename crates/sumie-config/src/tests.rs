@@ -258,6 +258,45 @@ fn resolved_settings_survive_json() {
     assert!(Config::from_json(br#"{"minimum-contrast":30}"#).is_err());
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn creating_a_dangling_config_target_reloads_settings() {
+    use std::os::unix::fs::symlink;
+
+    let scratch = Scratch::new("dangling-watch");
+    let settings = scratch.0.join("settings");
+    fs::create_dir(&settings).unwrap();
+    let main = scratch.0.join("sumie.toml");
+    symlink("settings/link.toml", &main).unwrap();
+    symlink("target.toml", settings.join("link.toml")).unwrap();
+
+    #[cfg(target_os = "linux")]
+    let mut watch = Watch::new(main).unwrap();
+    #[cfg(target_os = "macos")]
+    let (_stop, control) = std::os::unix::net::UnixStream::pair().unwrap();
+    #[cfg(target_os = "macos")]
+    let mut watch = Watch::new(Some(main), &control).unwrap();
+    watch.load().unwrap().unwrap();
+
+    fs::write(settings.join("target.toml"), "[cursor]\nstyle = 'bar'").unwrap();
+    #[cfg(target_os = "linux")]
+    assert!(watch.changed().unwrap());
+    #[cfg(target_os = "macos")]
+    {
+        use std::time::{Duration, Instant};
+        assert_eq!(
+            watch
+                .wait(Some(Instant::now() + Duration::from_secs(2)))
+                .unwrap(),
+            WatchEvent::Changed,
+        );
+    }
+    assert_eq!(
+        watch.load().unwrap().unwrap().cursor.style(),
+        CursorStyle::Bar
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn rename_replacement_reloads_and_rearms() {

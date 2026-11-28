@@ -297,6 +297,10 @@ def macos_controls():
         probe("wait for the first settings without a deadline", "macos-loading", "src/macos/driver.rs",
               replace_once("None if Instant::now() >= *first_by =>", "None if false && Instant::now() >= *first_by =>"),
               "loading: no present within")
+        probe("discard the hot-reload diagnostic", "macos-loading", "src/app/window_events.rs",
+              replace_once("if show_error(&mut self.banner, message)",
+                           "if !message.is_empty() && false"),
+              "loading: no diagnostic frame after saving an invalid config")
         probe("keep the window visible until the reap", "macos-close", "src/macos/driver.rs",
               replace_once("        open.window\n            .platform()\n            .order_out(context, move || done.set(true));\n",
                            "        std::mem::forget(open.window.platform().window_owner());\n"

@@ -44,7 +44,7 @@ pub fn progress_bar(
     fill(
         out,
         rect(x, 0, width, height),
-        tint_over(palette.surface, palette.selected, 23),
+        tint_over(palette.surface, palette.selected, tokens::TAB_RULE_ALPHA),
     );
     let color = match progress.state {
         ProgressState::Set | ProgressState::Indeterminate => palette.active_number,

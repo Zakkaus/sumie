@@ -30,7 +30,7 @@ impl Palette {
     #[must_use]
     pub fn link_hint(self) -> Rgba {
         let [r, g, b, _] = self.accent;
-        [r, g, b, 128]
+        [r, g, b, tokens::LINK_HINT_ALPHA]
     }
 
     #[must_use]
@@ -62,11 +62,12 @@ impl TabPalette {
     #[must_use]
     pub fn new(background: Rgba, foreground: Rgba, mut yellow: Rgba, mut red: Rgba) -> Self {
         let luminance = relative_luminance(background);
-        let surface = tint_over(
-            background,
-            black(255),
-            if is_light(luminance) { 10 } else { 56 },
-        );
+        let alpha = if is_light(luminance) {
+            tokens::TAB_SURFACE_LIGHT_ALPHA
+        } else {
+            tokens::TAB_SURFACE_DARK_ALPHA
+        };
+        let surface = tint_over(background, black(u8::MAX), alpha);
         let bar = relative_luminance(surface) + 0.05;
         let contrasts = |color| {
             let accent = relative_luminance(color) + 0.05;
@@ -81,19 +82,19 @@ impl TabPalette {
             };
         }
         yellow[3] = 255;
-        let selected = tint_over(surface, foreground, 255);
+        let selected = tint_over(surface, foreground, u8::MAX);
         if !contrasts(red) {
             red = selected;
         }
         red[3] = 255;
         Self {
             surface,
-            label: tint_over(surface, foreground, 128),
-            hovered: tint_over(surface, foreground, 209),
+            label: tint_over(surface, foreground, tokens::TAB_LABEL_ALPHA),
+            hovered: tint_over(surface, foreground, tokens::TAB_HOVER_ALPHA),
             selected,
             active_number: yellow,
             error: red,
-            digits: tint_over(surface, foreground, 153),
+            digits: tint_over(surface, foreground, tokens::TAB_NUMBER_ALPHA),
         }
     }
 
@@ -150,9 +151,9 @@ mod tests {
         assert_eq!(cobalt.active_number, yellow);
         assert_eq!(cobalt.error, red);
 
-        let light = TabPalette::new([255; 4], black(255), yellow, red);
+        let light = TabPalette::new([255; 4], black(u8::MAX), yellow, red);
         assert_eq!(light.surface, [245, 245, 245, 255]);
-        assert_eq!(light.selected, black(255));
+        assert_eq!(light.selected, [0, 0, 0, 255]);
         assert_eq!(light.active_number, tokens::LIGHT.accent);
 
         let gray = [128, 128, 128, 255];

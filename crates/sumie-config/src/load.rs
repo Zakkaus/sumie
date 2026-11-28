@@ -80,6 +80,49 @@ pub(crate) fn read_file(path: &Path) -> io::Result<String> {
     fs::read_to_string(path)
 }
 
+#[cfg(unix)]
+pub(super) fn resolve_path(path: &Path) -> io::Result<PathBuf> {
+    match fs::canonicalize(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => absent(path),
+        result => result,
+    }
+}
+
+/// Where a missing file will be created. A link to a missing target is followed, so saving
+/// creates the target and the link stays a link.
+#[cfg(unix)]
+fn absent(path: &Path) -> io::Result<PathBuf> {
+    // Linux's symlink traversal limit also bounds a loop here.
+    const MAX_LINKS: usize = 40;
+    let mut path = path.to_owned();
+    for _ in 0..MAX_LINKS {
+        let target = match fs::read_link(&path) {
+            Ok(target) => target,
+            // Not a link, or nothing there: this is the file to create.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::InvalidInput | io::ErrorKind::NotFound
+                ) =>
+            {
+                return match (path.parent(), path.file_name()) {
+                    (Some(parent), Some(name)) if parent.exists() => {
+                        Ok(fs::canonicalize(parent)?.join(name))
+                    }
+                    _ => Ok(path),
+                };
+            }
+            Err(error) => return Err(error),
+        };
+        // A relative target is relative to the link's directory; joining keeps an absolute one.
+        path = path.parent().unwrap_or(Path::new("")).join(target);
+    }
+    Err(io::Error::other(format!(
+        "{}: more than {MAX_LINKS} symbolic links",
+        path.display()
+    )))
+}
+
 /// Reads a settings file; the editor substitutes the text it is about to write.
 pub(crate) type Read<'a> = &'a mut dyn FnMut(&Path) -> io::Result<String>;
 

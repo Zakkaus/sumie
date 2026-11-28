@@ -105,30 +105,42 @@ def attributes(tokens):
                 break
 
 
-def meta_args(tokens):
-    if tokens[1:2] != ["("] or tokens[-1:] != [")"]:
+def call_args(tokens, opening):
+    if tokens[opening:opening + 1] != ["("]:
         return
     depth = 0
-    start = 2
-    end = len(tokens) - 1
-    for pos in range(start, end):
+    start = opening + 1
+    for pos in range(start, len(tokens)):
         token = tokens[pos]
-        if token == "," and depth == 0:
-            yield tokens[start:pos]
+        if depth == 0 and token in (",", ")"):
+            if start < pos:
+                yield tokens[start:pos]
+            if token == ")":
+                return
             start = pos + 1
         depth += (token in ("(", "[", "{")) - (token in (")", "]", "}"))
-    if start < end:
-        yield tokens[start:end]
+
+
+def check_ui_tokens(path, tokens):
+    # Only styling inputs at known call sites, not indices or geometry arithmetic.
+    if path.parts[:3] != ("crates", "sumie-ui", "src") or path.name in ("tokens.rs", "tests.rs"):
+        return
+    style_arg = {"black": 0, "px": 0, "scaled": 0, "tint_over": 2}
+    for i, token in enumerate(tokens):
+        if token in style_arg:
+            for index, arg in enumerate(call_args(tokens, i + 1)):
+                if index == style_arg[token] and any(part[0].isdigit() for part in arg):
+                    yield f"ui tokens: {path}: numeric styling argument to {token}"
 
 
 def suppressed_lints(meta):
     if meta[:1] == ["cfg_attr"]:
-        args = meta_args(meta)
+        args = call_args(meta, 1)
         next(args, None)  # The condition is not an attribute.
         for nested in args:
             yield from suppressed_lints(nested)
     elif meta[:1] in (["allow"], ["expect"]):
-        for lint in meta_args(meta):
+        for lint in call_args(meta, 1):
             if tuple(lint) in GATED_LINTS:
                 yield "".join(lint)
 
@@ -141,7 +153,7 @@ def check_rust(path, source, safe):
     for start, end, inner, meta in attributes(tokens):
         if inner and start == header_end:
             header_end = end
-            if meta[:1] == ["forbid"] and ["unsafe_code"] in meta_args(meta):
+            if meta[:1] == ["forbid"] and ["unsafe_code"] in call_args(meta, 1):
                 forbid = True
         for lint in suppressed_lints(meta):
             errors.append(f"lints: {path}: forbidden suppression of {lint}")
@@ -150,6 +162,7 @@ def check_rust(path, source, safe):
     names = set(path.with_suffix("").parts) | set(module_names(tokens))
     for name in sorted(names & FORBIDDEN_NAMES):
         errors.append(f"names: {path}: forbidden module name {name}")
+    errors.extend(check_ui_tokens(path, tokens))
     return errors
 
 
