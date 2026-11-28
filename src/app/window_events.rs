@@ -1,6 +1,6 @@
 //! Apply window events and reloaded settings to the session, GPU and window.
 
-use sumie_config::{Changes, Config, Language};
+use sumie_config::{Config, Language};
 use sumie_core::KeyAction;
 use sumie_locale::Locale;
 
@@ -50,11 +50,33 @@ impl App {
             if resize_grid {
                 session.resize_grid()?;
             }
-            session.apply_pane_config(&next, &changes)?;
-            session.set_smooth_scroll(next.scroll.smooth());
-            if changes.keybinds {
-                session.routing.set_bindings(&next.keybinds);
+            for tab in session.all_panes_mut() {
+                if changes.scrollback_limit {
+                    tab.pane
+                        .terminal
+                        .set_scrollback_bytes(next.scrollback_limit())?;
+                    tab.snapshot_dirty = true;
+                    if let Some(bar) = &mut tab.search {
+                        bar.output(&tab.pane.terminal)?;
+                        tab.frame_dirty = true;
+                    }
+                }
+                if changes.thumbnail_rows {
+                    tab.pane
+                        .terminal
+                        .set_thumbnail_rows(next.images.thumbnail_rows());
+                }
+                if changes.terminal_colors {
+                    set_colors(&mut tab.pane.terminal, &next.colors)?;
+                    tab.snapshot_dirty = true;
+                }
+                if changes.cursor {
+                    set_cursor_defaults(&mut tab.pane.terminal, next.cursor)?;
+                    tab.snapshot_dirty = true;
+                }
             }
+            session.set_smooth_scroll(next.scroll.smooth());
+            session.routing.set_bindings(&next.keybinds);
             if changes.selection_colors {
                 session.view.set_selection_colors(&next.colors);
             }
@@ -347,37 +369,6 @@ impl Session {
             }
         }
         Ok(self.tabs.active().is_none())
-    }
-}
-
-impl Session {
-    fn apply_pane_config(&mut self, next: &Config, changes: &Changes) -> Result<()> {
-        for tab in self.all_panes_mut() {
-            if changes.scrollback_limit {
-                tab.pane
-                    .terminal
-                    .set_scrollback_bytes(next.scrollback_limit())?;
-                tab.snapshot_dirty = true;
-                if let Some(bar) = &mut tab.search {
-                    bar.output(&tab.pane.terminal)?;
-                    tab.frame_dirty = true;
-                }
-            }
-            if changes.thumbnail_rows {
-                tab.pane
-                    .terminal
-                    .set_thumbnail_rows(next.images.thumbnail_rows());
-            }
-            if changes.terminal_colors {
-                set_colors(&mut tab.pane.terminal, &next.colors)?;
-                tab.snapshot_dirty = true;
-            }
-            if changes.cursor {
-                set_cursor_defaults(&mut tab.pane.terminal, next.cursor)?;
-                tab.snapshot_dirty = true;
-            }
-        }
-        Ok(())
     }
 }
 

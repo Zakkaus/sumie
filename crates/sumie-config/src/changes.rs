@@ -17,7 +17,6 @@ pub struct Changes {
     pub padding: bool,
     pub background: bool,
     pub language: bool,
-    pub keybinds: bool,
 }
 
 impl Config {
@@ -52,7 +51,6 @@ impl Config {
                 != next.window.background_opacity().to_bits()
                 || self.window.background_blur() != next.window.background_blur(),
             language: self.language() != next.language(),
-            keybinds: !self.keybinds.overrides().eq(next.keybinds.overrides()),
         }
     }
 }
@@ -104,7 +102,6 @@ mod tests {
                 [false, false, false, false, false, false, true, false],
             ),
             ("language = 'ja'", [false; 8]),
-            ("[keybinds]\ncopy = 'Alt+F1'", [false; 8]),
         ] {
             let new = toml::from_str(text).unwrap();
             let Changes {
@@ -118,11 +115,9 @@ mod tests {
                 padding,
                 background,
                 language,
-                keybinds,
             } = old.changes(&new);
             assert!(!background, "{text}");
             assert_eq!(language, text.starts_with("language"), "{text}");
-            assert_eq!(keybinds, text.starts_with("[keybinds]"), "{text}");
             assert_eq!(
                 [
                     font,
