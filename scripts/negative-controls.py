@@ -185,6 +185,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("wide cell split", "test", VT,
           replace_once("ffi::CELL_WIDE_WIDE => 2,", "ffi::CELL_WIDE_WIDE => 1,"),
           "test tests::snapshot_keeps_wide_cells_whole ... FAILED")
+    probe("snapshot updates during synchronized output", "test", "crates/sumie-vt/src/effects.rs",
+          replace_once("            return captured;", "            captured?;"),
+          "test tests::synchronized_output_holds_consecutive_frames_on_the_same_row ... FAILED")
     probe("snapshot ignores bold style", "test", "crates/sumie-vt/src/style.rs",
           replace_once("let flags = native.flags;", "let flags = native.flags & !ffi::STYLE_BOLD;"),
           "test style::tests::snapshot_keeps_cell_style ... FAILED")

@@ -1,7 +1,8 @@
-//! Read live viewport contents and colors without consuming renderer dirty bits.
+//! Read live viewport contents and captured colors without consuming renderer dirty bits.
 const std = @import("std");
 const options = @import("terminal_options");
 const terminal = @import("terminal/c/terminal.zig");
+const render = @import("terminal/c/render.zig");
 const color = @import("terminal/color.zig");
 const Result = @import("terminal/c/result.zig").Result;
 const Color = @import("terminal/style.zig").Style.Color;
@@ -12,9 +13,9 @@ pub fn install() void {
     @export(&semanticPromptSeen, .{ .name = "sumie_semantic_prompt_seen" });
 }
 
-fn paletteColor(raw: terminal.Terminal, index: u8, out: *[3]u8) callconv(.c) Result {
-    const t = terminal.zigTerminal(raw) orelse return .invalid_value;
-    const rgb = t.colors.palette.current[index];
+fn paletteColor(raw: render.RenderState, index: u8, out: *[3]u8) callconv(.c) Result {
+    const snapshot = raw orelse return .invalid_value;
+    const rgb = snapshot.state.colors.palette[index];
     out.* = .{ rgb.r, rgb.g, rgb.b };
     return .success;
 }
