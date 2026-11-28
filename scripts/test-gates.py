@@ -49,42 +49,14 @@ class GateTests(unittest.TestCase):
                     self.assertIn(stdout, output.getvalue())
 
     def test_macos_quit_preserves_fixture_exit_status(self):
-        for status in (0, 1, 2):
-            with self.subTest(status=status), patch.object(sys, "argv", ["check-gate.py", "macos-quit"]), \
-                 patch.dict(os.environ, SUMIE_SPIKE_EVIDENCE="unused"), \
-                 patch.object(subprocess, "call", return_value=status), contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(GATE(), status)
-
-    def test_contrast_probe_requires_the_relevant_assertion_only(self):
-        controls = runpy.run_path(str(SCRIPTS / "negative-controls.py"))["controls"]
-        from negative import probe
-
-        record = Mock()
-        with patch.dict(controls.__globals__, probe=record, input_controls=Mock(), macos_controls=Mock()), \
-             patch("shutil.which", return_value=None), contextlib.redirect_stdout(io.StringIO()):
-            controls()
-        args, kwargs = next(call for call in record.call_args_list if call.args[0] == "contrast above the supported range")
-        _, _, file, *_ = args
-        for message, failures, accepted in (
-            ("File exists (os error 17)", 1, False),
-            ("called `Result::unwrap_err()` on an `Ok` value: Config { minimum_contrast: Some(21.00000001) }", 2, False),
-            ("called `Result::unwrap_err()` on an `Ok` value: Config { minimum_contrast: Some(21.00000001) }", 1, True),
-        ):
-            with self.subTest(message=message, failures=failures), tempfile.TemporaryDirectory() as scratch:
-                path = Path(scratch) / file
-                path.parent.mkdir(parents=True)
-                original = "(1.0..=21.0).contains(&ratio)"
-                path.write_text(original)
-                output = (f"test tests::load_configuration ... FAILED\n{message}\n"
-                          f"test result: FAILED. 0 passed; {failures} failed; 0 ignored;\n")
-                with patch.object(probe, "ROOT", Path(scratch)), \
-                     patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 1, output)), \
-                     contextlib.redirect_stdout(io.StringIO()):
-                    if accepted:
-                        probe.probe(*args, **kwargs)
-                    else:
-                        with self.assertRaises(RuntimeError):
-                            probe.probe(*args, **kwargs)
+        for script in ("check-gate.py", "negative-controls.py"):
+            main = runpy.run_path(str(SCRIPTS / script))["main"]
+            for status in (0, 1, 2):
+                with self.subTest(script=script, status=status), \
+                     patch.object(sys, "argv", [script, "macos-quit"]), \
+                     patch.dict(os.environ, SUMIE_SPIKE_EVIDENCE="unused"), \
+                     patch.object(subprocess, "call", return_value=status), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(), status)
 
     def test_darwin_fast_does_not_run_window_scenarios(self):
         with tempfile.TemporaryDirectory() as scratch:

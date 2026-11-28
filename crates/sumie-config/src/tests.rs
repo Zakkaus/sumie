@@ -99,9 +99,10 @@ fn load_configuration() {
     for (input, expected) in cases {
         fs::write(&main, input).unwrap();
         let result = load(&main);
+        let input = input.trim_end();
         match expected {
             Ok(check) => check(result.unwrap()),
-            Err(expected) => assert_invalid(result.unwrap_err(), &main, expected),
+            Err(expected) => assert_invalid(result.expect_err(input), &main, expected),
         }
     }
 }
