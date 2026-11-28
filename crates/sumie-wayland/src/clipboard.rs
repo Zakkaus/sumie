@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, io, mem, rc::Rc, time::Duration};
+use std::{collections::VecDeque, io, mem, os::fd::OwnedFd, rc::Rc, time::Duration};
 
 use rustix::{
     fs::{OFlags, fcntl_getfl, fcntl_setfl},
@@ -12,6 +12,11 @@ use smithay_client_toolkit::{
         data_offer::{DataOfferHandler, DragOffer, receive_to_fd},
         data_source::{CopyPasteSource, DataSourceHandler},
     },
+    primary_selection::{
+        PrimarySelectionManagerState,
+        device::PrimarySelectionDeviceHandler,
+        selection::{PrimarySelectionSource, PrimarySelectionSourceHandler},
+    },
     reexports::{
         calloop::{
             Interest, Mode, PostAction, RegistrationToken,
@@ -20,6 +25,7 @@ use smithay_client_toolkit::{
         },
         client::{
             Connection, QueueHandle,
+            globals::GlobalList,
             protocol::{
                 wl_data_device::WlDataDevice, wl_data_device_manager::DndAction,
                 wl_data_source::WlDataSource, wl_surface::WlSurface,
@@ -27,8 +33,15 @@ use smithay_client_toolkit::{
         },
     },
 };
+use wayland_protocols::wp::primary_selection::zv1::client::{
+    zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1,
+    zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1,
+};
 
-use crate::{Event, platform::State};
+use crate::{
+    Event,
+    platform::{Platform, State},
+};
 
 const TEXT_TYPES: [&str; 3] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
 const CHUNK_BYTES: usize = 8192;
@@ -36,14 +49,28 @@ const TRANSFER_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub(crate) struct Clipboard {
-    source: Option<ClipboardSource>,
+    source: Option<ClipboardSource<CopyPasteSource>>,
+    primary: Option<ClipboardSource<PrimarySelectionSource>>,
     reads: PasteQueue<Transfer>,
-    writes: Vec<Option<Transfer>>,
+    writes: [Vec<Option<Transfer>>; 2],
 }
 
-struct ClipboardSource {
-    source: CopyPasteSource,
+#[derive(Clone, Copy)]
+enum Selection {
+    Clipboard,
+    Primary,
+}
+
+struct ClipboardSource<S> {
+    source: S,
     bytes: Rc<Vec<u8>>,
+}
+
+impl<S> ClipboardSource<S> {
+    fn request_bytes(&self, matches: bool, mime: &str) -> Option<Rc<Vec<u8>>> {
+        (matches && !self.bytes.is_empty() && TEXT_TYPES.contains(&mime))
+            .then(|| Rc::clone(&self.bytes))
+    }
 }
 
 struct Transfer {
@@ -112,35 +139,112 @@ impl<T> PasteQueue<T> {
     }
 }
 
-impl State {
-    pub(crate) fn write_clipboard(&mut self, serial: u32, bytes: Option<Vec<u8>>) {
-        let Some(manager) = &self.data_device_manager else {
-            return;
-        };
-        let Some(device) = self
+impl Platform {
+    /// Request text from the keyboard seat's clipboard. Non-empty UTF-8 reads
+    /// smaller than `max_bytes` arrive in request order as `Event::ClipboardText`.
+    /// The reply carries `recipient`, even if keyboard focus changes during the read.
+    /// Reads that reach the size limit or take more than five seconds are discarded.
+    ///
+    /// # Errors
+    /// Returns an error if pipe creation or event source registration fails.
+    pub fn read_clipboard(&mut self, max_bytes: usize, recipient: u64) -> std::io::Result<()> {
+        self.state.read_clipboard(max_bytes, recipient)
+    }
+
+    #[must_use]
+    pub fn has_primary_selection(&self) -> bool {
+        self.state.primary_selection_manager.is_some()
+    }
+
+    /// Request the keyboard seat's primary selection under the same limits and ordering
+    /// as [`Self::read_clipboard`]. With no primary offer, there is no reply.
+    ///
+    /// # Errors
+    /// Returns an error if pipe creation or event source registration fails.
+    pub fn read_primary(&mut self, max_bytes: usize, recipient: u64) -> std::io::Result<()> {
+        self.state.read_primary(max_bytes, recipient)
+    }
+
+    /// Publish text from a recent key press or pointer release on the active seat.
+    /// On selection release, publish the same text to primary selection if available.
+    /// Transfers run through calloop.
+    pub fn write_clipboard(&mut self, serial: u32, text: String, on_release: bool) {
+        self.state
+            .write_clipboard(serial, Some(text.into_bytes()), on_release);
+    }
+
+    /// Publish a terminal write using the focused seat's serial, or clear on `None`.
+    /// Without keyboard focus, there is no serial and the request is discarded.
+    pub fn write_terminal_clipboard(&mut self, bytes: Option<Vec<u8>>) {
+        if let Some(serial) = self
+            .state
             .keyboard
             .as_ref()
-            .and_then(|keyboard| keyboard.data_device.as_ref())
-        else {
+            .and_then(|key| key.selection_serial)
+        {
+            self.state.write_clipboard(serial, bytes, false);
+        }
+    }
+}
+
+impl State {
+    pub(crate) fn bind_primary_selection(
+        globals: &GlobalList,
+        qh: &QueueHandle<Self>,
+    ) -> Option<PrimarySelectionManagerState> {
+        let manager = PrimarySelectionManagerState::bind(globals, qh).ok();
+        if manager.is_none() {
+            tracing::debug!("primary selection unavailable; middle-click paste disabled");
+        }
+        manager
+    }
+
+    pub(crate) fn write_clipboard(
+        &mut self,
+        serial: u32,
+        bytes: Option<Vec<u8>>,
+        on_release: bool,
+    ) {
+        let bytes = bytes.map(Rc::new);
+        if on_release && let Some(bytes) = &bytes {
+            self.write_primary(serial, Rc::clone(bytes));
+        }
+        let Some((manager, device)) = self.data_device_manager.as_ref().zip(
+            self.keyboard
+                .as_ref()
+                .and_then(|key| key.data_device.as_ref()),
+        ) else {
             return;
         };
         let source = if let Some(bytes) = bytes {
             let source = manager.create_copy_paste_source(&self.qh, TEXT_TYPES);
             source.set_selection(device, serial);
-            Some(ClipboardSource {
-                source,
-                bytes: Rc::new(bytes),
-            })
+            Some(ClipboardSource { source, bytes })
         } else {
             device.unset_selection(serial);
             None
         };
-        self.cancel_clipboard_writes();
+        self.cancel_clipboard_writes(Selection::Clipboard);
         self.clipboard.source = source;
     }
 
+    fn write_primary(&mut self, serial: u32, bytes: Rc<Vec<u8>>) {
+        let Some((manager, device)) = self.primary_selection_manager.as_ref().zip(
+            self.keyboard
+                .as_ref()
+                .and_then(|key| key.primary_selection.as_ref()),
+        ) else {
+            return;
+        };
+        let source = manager.create_selection_source(&self.qh, TEXT_TYPES);
+        source.set_selection(device, serial);
+        self.cancel_primary_writes();
+        self.clipboard.primary = Some(ClipboardSource { source, bytes });
+    }
+
     pub(crate) fn close_clipboard(&mut self) {
-        self.cancel_clipboard_writes();
+        self.cancel_clipboard_writes(Selection::Clipboard);
+        self.cancel_primary_writes();
         for paste in self.clipboard.reads.slots.drain(..) {
             if let Paste::Pending(transfer) = paste.state {
                 self.loop_handle.remove(transfer.pipe);
@@ -149,9 +253,19 @@ impl State {
         }
     }
 
-    fn cancel_clipboard_writes(&mut self) {
-        self.clipboard.source = None;
-        for transfer in self.clipboard.writes.drain(..).flatten() {
+    pub(crate) fn cancel_primary_writes(&mut self) {
+        self.cancel_clipboard_writes(Selection::Primary);
+    }
+
+    fn cancel_clipboard_writes(&mut self, selection: Selection) {
+        match selection {
+            Selection::Clipboard => self.clipboard.source = None,
+            Selection::Primary => self.clipboard.primary = None,
+        }
+        for transfer in self.clipboard.writes[selection as usize]
+            .drain(..)
+            .flatten()
+        {
             self.loop_handle.remove(transfer.pipe);
             self.loop_handle.remove(transfer.timer);
         }
@@ -178,15 +292,20 @@ impl State {
         }
     }
 
-    fn queue_clipboard_write(&mut self, fd: WritePipe, bytes: Rc<Vec<u8>>) -> io::Result<()> {
+    fn queue_clipboard_write(
+        &mut self,
+        selection: Selection,
+        fd: WritePipe,
+        bytes: Rc<Vec<u8>>,
+    ) -> io::Result<()> {
         fcntl_setfl(&fd, fcntl_getfl(&fd)? | OFlags::NONBLOCK)?;
         let mut offset = 0;
-        let slot = self
-            .clipboard
-            .writes
+        let kind = selection as usize;
+        let writes = &mut self.clipboard.writes[kind];
+        let slot = writes
             .iter()
             .position(Option::is_none)
-            .unwrap_or(self.clipboard.writes.len());
+            .unwrap_or(writes.len());
         let pipe = self
             .loop_handle
             .insert_source(fd, move |(), fd, state| {
@@ -202,7 +321,7 @@ impl State {
                     Err(Errno::AGAIN | Errno::INTR) => return PostAction::Continue,
                     Err(error) => tracing::warn!(%error, "clipboard write failed"),
                 }
-                let transfer = state.clipboard.writes[slot]
+                let transfer = state.clipboard.writes[kind][slot]
                     .take()
                     .expect("active clipboard write");
                 state.loop_handle.remove(transfer.timer);
@@ -210,13 +329,14 @@ impl State {
             })
             .map_err(|e| e.error)?;
         let transfer = self.clipboard_deadline(pipe, move |state| {
-            state.clipboard.writes[slot] = None;
+            state.clipboard.writes[kind][slot] = None;
             tracing::warn!("clipboard write timed out");
         })?;
-        if let Some(entry) = self.clipboard.writes.get_mut(slot) {
+        let writes = &mut self.clipboard.writes[kind];
+        if let Some(entry) = writes.get_mut(slot) {
             *entry = Some(transfer);
         } else {
-            self.clipboard.writes.push(Some(transfer));
+            writes.push(Some(transfer));
         }
         Ok(())
     }
@@ -229,13 +349,36 @@ impl State {
         else {
             return Ok(());
         };
-        let Some(mime) = offer.with_mime_types(|types| {
-            TEXT_TYPES
-                .into_iter()
-                .find(|mime| types.is_empty() || types.iter().any(|t| t == mime))
-        }) else {
+        let Some(mime) = offer.with_mime_types(text_mime) else {
             return Ok(());
         };
+        self.queue_clipboard_read(max_bytes, recipient, |writer| {
+            receive_to_fd(offer.inner(), mime.to_owned(), writer);
+        })
+    }
+
+    pub(crate) fn read_primary(&mut self, max_bytes: usize, recipient: u64) -> io::Result<()> {
+        let Some(offer) = self
+            .keyboard
+            .as_ref()
+            .and_then(|key| key.primary_selection.as_ref()?.data().selection_offer())
+        else {
+            return Ok(());
+        };
+        let Some(mime) = offer.with_mime_types(text_mime) else {
+            return Ok(());
+        };
+        self.queue_clipboard_read(max_bytes, recipient, |writer| {
+            offer.receive_to_fd(mime.to_owned(), writer);
+        })
+    }
+
+    fn queue_clipboard_read(
+        &mut self,
+        max_bytes: usize,
+        recipient: u64,
+        receive: impl FnOnce(OwnedFd),
+    ) -> io::Result<()> {
         let (reader, writer) = pipe_with(PipeFlags::CLOEXEC)?;
         // The selection owner may expect blocking writes; change only our end.
         fcntl_setfl(&reader, fcntl_getfl(&reader)? | OFlags::NONBLOCK)?;
@@ -283,9 +426,15 @@ impl State {
                 .finish(sequence, None, &mut state.events);
         })?;
         self.clipboard.reads.push(recipient, transfer);
-        receive_to_fd(offer.inner(), mime.to_owned(), writer);
+        receive(writer);
         Ok(())
     }
+}
+
+fn text_mime(types: &[String]) -> Option<&'static str> {
+    TEXT_TYPES
+        .into_iter()
+        .find(|mime| types.is_empty() || types.iter().any(|t| t == mime))
 }
 
 fn clipboard_text(data: Vec<u8>) -> Option<String> {
@@ -351,17 +500,14 @@ impl DataSourceHandler for State {
         mime: String,
         fd: WritePipe,
     ) {
-        let Some(clipboard) = &self.clipboard.source else {
-            return;
-        };
-        if clipboard.source.inner() != source
-            || clipboard.bytes.is_empty()
-            || !TEXT_TYPES.contains(&mime.as_str())
+        let bytes = self
+            .clipboard
+            .source
+            .as_ref()
+            .and_then(|entry| entry.request_bytes(entry.source.inner() == source, &mime));
+        if let Some(bytes) = bytes
+            && let Err(error) = self.queue_clipboard_write(Selection::Clipboard, fd, bytes)
         {
-            return;
-        }
-        let bytes = Rc::clone(&clipboard.bytes);
-        if let Err(error) = self.queue_clipboard_write(fd, bytes) {
             tracing::warn!(%error, "could not start clipboard write");
         }
     }
@@ -373,7 +519,7 @@ impl DataSourceHandler for State {
             .as_ref()
             .is_some_and(|clipboard| clipboard.source.inner() == source)
         {
-            self.cancel_clipboard_writes();
+            self.cancel_clipboard_writes(Selection::Clipboard);
         }
     }
 
@@ -390,33 +536,53 @@ impl DataSourceHandler for State {
     fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: DndAction) {}
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Event, PasteQueue, VecDeque};
-
-    #[test]
-    fn paste_results_keep_request_order_after_failure() {
-        let mut queue = PasteQueue::default();
-        let mut events = VecDeque::new();
-        let [first, failed, last] = [0, 1, 2].map(|generation| {
-            let sequence = queue.next_sequence();
-            queue.push(generation, ());
-            sequence
-        });
-
-        queue.finish(last, Some("last".into()), &mut events);
-        assert!(events.is_empty());
-        queue.finish(first, Some("first".into()), &mut events);
-        assert!(matches!(
-            events.pop_front(),
-            Some(Event::ClipboardText { text, generation: 0 }) if text == "first"
-        ));
-        assert!(events.is_empty());
-        queue.finish(failed, None, &mut events);
-        assert!(matches!(
-            events.pop_front(),
-            Some(Event::ClipboardText { text, generation: 2 }) if text == "last"
-        ));
-        assert!(events.is_empty());
+impl PrimarySelectionDeviceHandler for State {
+    fn selection(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &ZwpPrimarySelectionDeviceV1,
+    ) {
     }
 }
+
+impl PrimarySelectionSourceHandler for State {
+    fn send_request(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        source: &ZwpPrimarySelectionSourceV1,
+        mime: String,
+        fd: WritePipe,
+    ) {
+        let bytes = self
+            .clipboard
+            .primary
+            .as_ref()
+            .and_then(|entry| entry.request_bytes(entry.source.inner() == source, &mime));
+        if let Some(bytes) = bytes
+            && let Err(error) = self.queue_clipboard_write(Selection::Primary, fd, bytes)
+        {
+            tracing::warn!(%error, "could not start primary selection write");
+        }
+    }
+
+    fn cancelled(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        source: &ZwpPrimarySelectionSourceV1,
+    ) {
+        if self
+            .clipboard
+            .primary
+            .as_ref()
+            .is_some_and(|entry| entry.source.inner() == source)
+        {
+            self.cancel_primary_writes();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

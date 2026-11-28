@@ -169,11 +169,61 @@ static int type_text(struct wl_display *display, struct org_kde_kwin_fake_input 
     return status;
 }
 
+static void move_to(struct org_kde_kwin_fake_input *input, int x, int y)
+{
+    org_kde_kwin_fake_input_pointer_motion_absolute(input, wl_fixed_from_int(x), wl_fixed_from_int(y));
+}
+
+static int send_pointer(struct wl_display *display, struct org_kde_kwin_fake_input *input,
+                        const char *gesture)
+{
+    int x, y, end_x, end_y;
+    char extra;
+    if (sscanf(gesture, "middle:%d,%d%c", &x, &y, &extra) == 2) {
+        move_to(input, x, y);
+        org_kde_kwin_fake_input_button(input, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_PRESSED);
+        org_kde_kwin_fake_input_button(input, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_RELEASED);
+    } else if (sscanf(gesture, "drag:%d,%d:%d,%d%c", &x, &y, &end_x, &end_y, &extra) == 4) {
+        move_to(input, x, y);
+        org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+        move_to(input, end_x, end_y);
+        org_kde_kwin_fake_input_button(input, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+    } else {
+        fputs("nested input: expected middle:X,Y or drag:X,Y:X,Y\n", stderr);
+        return 2;
+    }
+    if (wl_display_roundtrip(display) < 0) {
+        perror("nested input: send pointer gesture");
+        return 1;
+    }
+    return 0;
+}
+
+static int serve_pointer(struct wl_display *display, struct org_kde_kwin_fake_input *input)
+{
+    // Keep KWin's fake pointer device on the seat while the test client runs.
+    if (wl_display_roundtrip(display) < 0)
+        return 1;
+    puts("ready");
+    fflush(stdout);
+    char gesture[128];
+    while (fgets(gesture, sizeof gesture, stdin)) {
+        gesture[strcspn(gesture, "\n")] = '\0';
+        int status = send_pointer(display, input, gesture);
+        if (status)
+            return status;
+        puts("ok");
+        fflush(stdout);
+    }
+    return ferror(stdin) ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
     int chords = argc == 3 && strcmp(argv[1], "--keys") == 0;
+    int pointer = argc == 2 && strcmp(argv[1], "--pointer") == 0;
     if ((argc != 2 && !chords) || !setlocale(LC_CTYPE, "C.UTF-8")) {
-        fputs("nested input: expected TEXT or --keys CHORDS, and a C.UTF-8 locale\n", stderr);
+        fputs("nested input: expected TEXT, --keys CHORDS or --pointer, and a C.UTF-8 locale\n", stderr);
         return 2;
     }
     struct wl_display *display = wl_display_connect("wl-sumie");
@@ -192,7 +242,10 @@ int main(int argc, char **argv)
     } else {
         org_kde_kwin_fake_input_authenticate(input, "sumie nested test",
                                             "Type into the focused test client");
-        status = chords ? send_chords(display, input, argv[2]) : type_text(display, input, argv[1]);
+        if (pointer)
+            status = serve_pointer(display, input);
+        else
+            status = chords ? send_chords(display, input, argv[2]) : type_text(display, input, argv[1]);
         org_kde_kwin_fake_input_destroy(input);
     }
     wl_registry_destroy(registry);

@@ -14,6 +14,7 @@ import tomllib
 # compare its status before and after.
 sys.dont_write_bytecode = True
 from gates.build import ROOT, CannotCheck, cargo_record, run  # noqa: E402
+from gates.clipboard import check_linux_clipboard  # noqa: E402
 from gates.macos import (FRAME_GATES, LIFETIME_GATES, check_macos_frames,  # noqa: E402
                          check_macos_ime, check_macos_keys, check_macos_lifetime,
                          check_macos_pasteboard, check_macos_wake)
@@ -410,7 +411,8 @@ def main():
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
-                                         "macos-keys", "macos-pasteboard", "macos-ime", "linux-panes", "panes", *FRAME_GATES,
+                                         "macos-keys", "macos-pasteboard", "macos-ime",
+                                         "linux-clipboard", "linux-panes", "panes", *FRAME_GATES,
                                          *LIFETIME_GATES, *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
@@ -441,6 +443,8 @@ def main():
             return check_macos_frames(FRAME_GATES[gate])
         if gate in LIFETIME_GATES:
             return check_macos_lifetime(LIFETIME_GATES[gate])
+        if gate == "linux-clipboard":
+            return check_linux_clipboard()
         if gate == "linux-panes":
             return check_linux_panes()
         if gate == "panes":

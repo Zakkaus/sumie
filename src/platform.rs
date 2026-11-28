@@ -52,7 +52,11 @@ pub(crate) trait WindowOps: PaneWatches + crate::frame_window::FrameWindow {
     fn set_pointer_icon(&mut self, icon: CursorIcon);
     fn set_input_generation(&mut self, generation: u64);
     fn read_clipboard(&mut self, recipient: u64);
-    fn write_clipboard(&mut self, text: String);
+    fn has_primary_selection(&self) -> bool {
+        false
+    }
+    fn read_primary(&mut self, recipient: u64);
+    fn write_clipboard(&mut self, text: String, on_release: bool);
     fn write_terminal_clipboard(&mut self, bytes: Option<Vec<u8>>);
     fn queue_title(&mut self, title: String);
     /// Queue a desktop notification without waiting. A platform without a service drops it.

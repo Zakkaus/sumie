@@ -2,7 +2,9 @@
 
 [English](README.md)
 
-sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wgpu。在 Linux Wayland 上，按住滑鼠左鍵拖曳可選取文字，雙擊可選取字詞或完整網址，三擊可選取整個邏輯行（包含自動折行的部分）。雙擊或三擊後繼續拖曳，會以字詞或邏輯行為單位擴大選取範圍。放開左鍵時會複製選取的文字。按 Ctrl+Shift+C 可再次複製，按 Ctrl+Shift+V 可貼上。
+sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wgpu。在 Linux Wayland 上，按住滑鼠左鍵拖曳可選取文字，雙擊可選取字詞或完整網址，三擊可選取整個邏輯行（包含自動折行的部分）。雙擊或三擊後繼續拖曳，會以字詞或邏輯行為單位擴大選取範圍。放開左鍵時，會將選取的文字複製到剪貼簿；若合成器支援 primary selection，也會複製到 primary selection。按 Ctrl+Shift+C 可再次複製到剪貼簿，按 Ctrl+Shift+V 可從剪貼簿貼上。
+
+在終端機窗格按中鍵可貼上 primary selection。程式開啟滑鼠追蹤時，中鍵事件會送給程式。合成器未提供 primary-selection 協定時，無法用中鍵貼上。
 
 在 Wayland 上，OSC 8 連結預設顯示淡色點線。自動辨識的網址只在滑鼠停留時顯示點線。按住 Ctrl 時，滑鼠指標變成手形，連結提示改為實線，換行處也適用。終端機程式指定的底線樣式與顏色不變。按住 Ctrl 點擊連結，放開左鍵時會透過 `xdg-open` 開啟，並保留原有選取範圍；拖曳則重新選取文字。即使程式開啟滑鼠追蹤，這兩種操作仍然有效。sumie 不會開啟裸路徑、遠端 `file:` 網址、不在允許清單內的 URI，或含有控制字元或雙向文字控制符號的 URI。
 

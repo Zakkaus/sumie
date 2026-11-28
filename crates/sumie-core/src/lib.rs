@@ -127,6 +127,7 @@ pub enum PaneEffect {
     Copied(String),
     Select(mouse::SelectStep),
     OpenLink,
+    PastePrimary,
     ViewportChanged,
     ReportedPress { viewport_changed: bool },
 }

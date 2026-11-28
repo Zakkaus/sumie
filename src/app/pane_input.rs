@@ -378,7 +378,7 @@ fn pointer_effect(
             links::Hover::open(uri.expect("validated link release"));
             Ok(Effect::None)
         }
-        Effect::Select(step) if pane.select(step, mouse.cell)? => Ok(Effect::Copy),
+        Effect::Select(step) if pane.select(step, mouse.cell)? => Ok(Effect::CopyOnRelease),
         effect => Ok(effect),
     }
 }
@@ -404,7 +404,9 @@ fn apply_pane_effect(
             }
             pane.search_action(action, view)?;
         }
-        Effect::Copy => pane.copy_selection(window)?,
+        Effect::Copy | Effect::CopyOnRelease => {
+            pane.copy_selection(window, matches!(effect, Effect::CopyOnRelease))?;
+        }
         Effect::ViewportChanged => {
             pane.scroll.reset();
             link_pointer.clear_link();
@@ -414,6 +416,9 @@ fn apply_pane_effect(
         }
         Effect::ReadClipboard => {
             window.read_clipboard(*pane.paste_recipient.get_or_insert(routing.generation));
+        }
+        Effect::ReadPrimary => {
+            window.read_primary(*pane.paste_recipient.get_or_insert(routing.generation));
         }
         Effect::Preedit(text, cursor) if text != view.preedit || cursor != view.preedit_cursor => {
             view.preedit = text;

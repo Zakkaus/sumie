@@ -321,6 +321,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "        }"),
               "test tests::search_pointer_only_scrolls_history ... FAILED")
     if sys.platform == "linux" and shutil.which("kwin_wayland"):
+        linux_clipboard_controls()
         close_pane = ("    fn close_pane(&mut self, index: usize, id: u64, window: &mut impl WindowOps) -> "
                       "Result<()> {\n")
         for name, leak, marker in (
@@ -340,6 +341,23 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
         pane_controls()
     else:
         print("\n== skipped: the pane budget controls need kwin_wayland", flush=True)
+
+
+def linux_clipboard_controls():
+    probe("drag does not set primary selection", "linux-clipboard",
+          "crates/sumie-wayland/src/clipboard.rs",
+          replace_once("        if on_release && let Some(bytes) = &bytes {\n"
+                       "            self.write_primary(serial, Rc::clone(bytes));\n"
+                       "        }\n", "        let _ = on_release;\n"),
+          "FAIL: drag release did not publish the primary selection")
+    probe("middle click pastes clipboard instead of primary", "linux-clipboard", "src/linux.rs",
+          replace_once(".read_primary(sumie_pty::INPUT_LIMIT, recipient)",
+                       ".read_clipboard(sumie_pty::INPUT_LIMIT, recipient)"),
+          "FAIL: middle click did not paste primary text only")
+    probe("middle click pastes under mouse tracking", "linux-clipboard", "crates/sumie-core/src/mouse.rs",
+          replace_once("            && !modes.tracking\n        {\n            self.reset_clicks();",
+                       "        {\n            self.reset_clicks();"),
+          "FAIL: tracked middle click did not reach the program")
 
 
 def pane_controls():
@@ -387,7 +405,10 @@ def main():
         lock = ROOT / "Cargo.lock"
         lock_before = lock.read_bytes()
         try:
-            controls()
+            if sys.argv[1:] == ["linux-clipboard"]:
+                linux_clipboard_controls()
+            else:
+                controls()
         finally:
             if git_status() != before or lock.read_bytes() != lock_before:
                 raise RuntimeError("Git porcelain status or Cargo.lock changed during probes")

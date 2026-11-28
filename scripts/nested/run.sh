@@ -6,8 +6,14 @@ case ${1-} in
     -h|--help) exec python3 "$scripts/run.py" --help ;;
 esac
 
+session_bus=true
+if [ "${1-}" = --no-session-bus ]; then
+    session_bus=false
+    shift
+fi
+
 base=${TMPDIR:-/tmp}
-[ ! -d /scratch/ram ] || base=/scratch/ram
+[ "$session_bus" = false ] || [ ! -d /scratch/ram ] || base=/scratch/ram
 base=$(CDPATH='' cd -- "$base" && pwd -P)
 runtime=$(mktemp -d "$base/sumie-rt.XXXXXX")
 trap 'rm -rf "$runtime"' EXIT
@@ -19,5 +25,14 @@ export XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=wl-sumie
 export XDG_CONFIG_HOME="$runtime/config" XDG_DATA_HOME="$runtime/data"
 export XDG_STATE_HOME="$runtime/state" XDG_CACHE_HOME="$runtime/cache"
 mkdir "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+
+if [ "$session_bus" = false ]; then
+    # Keep libdbus from autolaunching and keep clients off the host bus.
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus"
+    export HOME="$runtime/home"
+    mkdir "$HOME"
+    python3 "$scripts/run.py" "$@"
+    exit
+fi
 
 dbus-run-session --config-file="$scripts/session.conf" -- python3 "$scripts/run.py" "$@"

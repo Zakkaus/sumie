@@ -24,8 +24,13 @@ releases them in reverse. Names are `ctrl`, `shift`, `alt`, `super`, `left`,
 `right`, `up`, `down`, `enter`, `tab`, `esc` and the letters `a`–`z`; they are
 sent as US keycodes on both fake input versions. `--injector` builds the helper
 without sending anything and exports its path to the client as
-`SUMIE_NESTED_TYPE`, so a test harness can run `"$SUMIE_NESTED_TYPE" TEXT` or
-`"$SUMIE_NESTED_TYPE" --keys CHORDS` whenever it needs to.
+`SUMIE_NESTED_TYPE`. Run the helper with `--pointer` to keep a virtual pointer
+registered on the seat. After it prints `ready`, send `middle:X,Y` or
+`drag:X,Y:X,Y` on stdin, one gesture per line in virtual-output coordinates.
+The helper prints `ok` after sending each gesture and exits on EOF.
+
+Put `--no-session-bus` before the scale to use a private home and runtime under
+`$TMPDIR` (default `/tmp`) with no D-Bus server. `linux-clipboard` uses this mode.
 
 For a screenshot, pass `--exit-after-frames N --screenshot /path/to/output.png`
 to sumie. Choose a frame count reached after the output you want to capture.

@@ -442,7 +442,9 @@ impl WindowOps for MacWindow {
             .request(Request::Read { recipient }, &mut self.watches);
     }
 
-    fn write_clipboard(&mut self, text: String) {
+    fn read_primary(&mut self, _: u64) {}
+
+    fn write_clipboard(&mut self, text: String, _: bool) {
         self.pasteboard
             .request(Request::Write(Some(text)), &mut self.watches);
     }

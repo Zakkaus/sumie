@@ -79,6 +79,7 @@ pub enum Dispatch {
     Ignore,
     Select(SelectStep),
     OpenLink,
+    PastePrimary,
     Press(Button),
     Release(Button),
     /// A held-back left press, carried here, ended in its cell: report it and the release
@@ -115,6 +116,7 @@ impl Wheel {
 
 pub struct MouseState {
     platform: Platform,
+    primary_selection: bool,
     selecting: Option<(SelectionUnit, CellPosition)>,
     link_press: Option<(CellPosition, Option<[u32; 2]>)>,
     /// macOS under mouse tracking: a left press not yet reported. Leaving its cell makes it a
@@ -132,6 +134,7 @@ impl MouseState {
     pub fn new(platform: Platform) -> Self {
         Self {
             platform,
+            primary_selection: false,
             selecting: None,
             link_press: None,
             held_back: None,
@@ -144,6 +147,11 @@ impl MouseState {
 
     pub fn set_click_interval(&mut self, millis: u32) {
         self.click_interval = millis;
+    }
+
+    /// Enable Linux middle-click paste when the compositor offers primary selection.
+    pub fn set_primary_selection(&mut self, available: bool) {
+        self.primary_selection = available;
     }
 
     pub fn reset_clicks(&mut self) {
@@ -275,6 +283,14 @@ impl MouseState {
             self.reset_clicks();
             self.link_press = Some((event.cell, Some(event.pixel.map(f32::to_bits))));
             return Dispatch::Ignore;
+        }
+        if self.platform == Platform::Linux
+            && self.primary_selection
+            && button == Button::Middle
+            && !modes.tracking
+        {
+            self.reset_clicks();
+            return Dispatch::PastePrimary;
         }
         let report = match self.platform {
             Platform::Linux => modes.tracking && !event.modifiers.shift,

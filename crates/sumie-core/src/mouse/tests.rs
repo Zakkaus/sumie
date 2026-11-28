@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn middle_click_uses_primary_only_without_tracking() {
+    let mut state = MouseState::new(Platform::Linux);
+    let press = MouseEvent {
+        phase: MousePhase::Press(Button::Middle, 0),
+        cell: CellPosition { row: 0, column: 0 },
+        pixel: [0.0; 2],
+        over_grid: true,
+        modifiers: KeyModifiers::default(),
+        link: false,
+    };
+    let release = MouseEvent {
+        phase: MousePhase::Release(Button::Middle),
+        ..press
+    };
+    for available in [false, true] {
+        state.set_primary_selection(available);
+        for tracking in [false, true] {
+            let modes = MouseModes {
+                tracking,
+                alternate: false,
+                alternate_scroll: false,
+            };
+            let (on_press, on_release) = if tracking {
+                (
+                    Dispatch::Press(Button::Middle),
+                    Dispatch::Release(Button::Middle),
+                )
+            } else if available {
+                (Dispatch::PastePrimary, Dispatch::Ignore)
+            } else {
+                (Dispatch::Ignore, Dispatch::Ignore)
+            };
+            assert_eq!(state.dispatch(press, modes), on_press);
+            if tracking {
+                state.press_reported(Button::Middle);
+            }
+            assert_eq!(state.dispatch(release, modes), on_release);
+        }
+    }
+}
+
+#[test]
 fn routes_mouse_by_mode_and_gesture() {
     use WheelRoute::{Arrows, History, Report};
     for (tracking, alternate, alternate_scroll, wheel) in [

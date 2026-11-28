@@ -175,6 +175,7 @@ impl App {
     ) -> Result<()> {
         let gpu = &mut self.gpu;
         let environment = self.environment.take().ok_or("the session started twice")?;
+        let primary_selection = window.has_primary_selection();
         let mut session = Session::new(
             scale,
             logical,
@@ -184,6 +185,7 @@ impl App {
                 environment,
                 gpu.image_dimension_limit(),
                 W::click_interval(),
+                primary_selection,
             ),
             W::hostname()?,
             &self.config,

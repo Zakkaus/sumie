@@ -159,12 +159,12 @@ impl Session {
 }
 
 impl PaneState {
-    fn copy_selection(&mut self, window: &mut impl WindowOps) -> Result<()> {
+    fn copy_selection(&mut self, window: &mut impl WindowOps, on_release: bool) -> Result<()> {
         self.update_snapshot()?;
         if let Some(range) = self.selection.range()
             && let PaneEffect::Copied(text) = self.pane.command(PaneCommand::Copy(range))?
         {
-            window.write_clipboard(text);
+            window.write_clipboard(text, on_release);
         }
         Ok(())
     }

@@ -136,9 +136,22 @@ impl WindowOps for LinuxWindow {
         }
     }
 
-    fn write_clipboard(&mut self, text: String) {
+    fn has_primary_selection(&self) -> bool {
+        self.platform.has_primary_selection()
+    }
+
+    fn read_primary(&mut self, recipient: u64) {
+        if let Err(error) = self
+            .platform
+            .read_primary(sumie_pty::INPUT_LIMIT, recipient)
+        {
+            tracing::warn!(%error, "could not request primary selection text");
+        }
+    }
+
+    fn write_clipboard(&mut self, text: String, on_release: bool) {
         if let Some(serial) = self.copy_serial {
-            self.platform.write_clipboard(serial, text);
+            self.platform.write_clipboard(serial, text, on_release);
         } else {
             tracing::warn!("cannot copy to the clipboard without an input serial");
         }

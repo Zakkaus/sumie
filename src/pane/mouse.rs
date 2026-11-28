@@ -96,6 +96,10 @@ impl LocalPane {
         self.mouse.modes.tracking
     }
 
+    pub(crate) fn set_primary_selection(&mut self, available: bool) {
+        self.mouse.state.set_primary_selection(available);
+    }
+
     pub(crate) fn set_click_interval(&mut self, millis: u32) {
         self.mouse.state.set_click_interval(millis);
     }
@@ -171,6 +175,7 @@ impl LocalPane {
             Dispatch::Ignore => return Ok(PaneEffect::None),
             Dispatch::Select(step) => return Ok(PaneEffect::Select(step)),
             Dispatch::OpenLink => return Ok(PaneEffect::OpenLink),
+            Dispatch::PastePrimary => return Ok(PaneEffect::PastePrimary),
             Dispatch::Press(b) => (MouseAction::Press, Some(b)),
             Dispatch::Release(b) => (MouseAction::Release, Some(b)),
             // A held-back press and its release, as one click.

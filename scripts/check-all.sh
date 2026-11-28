@@ -17,10 +17,10 @@ if [ "$(uname -s)" = Darwin ]; then
     macos_window='macos-wake macos-keys macos-pasteboard macos-ime macos-resize macos-idle macos-flood macos-timeout macos-throughput macos-loading
         macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit'
 fi
-# The pane cycle gate drives a private KWin, so only a Linux host with KWin can run it.
-linux_panes=
+# These Linux gates drive a private KWin.
+linux_window=
 if [ "$(uname -s)" = Linux ] && command -v kwin_wayland >/dev/null; then
-    linux_panes=linux-panes
+    linux_window='linux-panes linux-clipboard'
 fi
 # The pane budget runs in a private nested KWin for about a minute, so only the full gate
 # on a Linux host with KWin runs it.
@@ -35,7 +35,7 @@ for gate in structure terminfo shell fmt clippy $macos_ci test $macos_window $pa
 done
 
 if [ "$fast" = false ]; then
-    for gate in $linux_panes; do
+    for gate in $linux_window; do
         python3 "$scripts/check-gate.py" "$gate" || exit "$?"
     done
     exec "$scripts/negative-controls.sh"

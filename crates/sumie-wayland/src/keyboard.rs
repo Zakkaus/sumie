@@ -1,5 +1,6 @@
 use smithay_client_toolkit::{
     data_device_manager::data_device::DataDevice,
+    primary_selection::device::PrimarySelectionDevice,
     reexports::client::{
         Connection, Proxy, QueueHandle,
         protocol::{wl_keyboard::WlKeyboard, wl_seat::WlSeat, wl_surface::WlSurface},
@@ -19,6 +20,7 @@ pub(crate) struct Keyboard {
     modifiers: Modifiers,
     pub(crate) ime: Option<TextInput>,
     pub(crate) data_device: Option<DataDevice>,
+    pub(crate) primary_selection: Option<PrimarySelectionDevice>,
 }
 
 impl Keyboard {
@@ -60,6 +62,10 @@ impl State {
                         .data_device_manager
                         .as_ref()
                         .map(|manager| manager.get_data_device(qh, &seat)),
+                    primary_selection: self
+                        .primary_selection_manager
+                        .as_ref()
+                        .map(|manager| manager.get_selection_device(qh, &seat)),
                     ime: self
                         .text_input_manager
                         .as_ref()
@@ -80,6 +86,7 @@ impl State {
         }
         self.stop_pointer();
         self.leave_text_input();
+        self.cancel_primary_writes();
         drop(self.keyboard.take());
         if let Some(replacement) = self.seats.seats().find(|candidate| {
             candidate != seat

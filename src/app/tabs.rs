@@ -102,6 +102,7 @@ pub(super) struct PaneHost {
     environment: Environment,
     click_interval: Option<u32>,
     image_dimension_limit: u32,
+    primary_selection: bool,
 }
 
 impl PaneHost {
@@ -109,11 +110,13 @@ impl PaneHost {
         environment: Environment,
         image_dimension_limit: u32,
         click_interval: Option<u32>,
+        primary_selection: bool,
     ) -> Self {
         Self {
             environment,
             click_interval,
             image_dimension_limit,
+            primary_selection,
         }
     }
 
@@ -133,6 +136,7 @@ impl PaneHost {
         if let Some(millis) = self.click_interval {
             pane.set_click_interval(millis);
         }
+        pane.set_primary_selection(self.primary_selection);
         watches.register_pane(
             id,
             pane.pty.output_fd(),
@@ -565,6 +569,19 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn middle_click_on_a_tab_closes_it_and_captures_release() {
+        let mut pointer = BarPointer::default();
+        assert!(matches!(
+            pointer.route(Some(TabHit::Tab(1)), true, Phase::Press(Button::Middle, 0)),
+            Break(Some(Action::Close(1)))
+        ));
+        assert!(matches!(
+            pointer.route(None, false, Phase::Release(Button::Middle)),
+            Break(None)
+        ));
+    }
 
     #[test]
     fn wheel_counts_whole_notches_and_keeps_the_remainder() {

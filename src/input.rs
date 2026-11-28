@@ -15,7 +15,9 @@ pub(crate) enum Effect {
     None,
     Preedit(String, Option<(usize, usize)>),
     ReadClipboard,
+    ReadPrimary,
     Copy,
+    CopyOnRelease,
     Select(SelectStep),
     OpenLink,
     ViewportChanged,
@@ -389,6 +391,7 @@ impl Routing {
             PaneEffect::ViewportChanged => Effect::ViewportChanged,
             PaneEffect::Select(step) => Effect::Select(step),
             PaneEffect::OpenLink => Effect::OpenLink,
+            PaneEffect::PastePrimary => Effect::ReadPrimary,
             _ => Effect::None,
         })
     }

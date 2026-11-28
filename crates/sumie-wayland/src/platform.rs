@@ -10,6 +10,7 @@ use smithay_client_toolkit::{
     data_device_manager::DataDeviceManagerState,
     delegate_dispatch2, delegate_registry,
     output::{OutputHandler, OutputState},
+    primary_selection::PrimarySelectionManagerState,
     reexports::{
         calloop::{self, EventLoop, EventSource, LoopHandle, RegistrationToken},
         calloop_wayland_source::WaylandSource,
@@ -143,7 +144,7 @@ pub enum ShmPresentError {
 /// One xdg-toplevel. Connect, dispatch and present on the same thread.
 pub struct Platform {
     shm_pool: Option<SlotPool>,
-    state: State,
+    pub(crate) state: State,
     event_loop: EventLoop<'static, State>,
 }
 
@@ -176,36 +177,6 @@ impl Platform {
     /// Call outside the interval between `begin_frame` and the buffer commit.
     pub fn set_input_generation(&mut self, generation: u64) {
         self.state.set_input_generation(generation);
-    }
-
-    /// Request text from the keyboard seat's clipboard. Non-empty UTF-8 reads
-    /// smaller than `max_bytes` arrive in request order as `Event::ClipboardText`.
-    /// The reply carries `recipient`, even if keyboard focus changes during the read.
-    /// Reads that reach the size limit or take more than five seconds are discarded.
-    ///
-    /// # Errors
-    /// Returns an error if pipe creation or event source registration fails.
-    pub fn read_clipboard(&mut self, max_bytes: usize, recipient: u64) -> std::io::Result<()> {
-        self.state.read_clipboard(max_bytes, recipient)
-    }
-
-    /// Publish text from a recent key press or pointer release on the active seat.
-    /// Does nothing without a clipboard data device. Transfers run through calloop.
-    pub fn write_clipboard(&mut self, serial: u32, text: String) {
-        self.state.write_clipboard(serial, Some(text.into_bytes()));
-    }
-
-    /// Publish a terminal write using the focused seat's serial, or clear on `None`.
-    /// Without keyboard focus, there is no serial and the request is discarded.
-    pub fn write_terminal_clipboard(&mut self, bytes: Option<Vec<u8>>) {
-        if let Some(serial) = self
-            .state
-            .keyboard
-            .as_ref()
-            .and_then(|key| key.selection_serial)
-        {
-            self.state.write_clipboard(serial, bytes);
-        }
     }
 
     /// Stage the latest title for the next committed frame.
@@ -312,6 +283,7 @@ pub(crate) struct State {
     pub(crate) seats: SeatState,
     pub(crate) shm: Shm,
     pub(crate) data_device_manager: Option<DataDeviceManagerState>,
+    pub(crate) primary_selection_manager: Option<PrimarySelectionManagerState>,
     pub(crate) clipboard: Clipboard,
     pub(crate) keyboard: Option<Keyboard>,
     pub(crate) pointer: Option<Pointer>,
@@ -360,6 +332,7 @@ impl State {
         if text_input_manager.is_none() {
             tracing::info!("text-input-v3 unavailable; keyboard input only");
         }
+        let primary_selection_manager = Self::bind_primary_selection(&globals, &qh);
         let window = Arc::new(WindowOwner {
             window,
             display: DisplayOwner(conn.backend()),
@@ -379,6 +352,7 @@ impl State {
             output: OutputState::new(&globals, &qh),
             seats: SeatState::new(&globals, &qh),
             data_device_manager: DataDeviceManagerState::bind(&globals, &qh).ok(),
+            primary_selection_manager,
             shm,
             qh,
             loop_handle,
