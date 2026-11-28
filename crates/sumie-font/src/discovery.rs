@@ -180,6 +180,10 @@ impl Discovery {
     }
 
     /// Fontconfig's own rules pick the face for a family that is not installed.
+    #[expect(
+        clippy::unused_self,
+        reason = "same signature as the Core Text discovery"
+    )]
     pub const fn substituted(&self) -> bool {
         false
     }
