@@ -10,7 +10,8 @@ use std::{
 
 use sumie_config::Language;
 use sumie_core::{
-    KeyAction, PaneAction, Shortcut, TabAction, letter_chord, mouse::MousePhase, splits::Axis,
+    KeyAction, PaneAction, Platform, Shortcut, TabAction, letter_chord, mouse::MousePhase,
+    splits::Axis,
 };
 use sumie_locale::Locale;
 
@@ -20,7 +21,11 @@ use crate::platform::{Event, POLICY, PointerEvent};
 pub(super) fn hint(language: Language) -> Option<String> {
     let dir = state_dir()?;
     match claim(&dir) {
-        Ok(()) => Some(text(Locale::from_language(language))),
+        Ok(()) => Some(text(
+            Locale::from_language(language),
+            POLICY,
+            &settings_dir(),
+        )),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => None,
         Err(error) => {
             tracing::warn!(%error, dir = %dir.display(), "cannot record the first-run hint");
@@ -50,27 +55,44 @@ fn state_dir() -> Option<PathBuf> {
     Some(base.join("sumie"))
 }
 
-/// New tab, split, copy and paste, and search, labelled from the platform's shortcut table.
-fn text(locale: Locale) -> String {
-    let chord = |shortcut| letter_chord(POLICY, shortcut).expect("the table binds it");
+/// The directory of the user's settings file, with the home directory written as `~`.
+fn settings_dir() -> String {
+    let dir = sumie_config::user_config_path()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or_default();
+    let tilde = env::var_os("HOME").and_then(|home| {
+        dir.strip_prefix(home)
+            .ok()
+            .map(|rest| Path::new("~").join(rest))
+    });
+    tilde.unwrap_or(dir).display().to_string()
+}
+
+/// New tab, split, copy and paste, and search, labelled from the platform's shortcut table with
+/// their shared modifier named once; 80 columns hold it with a 15-column `settings`.
+fn text(locale: Locale, platform: Platform, settings: &str) -> String {
+    let chord = |shortcut| letter_chord(platform, shortcut).expect("the table binds it");
     let (prefix, tab) = chord(Shortcut::Tab(TabAction::Open));
     let split = chord(Shortcut::Pane(PaneAction::Split(Axis::Horizontal))).1;
     let (copy, paste) = (chord(Shortcut::Copy).1, chord(Shortcut::Paste).1);
     let find = chord(Shortcut::Search).1;
-    let settings = sumie_config::user_config_path().unwrap_or_default();
     format!(
-        "{prefix}{tab} {} · {prefix}{split} {} · {prefix}{copy}/{paste} {} · {prefix}{find} {} · {}: {}",
+        "{prefix}: {tab} {} · {split} {} · {copy}/{paste} {} · {find} {} · {} {settings}",
         locale.text("hint.tab"),
         locale.text("hint.split"),
         locale.text("hint.copy-paste"),
         locale.text("hint.find"),
         locale.text("hint.settings"),
-        settings.display(),
     )
 }
 
-/// Take the hint away on a key or mouse press. Returns whether that press is consumed.
+/// Take the hint away on a key or mouse press, which is consumed, or on an input method's
+/// commit, which is not. Returns whether the event is consumed.
 pub(super) fn consume(hint: &mut Option<String>, event: &Event) -> bool {
+    if matches!(event, Event::ImeCommit { .. }) {
+        *hint = None;
+        return false;
+    }
     let pressed = matches!(
         event,
         Event::Key {

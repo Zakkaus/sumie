@@ -21,6 +21,8 @@ pub(crate) struct App {
     pub(super) banner: Option<String>,
     /// The first-run hint, on the banner row below a diagnostic until the first key or click.
     pub(super) hint: Option<String>,
+    /// Whether the hint was handed to the latest draw; only then does a press dismiss it.
+    pub(super) hint_drawn: bool,
     /// What every pane's login shell starts from; the session takes it when it starts.
     pub(super) environment: Option<Environment>,
     pub(super) session: Option<Session>,
@@ -108,6 +110,7 @@ impl App {
             config,
             banner: None,
             hint: None,
+            hint_drawn: false,
             environment: Some(environment),
             session: None,
             focused: false,
@@ -195,6 +198,7 @@ impl App {
         } else {
             None
         };
+        self.hint_drawn = ready && self.banner.is_none() && self.hint.is_some();
         let banner = self.banner.as_deref().or(self.hint.as_deref());
         session.update_link_hover(window, banner.is_some(), self.focused)?;
         session.watch_blink(window, self.focused && !self.suspended, banner)?;

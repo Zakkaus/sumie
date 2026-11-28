@@ -154,11 +154,17 @@ impl App {
                 }
             }
             event => {
-                if super::first_run::consume(&mut self.hint, &event) {
-                    if let Some(session) = &mut self.session {
-                        session.active_mut().frame_dirty = true;
+                if self.hint_drawn && self.banner.is_none() {
+                    let consumed = super::first_run::consume(&mut self.hint, &event);
+                    if self.hint.is_none() {
+                        self.hint_drawn = false;
+                        if let Some(session) = &mut self.session {
+                            session.active_mut().frame_dirty = true;
+                        }
                     }
-                    return Ok(false);
+                    if consumed {
+                        return Ok(false);
+                    }
                 }
                 let banner = self.banner.is_some() || self.hint.is_some();
                 if let Some(session) = &mut self.session

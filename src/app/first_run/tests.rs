@@ -1,6 +1,7 @@
 use std::io::ErrorKind;
 
 use sumie_core::{KeyAction, KeyCode, KeyModifiers, PhysicalKey, mouse::Button};
+use sumie_vt::codepoint_width;
 
 use super::*;
 use crate::platform::{LogicalKey, Position};
@@ -51,7 +52,29 @@ fn a_press_dismisses_the_hint_and_is_consumed() {
 #[test]
 fn labels_come_from_the_shortcut_table() {
     let (prefix, tab) = letter_chord(POLICY, Shortcut::Tab(TabAction::Open)).unwrap();
-    let text = text(Locale::En);
-    assert!(text.starts_with(&format!("{prefix}{tab} tab")), "{text}");
+    let text = text(Locale::En, POLICY, "~/.config/sumie");
+    assert!(text.starts_with(&format!("{prefix}: {tab} tab")), "{text}");
     assert!(text.contains("copy/paste"), "{text}");
+}
+
+#[test]
+fn the_line_fits_80_columns() {
+    for locale in [Locale::En, Locale::ZhTw] {
+        for platform in [Platform::Linux, Platform::MacOS] {
+            let text = text(locale, platform, "~/.config/sumie");
+            let width: u32 = text.chars().map(|ch| u32::from(codepoint_width(ch))).sum();
+            assert!(width <= 80, "{width} columns: {text}");
+        }
+    }
+}
+
+#[test]
+fn an_input_method_commit_dismisses_without_being_consumed() {
+    let mut hint = Some("hint".to_owned());
+    let commit = Event::ImeCommit {
+        text: "あ".into(),
+        generation: 0,
+    };
+    assert!(!consume(&mut hint, &commit));
+    assert!(hint.is_none());
 }
