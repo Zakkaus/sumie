@@ -16,12 +16,14 @@ FRAME_GATES = {"macos-resize": "resize", "macos-idle": "idle", "macos-flood": "f
                "macos-loading": "loading"}
 FRAME_TIMEOUT = 300
 # The close and Quit contract; scripts/macos/lifetime.py runs each case in a fresh process.
-# macos-cycles is not in check-all: hosted CI records it, the owner's Mac measures it.
+# Hosted CI only records macos-cycles' counts (SUMIE_TIMING=record).
 LIFETIME_GATES = {"macos-close": ("close",), "macos-repeat": ("repeat",),
                   "macos-fatal": ("fatal", "fatal-quit"), "macos-system": ("system", "system-fatal"),
                   "macos-stuck": ("stuck", "stuck-system"), "macos-exit": ("exit",),
                   "macos-cycles": ("cycles",)}
 LIFETIME_TIMEOUT = 120
+# 200 cycles, each sampled with vmmap after its reap: about 4 minutes on an M-series Mac.
+CYCLES_TIMEOUT = 900
 
 
 def check_macos_wake():
@@ -126,7 +128,8 @@ def check_macos_lifetime(cases):
     for case in cases:
         try:
             codes.append(subprocess.run([sys.executable, ROOT / "scripts/macos/lifetime.py", case, binary],
-                                        timeout=LIFETIME_TIMEOUT).returncode)
+                                        timeout=CYCLES_TIMEOUT if case == "cycles" else LIFETIME_TIMEOUT
+                                        ).returncode)
         except subprocess.TimeoutExpired:
             print(f"macos-{case}: the case timed out", file=sys.stderr)
             codes.append(1)
