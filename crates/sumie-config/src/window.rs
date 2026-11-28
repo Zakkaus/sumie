@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::Problem;
 
-/// Window background and pane padding in logical pixels.
+/// Window appearance and close behavior.
 #[derive(Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Window {
@@ -33,6 +33,13 @@ pub struct Window {
     /// Ask the Wayland compositor to blur the area behind a translucent window.
     #[schemars(with = "bool", default = "bool::default", title = "Background blur")]
     background_blur: Option<bool>,
+    /// Ask before closing a window, tab, or pane that still has a running program.
+    #[schemars(
+        with = "bool",
+        default = "default_confirm_close",
+        title = "Confirm close"
+    )]
+    confirm_close: Option<bool>,
 }
 
 impl Window {
@@ -54,11 +61,17 @@ impl Window {
         self.background_blur.unwrap_or_default()
     }
 
+    #[must_use]
+    pub fn confirm_close(&self) -> bool {
+        self.confirm_close.unwrap_or_else(default_confirm_close)
+    }
+
     pub(super) fn overlay(&mut self, file: &Self) {
         self.padding_x = file.padding_x.or(self.padding_x);
         self.padding_y = file.padding_y.or(self.padding_y);
         self.background_opacity = file.background_opacity.or(self.background_opacity);
         self.background_blur = file.background_blur.or(self.background_blur);
+        self.confirm_close = file.confirm_close.or(self.confirm_close);
     }
 }
 
@@ -72,6 +85,10 @@ const fn default_padding_y() -> u16 {
 
 const fn opaque() -> f32 {
     1.0
+}
+
+const fn default_confirm_close() -> bool {
+    true
 }
 
 fn deserialize_opacity<'de, D: Deserializer<'de>>(input: D) -> Result<Option<f32>, D::Error> {

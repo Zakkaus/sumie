@@ -91,6 +91,9 @@ can discard history immediately. Set it to `0` to clear and disable scrollback.
 | `padding-y` | `6` | Top and bottom padding per pane, in logical pixels. Set to `0` for none. |
 | `background-opacity` | `1.0` | Opacity of the default background, padding and split gutters, from `0.0` (transparent) to `1.0` (opaque). Text, the tab bar and backgrounds set by terminal programs keep their colors. |
 | `background-blur` | `false` | Blur the background behind a translucent window when the Wayland compositor advertises blur through `ext-background-effect-v1`. Otherwise the background stays translucent without blur. |
+| `confirm-close` | `true` | Ask before closing a window, tab, or pane that still has a running program. |
+
+When bracketed paste is off, pasting a line break asks for confirmation because the text may run as commands. Press Enter or `y` to confirm a close or paste; press Escape or `n` to cancel.
 
 Bold and italic use the font family's matching faces when available. They do not change the grid size. SGR 2 dims the foreground to 50% opacity. Underlines can be single, double, curly, dotted or dashed; SGR 58 sets their color independently of text. Strikethrough and overline can appear together with an underline.
 

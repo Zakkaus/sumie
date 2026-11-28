@@ -338,8 +338,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "test tests::search_pointer_only_scrolls_history ... FAILED")
     if sys.platform == "linux" and shutil.which("kwin_wayland"):
         linux_clipboard_controls()
-        close_pane = ("    fn close_pane(&mut self, index: usize, id: u64, window: &mut impl WindowOps) -> "
-                      "Result<()> {\n")
+        close_pane = ("    pub(super) fn close_pane(\n        &mut self,\n        index: usize,\n"
+                      "        id: u64,\n        window: &mut impl WindowOps,\n    ) -> Result<()> {\n")
         for name, leak, marker in (
             ("closing a pane leaks a descriptor", 'std::mem::forget(std::fs::File::open("/dev/null")?);',
              "fd count above baseline"),

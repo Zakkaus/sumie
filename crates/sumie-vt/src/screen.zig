@@ -9,6 +9,7 @@ const Color = @import("terminal/style.zig").Style.Color;
 pub fn install() void {
     @export(&stamp, .{ .name = "sumie_screen_stamp" });
     @export(&paletteColor, .{ .name = "sumie_palette_color" });
+    @export(&semanticPromptSeen, .{ .name = "sumie_semantic_prompt_seen" });
 }
 
 fn paletteColor(raw: terminal.Terminal, index: u8, out: *[3]u8) callconv(.c) Result {
@@ -16,6 +17,11 @@ fn paletteColor(raw: terminal.Terminal, index: u8, out: *[3]u8) callconv(.c) Res
     const rgb = t.colors.palette.current[index];
     out.* = .{ rgb.r, rgb.g, rgb.b };
     return .success;
+}
+
+fn semanticPromptSeen(raw: terminal.Terminal) callconv(.c) bool {
+    const t = terminal.zigTerminal(raw) orelse return false;
+    return t.screens.get(.primary).?.semantic_prompt.seen;
 }
 
 fn stamp(raw: terminal.Terminal, has_placements: *bool) callconv(.c) u64 {

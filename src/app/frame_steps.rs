@@ -198,8 +198,12 @@ impl App {
         } else {
             None
         };
-        self.hint_drawn = ready && self.banner.is_none() && self.hint.is_some();
-        let banner = self.banner.as_deref().or(self.hint.as_deref());
+        let confirmation = session.confirmation.as_ref().map(|&(_, message)| message);
+        self.hint_drawn =
+            ready && confirmation.is_none() && self.banner.is_none() && self.hint.is_some();
+        let banner = confirmation
+            .or(self.banner.as_deref())
+            .or(self.hint.as_deref());
         session.update_link_hover(window, banner.is_some(), self.focused)?;
         session.watch_blink(window, self.focused && !self.suspended, banner)?;
         if ready && session.draw(gpu, window, &self.capture, banner, self.focused)? {

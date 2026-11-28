@@ -37,7 +37,7 @@ IDLE_SECONDS = 60.0
 THROUGHPUT_INPUT = 64 * 1024 * 1024
 THROUGHPUT_FLOOR_MB = 20.0
 THROUGHPUT_RECORD_SECONDS = 120.0
-CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n'
+CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n\n[window]\nconfirm-close = false\n'
 # The include blocks the configuration child until the check replaces it; its larger font
 # shows when the real settings replace the defaults.
 LOADING_CONFIG = 'include = ["slow.toml"]\n'

@@ -15,6 +15,7 @@ use sumie_core::{Pane, PaneAction, PaneCommand, Selection, TabAction, splits::Re
 use sumie_ui::TabHit;
 
 use super::notices::{Alerts, Serviced};
+use super::window_events::{Confirmation, running};
 use super::{LocalPane, PaneState, PaneTab, Result, Session, View, directory};
 use crate::login::Environment;
 use crate::platform::{PaneWatches, WindowOps};
@@ -407,7 +408,19 @@ impl Session {
         let old = self.active().id;
         match action {
             Action::Key(TabAction::Open) => self.open_tab(window, config)?,
+            Action::Close(i)
+                if config.window.confirm_close() && running(&self.tabs.as_slice()[i].panes)? =>
+            {
+                let id = self.tabs.as_slice()[i].panes[0].id;
+                self.ask(Confirmation::Tab(id), config);
+            }
             Action::Close(i) => self.close_tab(i, window)?,
+            Action::Key(TabAction::Close)
+                if config.window.confirm_close()
+                    && running(std::slice::from_ref(self.active()))? =>
+            {
+                self.ask(Confirmation::Pane(old), config);
+            }
             Action::Key(TabAction::Close) => self.close_pane(index, old, window)?,
             Action::Pane(command) => self.pane_action(command, old, window, config)?,
             Action::Key(nav) if self.tabs.navigate(nav) => {
@@ -465,7 +478,7 @@ impl Session {
         Ok(())
     }
 
-    fn close_tab(&mut self, index: usize, window: &mut impl WindowOps) -> Result<()> {
+    pub(super) fn close_tab(&mut self, index: usize, window: &mut impl WindowOps) -> Result<()> {
         let focused = self.tabs.active_index() == Some(index);
         self.retire_tab(index, window)?;
         let count = self.tabs.as_slice().len();
@@ -540,7 +553,12 @@ impl Session {
         Ok(exited)
     }
 
-    fn close_pane(&mut self, index: usize, id: u64, window: &mut impl WindowOps) -> Result<()> {
+    pub(super) fn close_pane(
+        &mut self,
+        index: usize,
+        id: u64,
+        window: &mut impl WindowOps,
+    ) -> Result<()> {
         if self.tabs.as_slice()[index].panes.len() == 1 {
             return self.close_tab(index, window);
         }

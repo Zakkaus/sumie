@@ -34,6 +34,12 @@ def input_controls():
     probe("a search key held into Command repeats with it", "test", "src/input.rs",
           replace_once("\n                    && !self.shortcuts.command_repeat(modifiers, action) =>", " =>"),
           "test input::tests::a_search_key_held_into_command_repeats_only_without_it_on_macos ... FAILED")
+    probe("close ignores a running foreground job", "test", "src/app/window_events.rs",
+          replace_once("None => local.pty.has_foreground_job(),", "None => false,"),
+          "test app::tabs::tests::window_close_uses_osc133_before_foreground_group ... FAILED")
+    probe("unbracketed multiline paste skips confirmation", "test", "src/app/pane_input.rs",
+          replace_once("text.contains(['\\n', '\\r'])", "text.contains('\\0')"),
+          "test app::tabs::tests::multiline_paste_waits_unless_bracketed ... FAILED")
     if sys.platform.startswith("linux"):
         probe("Shift+PageUp leaves the history in place", "test", "src/input.rs",
               replace_once("return send_input(pane, routing, id, PaneCommand::ScrollPage { up });",

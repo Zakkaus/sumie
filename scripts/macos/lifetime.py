@@ -41,7 +41,7 @@ import threading
 import time
 
 SCRIPTS = Path(__file__).resolve().parent
-CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n'
+CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n\n[window]\nconfirm-close = false\n'
 GRACE = 3.0
 HARD = {"ordinary": 10.0, "system": 6.0}
 REPLY = 4.0

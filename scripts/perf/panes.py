@@ -291,11 +291,15 @@ def main():
         raise RuntimeError('start with panes.sh, which asks the runner for the key injector')
     home = artifacts / 'home'
     home.mkdir()
+    config = home / 'config' / 'sumie'
+    config.mkdir(parents=True)
+    (config / 'sumie.toml').write_text('[window]\nconfirm-close = false\n')
     present_log = artifacts / 'present.log'
     present_log.touch()
     binary = sumie_binary('debug')
     # A private HOME and XDG tree keep every user rc file and the real configuration out of the run.
     env = dict(os.environ, HOME=str(home), SHELL='/bin/bash', LC_ALL='C.UTF-8',
+               XDG_CONFIG_HOME=str(config.parent),
                SUMIE_PRESENT_LOG=str(present_log))
     for name in ('WAYLAND_DEBUG', 'ENV', 'BASH_ENV'):
         env.pop(name, None)

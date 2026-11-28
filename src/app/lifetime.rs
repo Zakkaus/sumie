@@ -53,6 +53,13 @@ impl Session {
         watches: &mut impl PaneWatches,
     ) -> Result<()> {
         let id = pane.id;
+        if self
+            .confirmation
+            .as_ref()
+            .is_some_and(|(confirmation, _)| confirmation.targets(&pane))
+        {
+            self.dismiss_confirmation();
+        }
         self.routing.forget_pane(id);
         let close = pane.pane.pty.close();
         if pane.pane.pty.exit_fd().is_some() {

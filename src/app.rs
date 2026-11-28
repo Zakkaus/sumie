@@ -60,6 +60,8 @@ pub(crate) struct Session {
     smooth_scroll: bool,
     notices: Gate,
     frame_log: frame_log::FrameLog,
+    confirmation: Option<(window_events::Confirmation, &'static str)>,
+    confirmation_presented: bool,
 }
 
 struct PaneTab {
@@ -136,6 +138,8 @@ impl Session {
             smooth_scroll: config.scroll.smooth(),
             notices: Gate::default(),
             frame_log: frame_log::FrameLog::from_env(),
+            confirmation: None,
+            confirmation_presented: false,
         })
     }
 
@@ -242,6 +246,7 @@ impl Session {
         let tab = self.tabs.active().unwrap();
         let active = tab.focused();
         active.prepare_search_view(&mut self.view)?;
+        self.view.confirming = self.confirmation.is_some();
         self.view.begin_frame(
             tab.layout.dividers.iter().map(|d| d.rect),
             active.snapshot.as_ref().unwrap().background,
@@ -330,6 +335,7 @@ impl Session {
         }
         match frame {
             Ok((SurfaceFrame::Presented { suboptimal }, readback)) => {
+                self.confirmation_presented = self.confirmation.is_some();
                 window.cursor_rectangle_presented();
                 self.view.frame_presented();
                 self.view.images_presented(gpu.presented_images());
