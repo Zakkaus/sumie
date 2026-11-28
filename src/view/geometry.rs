@@ -64,6 +64,44 @@ impl View {
         }
     }
 
+    pub(crate) fn ime_rectangle(
+        &self,
+        cursor: Option<sumie_vt::Cursor>,
+        rect: Rect,
+        project: impl FnOnce(CaretBounds) -> Option<LogicalRect>,
+    ) -> Option<LogicalRect> {
+        let pane = &self.panes[self.active_pane?];
+        if pane.rect != rect {
+            return None;
+        }
+        let [x, y] = if pane.search_box.is_some() {
+            pane.cursor?.rect.origin
+        } else {
+            let cursor = cursor?;
+            [
+                pane.glyphs.offset[0] + (u32::from(cursor.column) * self.cell[0]).cast_signed(),
+                pane.glyphs.offset[1] + (u32::from(cursor.row) * self.cell[1]).cast_signed()
+                    - pane.scroll.offset.cast_signed(),
+            ]
+        };
+        let ends = [
+            i64::from(rect.x + rect.width),
+            i64::from(rect.y + rect.height),
+        ];
+        let start = [x, y];
+        let end =
+            std::array::from_fn(|i| (i64::from(start[i]) + i64::from(self.cell[i])).min(ends[i]));
+        if (0..2).any(|i| i64::from(start[i]) >= end[i]) {
+            return None;
+        }
+        project(CaretBounds {
+            start,
+            end,
+            logical: self.logical,
+            device: self.device,
+        })
+    }
+
     pub(crate) fn pane_size(&self, rect: Rect) -> Size {
         let rect = self.pane_grid(rect);
         let [cols, rows] =

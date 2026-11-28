@@ -13,7 +13,7 @@ use crate::{
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub(crate) enum Effect {
     None,
-    Preedit(String),
+    Preedit(String, Option<(usize, usize)>),
     ReadClipboard,
     Copy,
     Select(SelectStep),
@@ -219,7 +219,7 @@ pub(crate) fn route(
     let key_text;
     let search_owns_key = searching && routing.release_owner(&event) != Some(id);
     let command = match event {
-        Event::ImePreedit { text, .. } => return Ok(Effect::Preedit(text)),
+        Event::ImePreedit { text, cursor, .. } => return Ok(Effect::Preedit(text, cursor)),
         Event::ImeCommit { text, .. } | Event::ClipboardText { text, .. } if searching => {
             return Ok(Effect::Search(SearchAction::Insert(text)));
         }

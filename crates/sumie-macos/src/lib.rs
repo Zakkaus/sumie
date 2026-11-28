@@ -23,6 +23,7 @@ use termination::Quit;
 pub use window::{Platform, Pointer, PointerPhase, Scroll, double_click_interval};
 
 pub mod exit;
+pub mod ime;
 mod keyboard;
 pub mod pasteboard;
 pub mod readiness;
@@ -54,6 +55,8 @@ pub enum Event {
     ModifiersChanged(sumie_core::KeyModifiers),
     PointerEntered(Pointer),
     Pointer(Pointer),
+    /// An input-method event; the window decides which composition owns it.
+    Ime(ime::Ime),
     #[cfg(feature = "macos-ci")]
     RunnerCommand(runner::Command),
     #[cfg(feature = "macos-ci")]

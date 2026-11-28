@@ -557,3 +557,5 @@ fn a_lone_tab_shows_progress_along_the_top_edge_and_only_while_reported() {
         }
     }
 }
+
+mod preedit;

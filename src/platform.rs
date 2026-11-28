@@ -26,10 +26,7 @@ pub(crate) struct CaretBounds {
     pub(crate) device: [u32; 2],
 }
 
-#[cfg_attr(
-    all(target_os = "macos", not(test)),
-    expect(dead_code, reason = "macOS has no input methods to place yet")
-)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LogicalRect {
     pub(crate) x: i32,
     pub(crate) y: i32,

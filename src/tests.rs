@@ -29,6 +29,7 @@ fn local_pane_executes_committed_input_without_preedit() {
         false,
         Event::ImePreedit {
             text: "not-a-command ".into(),
+            cursor: None,
             generation: 0,
         },
         false,
@@ -178,6 +179,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
     };
     let preedit = |generation| Event::ImePreedit {
         text: "ㄅ".into(),
+        cursor: Some((0, 3)),
         generation,
     };
     let paste = |generation| Event::ClipboardText {
@@ -193,7 +195,7 @@ fn search_modal_routes(pane: &mut LocalPane, routing: &mut input::Routing) {
         (paste(0), Effect::None),
         (preedit(0), Effect::None),
         (commit(1), insert("水")),
-        (preedit(1), Effect::Preedit("ㄅ".into())),
+        (preedit(1), Effect::Preedit("ㄅ".into(), Some((0, 3)))),
         (paste_key(Press, ctrl_shift), Effect::ReadClipboard),
         (paste_key(Repeat, plain), Effect::None),
         (paste_key(Release, plain), Effect::None),

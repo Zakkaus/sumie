@@ -54,6 +54,7 @@ pub(in crate::macos) fn run(capture: capture::Options) -> Result<()> {
             event => {
                 match &event {
                     Event::Focused(focused) => println!("runner focused {focused}"),
+                    Event::Ime(ime) => println!("runner ime {}", native::describe(ime)),
                     Event::Occluded(occluded) => println!("runner occluded {occluded}"),
                     Event::Resized => println!("runner resized"),
                     _ => (),
@@ -135,6 +136,25 @@ fn command(
                 }
                 Command::Step(step) => native::step(context, open.window.platform(), step)?,
                 Command::Key(key) => println!("runner posted key {}", native::post_key(key)),
+                Command::ImeAllowed(enabled) => open.window.set_ime(enabled),
+                Command::InjectIme(ime) => {
+                    println!("runner injected {}", native::describe(&ime));
+                    open.window.ime(ime);
+                }
+                Command::Overlay => {
+                    let preedit = open.app.as_ref().and_then(|app| app.preedit());
+                    let (length, cursor) = preedit
+                        .filter(|(text, _)| !text.is_empty())
+                        .map_or((0, None), |(text, cursor)| (text.len(), cursor));
+                    let (start, end) = cursor.map_or(("-".into(), "-".into()), |(start, end)| {
+                        (start.to_string(), end.to_string())
+                    });
+                    println!("runner overlay {length} {start} {end}");
+                }
+                Command::InputSource => println!(
+                    "runner source {}",
+                    sumie_macos::Platform::input_source().unwrap_or_else(|| "-".into())
+                ),
                 Command::Mouse(mouse) => {
                     let scale = open.window.platform().scale();
                     let point = open

@@ -79,9 +79,14 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
             })
         }
         Native::ClipboardText { text, generation } => Event::ClipboardText { text, generation },
+        // The Linux overlay underlines the whole preedit, as before.
         Native::ImePreedit {
             text, generation, ..
-        } => Event::ImePreedit { text, generation },
+        } => Event::ImePreedit {
+            text,
+            cursor: None,
+            generation,
+        },
         Native::ImeCommit { text, generation } => Event::ImeCommit { text, generation },
     };
     Some((event, copy_serial))

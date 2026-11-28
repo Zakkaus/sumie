@@ -254,6 +254,13 @@ impl App {
         Some(session.view.cell_center(session.active().rect, cell))
     }
 
+    /// The composition overlay's text and its selected clause.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) fn preedit(&self) -> Option<(&str, Option<(usize, usize)>)> {
+        let view = &self.session.as_ref()?.view;
+        Some((&view.preedit, view.preedit_cursor))
+    }
+
     /// The settings banner, if one shows.
     #[cfg(feature = "macos-ci")]
     pub(crate) fn banner(&self) -> Option<&str> {

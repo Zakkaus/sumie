@@ -91,6 +91,19 @@ def check_macos_keys():
         return 1
 
 
+def check_macos_ime():
+    """Input-method events and the real input method to a recorder; see scripts/macos/ime.py."""
+    if sys.platform != "darwin":
+        raise CannotCheck("the input-method check needs the macOS window server")
+    binary = runner_binary()
+    try:
+        return subprocess.run([sys.executable, ROOT / "scripts/macos/ime.py", binary],
+                              timeout=FRAME_TIMEOUT).returncode
+    except subprocess.TimeoutExpired:
+        print("macos-ime: the check timed out", file=sys.stderr)
+        return 1
+
+
 def check_macos_pasteboard():
     """Copy and paste through the helpers on a named board; see scripts/macos/pasteboard.py."""
     if sys.platform != "darwin":

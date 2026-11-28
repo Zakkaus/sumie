@@ -7,6 +7,7 @@ use std::{collections::VecDeque, os::fd::BorrowedFd, time::Instant};
 use sumie_core::{mouse::MousePhase, notify::Notification};
 use sumie_macos::{
     Platform, Pointer, PointerPhase, Scroll, Symbol,
+    ime::{Composition, Ime, Input},
     readiness::{Interest, Key, Readiness},
 };
 
@@ -40,6 +41,14 @@ pub(super) struct Stats {
     pub(super) timeouts: u64,
 }
 
+#[derive(Default)]
+struct ImeWindow {
+    /// Whether input methods compose while the window is key.
+    enabled: bool,
+    /// The candidate window's last caret, in points.
+    area: Option<LogicalRect>,
+}
+
 pub(super) struct MacWindow {
     pub(super) watches: Watches,
     pasteboard: Pasteboard,
@@ -48,6 +57,8 @@ pub(super) struct MacWindow {
     slot: FrameSlot,
     batch: VecDeque<Event>,
     generation: u64,
+    composition: Composition,
+    ime: ImeWindow,
     focused: bool,
     occluded: bool,
     screen: Option<u32>,
@@ -71,6 +82,8 @@ impl MacWindow {
             readiness,
             batch: VecDeque::new(),
             generation: 0,
+            composition: Composition::default(),
+            ime: ImeWindow::default(),
             focused: platform.has_focus(),
             occluded: false,
             screen: platform.screen(),
@@ -126,6 +139,11 @@ impl MacWindow {
             Native::Focused(focused) => {
                 if focused != self.focused {
                     self.focused = focused;
+                    // Focus loss cancels the composition; it composes again once key.
+                    if !focused && let Some(input) = self.composition.cancel() {
+                        self.input(input);
+                    }
+                    self.platform.set_ime_allowed(self.ime.enabled && focused);
                     self.batch.push_back(Event::KeyboardFocus(focused));
                 }
                 self.configured();
@@ -139,10 +157,15 @@ impl MacWindow {
                 }
             }
             Native::CloseRequested => self.batch.push_back(Event::CloseRequested),
-            Native::Key(key) => self.key(key),
+            Native::Key(key) => {
+                self.composition.key(&key);
+                self.key(key);
+            }
             Native::ModifiersChanged(modifiers) => {
+                self.composition.set_modifiers(modifiers);
                 self.batch.push_back(Event::ModifiersChanged(modifiers));
             }
+            Native::Ime(ime) => self.ime(ime),
             Native::PointerEntered(pointer) => self.batch.push_back(Event::PointerEntered {
                 position: device_px(pointer.position),
                 modifiers: pointer.modifiers,
@@ -155,8 +178,44 @@ impl MacWindow {
         }
     }
 
-    /// Text for the focused pane, stamped with the current input generation; the runner's
-    /// `type` until input methods commit text (M1b-2).
+    /// Let input methods compose while the window is key. The terminal driver turns them on;
+    /// the runner keeps them off unless asked, so its key checks post below the user's input
+    /// source.
+    pub(super) fn set_ime(&mut self, enabled: bool) {
+        self.ime.enabled = enabled;
+        self.platform.set_ime_allowed(enabled && self.focused);
+    }
+
+    /// Queue an input-method event for the composition that owns it.
+    pub(super) fn ime(&mut self, ime: Ime) {
+        let mut inputs = Vec::new();
+        self.composition
+            .ime(ime, Platform::input_source(), &mut inputs);
+        for input in inputs {
+            self.input(input);
+        }
+    }
+
+    fn input(&mut self, input: Input) {
+        match input {
+            Input::Key(key) => self.key(key),
+            Input::Preedit {
+                text,
+                cursor,
+                generation,
+            } => self.batch.push_back(Event::ImePreedit {
+                text,
+                cursor,
+                generation,
+            }),
+            Input::Commit { text, generation } => {
+                self.batch.push_back(Event::ImeCommit { text, generation });
+            }
+        }
+    }
+
+    /// Text for the focused pane, stamped with the current input generation: the runner's
+    /// `type`, as if typed without an input method.
     #[cfg(feature = "macos-ci")]
     pub(super) fn commit_text(&mut self, text: String) {
         self.batch.push_back(Event::ImeCommit {
@@ -338,7 +397,12 @@ impl WindowOps for MacWindow {
         }
     }
 
-    fn set_cursor_rectangle(&mut self, _: LogicalRect) {}
+    fn set_cursor_rectangle(&mut self, rect: LogicalRect) {
+        if self.ime.area.replace(rect) != Some(rect) {
+            self.platform
+                .set_ime_cursor_area([rect.x, rect.y], [rect.width, rect.height]);
+        }
+    }
 
     fn set_pointer_icon(&mut self, icon: CursorIcon) {
         // AppKit rebuilds cursor rectangles on every call; the session calls once per frame.
@@ -348,7 +412,12 @@ impl WindowOps for MacWindow {
         }
     }
 
+    /// Fence the old recipient's composition, then cancel it natively: its late events have
+    /// no owner when they arrive.
     fn set_input_generation(&mut self, generation: u64) {
+        if self.composition.set_generation(generation) && self.ime.enabled && self.focused {
+            self.platform.cancel_composition();
+        }
         self.generation = generation;
     }
 

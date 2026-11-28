@@ -4,15 +4,17 @@
 use std::{sync::Arc, time::Instant};
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSEvent, NSScreen};
+use objc2_app_kit::{NSEvent, NSScreen, NSTextInputContext};
 use objc2_foundation::{NSNumber, ns_string};
 use sumie_core::{
     KeyModifiers,
     mouse::{Button, MousePhase},
 };
 use winit::{
-    dpi::LogicalSize,
-    event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
+    dpi::{LogicalPosition, LogicalSize},
+    event::{
+        ElementState, Ime as WinitIme, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
+    },
     keyboard::{ModifiersKeyState, ModifiersState},
     platform::macos::{
         ActiveEventLoopExtMacOS as _, MonitorHandleExtMacOS as _, OptionAsAlt,
@@ -21,7 +23,7 @@ use winit::{
     window::{CursorIcon, Window},
 };
 
-use super::{Event, Result, WindowContext};
+use super::{Event, Result, WindowContext, ime::Ime};
 
 /// Used when the window has no screen or the screen reports no rate.
 const FALLBACK_FPS: u32 = 60;
@@ -123,6 +125,36 @@ impl Platform {
         });
     }
 
+    /// Let the input method compose; off, keys reach the session below it.
+    pub fn set_ime_allowed(&self, allowed: bool) {
+        self.0.set_ime_allowed(allowed);
+    }
+
+    /// End the native composition: the pinned winit discards the input method's marked text
+    /// when input methods are disallowed, then they are allowed again.
+    pub fn cancel_composition(&self) {
+        self.0.set_ime_allowed(false);
+        self.0.set_ime_allowed(true);
+    }
+
+    /// Place the candidate window at the caret, in points from the content view's top left.
+    pub fn set_ime_cursor_area(&self, origin: [i32; 2], size: [i32; 2]) {
+        self.0.set_ime_cursor_area(
+            LogicalPosition::new(origin[0], origin[1]),
+            LogicalSize::new(size[0], size[1]),
+        );
+    }
+
+    /// The keyboard input source the active text input context selected, such as
+    /// `com.apple.keylayout.ABC`.
+    #[must_use]
+    pub fn input_source() -> Option<String> {
+        let mtm = MainThreadMarker::new()?;
+        NSTextInputContext::currentInputContext(mtm)?
+            .selectedKeyboardInputSource()
+            .map(|source| source.to_string())
+    }
+
     pub fn request_redraw(&self) {
         self.0.request_redraw();
     }
@@ -208,6 +240,12 @@ impl Input {
             WindowEvent::KeyboardInput { event, .. } => {
                 Event::Key(super::Key::new(&event, self.modifiers))
             }
+            WindowEvent::Ime(ime) => Event::Ime(match ime {
+                WinitIme::Enabled => return None,
+                WinitIme::Preedit(text, cursor) => Ime::Preedit { text, cursor },
+                WinitIme::Commit(text) => Ime::Commit(text),
+                WinitIme::Disabled => Ime::Disabled,
+            }),
             WindowEvent::CursorEntered { .. } => {
                 self.entering = true;
                 return None;

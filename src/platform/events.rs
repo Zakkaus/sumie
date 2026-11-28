@@ -124,18 +124,14 @@ pub(crate) enum Event {
         modifiers: Modifiers,
     },
     Pointer(PointerEvent),
-    #[cfg_attr(
-        target_os = "macos",
-        expect(dead_code, reason = "macOS has no input methods yet")
-    )]
+    /// Replace the composition overlay; an empty text clears it.
     ImePreedit {
         text: String,
+        /// The input method's selected clause in UTF-8 byte offsets, on character
+        /// boundaries; `None`, or an empty range, underlines the whole text.
+        cursor: Option<(usize, usize)>,
         generation: u64,
     },
-    #[cfg_attr(
-        all(target_os = "macos", not(feature = "macos-ci")),
-        expect(dead_code, reason = "macOS has no input methods yet")
-    )]
     ImeCommit {
         text: String,
         generation: u64,

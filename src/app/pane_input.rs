@@ -415,8 +415,9 @@ fn apply_pane_effect(
         Effect::ReadClipboard => {
             window.read_clipboard(*pane.paste_recipient.get_or_insert(routing.generation));
         }
-        Effect::Preedit(text) if text != view.preedit => {
+        Effect::Preedit(text, cursor) if text != view.preedit || cursor != view.preedit_cursor => {
             view.preedit = text;
+            view.preedit_cursor = cursor;
             pane.frame_dirty = true;
         }
         _ => (),

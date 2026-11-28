@@ -28,7 +28,7 @@ use winit::{
 };
 
 use super::{
-    Bridge, Callback, Event, Handler, Platform, Result, WindowContext, intercept,
+    Bridge, Callback, Event, Handler, Platform, Result, WindowContext, ime::Ime, intercept,
     termination::Quit, waker,
 };
 
@@ -62,6 +62,15 @@ pub enum Command {
     Key(PostedKey),
     /// One mouse event at a cell of the focused pane, queued to the probe window.
     Mouse(PostedMouse),
+    /// `ime on` or `ime off`: let input methods compose while the window is key.
+    ImeAllowed(bool),
+    /// An input-method event as winit would report it, for the protocol check: `ime preedit
+    /// [TEXT]` (its caret at the end), `ime commit TEXT`, `ime disabled`.
+    InjectIme(Ime),
+    /// `ime overlay`: print the composition overlay's length and selected clause.
+    Overlay,
+    /// `ime source`: print the selected keyboard input source.
+    InputSource,
     Close,
     /// Window steps for the idle mode; see `scripts/macos-spike/animations.py`.
     Step(Step),
@@ -125,11 +134,57 @@ impl Command {
                 if let Some(mouse) = line.strip_prefix("mouse ") {
                     return PostedMouse::parse(mouse).map_or(Self::Invalid, Self::Mouse);
                 }
+                if let Some(ime) = line.strip_prefix("ime") {
+                    return Self::ime(ime);
+                }
                 line.strip_prefix("ping ")
                     .and_then(|number| number.parse().ok())
                     .map_or(Self::Invalid, Self::Ping)
             }
         }
+    }
+}
+
+impl Command {
+    fn ime(fields: &str) -> Self {
+        match fields {
+            " on" => Self::ImeAllowed(true),
+            " off" => Self::ImeAllowed(false),
+            " overlay" => Self::Overlay,
+            " source" => Self::InputSource,
+            " disabled" => Self::InjectIme(Ime::Disabled),
+            " preedit" => Self::InjectIme(Ime::Preedit {
+                text: String::new(),
+                cursor: None,
+            }),
+            fields => {
+                if let Some(text) = fields.strip_prefix(" preedit ") {
+                    let cursor = Some((text.len(), text.len()));
+                    return Self::InjectIme(Ime::Preedit {
+                        text: text.to_owned(),
+                        cursor,
+                    });
+                }
+                fields
+                    .strip_prefix(" commit ")
+                    .map_or(Self::Invalid, |text| {
+                        Self::InjectIme(Ime::Commit(text.to_owned()))
+                    })
+            }
+        }
+    }
+}
+
+/// One line for the controller: the event's kind and byte lengths, never its text.
+#[must_use]
+pub fn describe(ime: &Ime) -> String {
+    match ime {
+        Ime::Preedit { text, cursor } => match cursor {
+            Some((start, end)) => format!("preedit {} {start} {end}", text.len()),
+            None => format!("preedit {} - -", text.len()),
+        },
+        Ime::Commit(text) => format!("commit {}", text.len()),
+        Ime::Disabled => "disabled".into(),
     }
 }
 

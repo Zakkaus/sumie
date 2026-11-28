@@ -110,6 +110,17 @@ pub(super) struct PanePainter<'a> {
     pub(super) search_selection: std::ops::Range<usize>,
     pub(super) search_highlights: &'a [(u16, u16, u16, bool)],
     pub(super) preedit: &'a str,
+    pub(super) preedit_cursor: Option<(usize, usize)>,
+}
+
+/// The preedit drawn at the cursor: its row, first column and cells, and the cells its
+/// underline spans from that column.
+#[derive(Clone, Copy)]
+struct Composed {
+    row: u32,
+    column: u32,
+    cells: u32,
+    underline: [u32; 2],
 }
 
 impl PanePainter<'_> {
@@ -127,10 +138,11 @@ impl PanePainter<'_> {
         self.pane.default_backgrounds.clear();
         self.pane.glyphs.quads.clear();
         self.set_overlay_bounds(banner.is_some());
-        let overlay = (self.pane.search_box.is_none() && !self.preedit.is_empty())
+        let composed = (self.pane.search_box.is_none() && !self.preedit.is_empty())
             .then(|| self.composition(snapshot))
             .flatten()
-            .filter(|&(row, _, _)| row != 0 || banner.is_none());
+            .filter(|composed| composed.row != 0 || banner.is_none());
+        let overlay = composed.map(|c| (c.row, c.column, c.cells));
         if let Some(message) = banner {
             self.draw_banner(snapshot, message);
             if self.pane.images.is_some() {
@@ -161,7 +173,7 @@ impl PanePainter<'_> {
             self.pane.glyphs.cover = None;
             self.draw_search(snapshot, search_box);
         } else {
-            self.set_cursor(snapshot, overlay, banner.is_some());
+            self.set_cursor(snapshot, composed, banner.is_some());
         }
     }
 
@@ -242,14 +254,18 @@ impl PanePainter<'_> {
         }
     }
 
-    fn set_cursor(&mut self, snapshot: &Snapshot, overlay: Option<(u32, u32, u32)>, banner: bool) {
+    fn set_cursor(&mut self, snapshot: &Snapshot, overlay: Option<Composed>, banner: bool) {
         self.pane.cursor = snapshot.cursor.and_then(|cursor| {
             if (banner && cursor.row == 0) || (!cursor.visible && overlay.is_none()) {
                 return None;
             }
             let [mut column, row] = [u32::from(cursor.column), u32::from(cursor.row)];
-            let (origin, size, shape) = if let Some((_, _, width)) = overlay {
-                let [x, y] = self.origin([column, row]);
+            let (origin, size, shape) = if let Some(Composed {
+                underline: [start, width],
+                ..
+            }) = overlay
+            {
+                let [x, y] = self.origin([column + start, row]);
                 (
                     [x, y + self.cell[1].cast_signed() - 2],
                     [width * self.cell[0], 2],
@@ -288,16 +304,31 @@ impl PanePainter<'_> {
         });
     }
 
-    fn composition(&mut self, snapshot: &Snapshot) -> Option<(u32, u32, u32)> {
+    fn composition(&mut self, snapshot: &Snapshot) -> Option<Composed> {
         self.composition.clear();
         let cursor = snapshot.cursor?;
         let column = u32::from(cursor.column);
         let available = self.pane.grid[0].saturating_sub(column);
+        // The selected clause's cell span; without one, the whole preedit is underlined.
+        let selected = self.preedit_cursor.filter(|(start, end)| start < end);
+        let mut underline = [None, None];
         let mut cells = 0;
-        for ch in self.preedit.chars().filter(|ch| !ch.is_control()) {
+        for (offset, ch) in self
+            .preedit
+            .char_indices()
+            .filter(|(_, ch)| !ch.is_control())
+        {
             let width = codepoint_width(ch);
             if cells + u32::from(width) > available {
                 break;
+            }
+            if let Some((start, end)) = selected {
+                if offset >= start && underline[0].is_none() {
+                    underline[0] = Some(cells);
+                }
+                if offset >= end && underline[1].is_none() {
+                    underline[1] = Some(cells);
+                }
             }
             if width != 0 || cells != 0 {
                 self.composition.text.push(ch);
@@ -305,7 +336,19 @@ impl PanePainter<'_> {
             }
             cells += u32::from(width);
         }
-        (cells > 0).then_some((u32::from(cursor.row), column, cells))
+        let start = underline[0].unwrap_or(0).min(cells);
+        let end = underline[1].unwrap_or(cells).max(start);
+        let underline = if end > start {
+            [start, end - start]
+        } else {
+            [0, cells]
+        };
+        (cells > 0).then_some(Composed {
+            row: u32::from(cursor.row),
+            column,
+            cells,
+            underline,
+        })
     }
 
     pub(super) fn origin(&self, [column, row]: [u32; 2]) -> [i32; 2] {

@@ -1,5 +1,6 @@
 """The negative controls that need macOS: the window gates and the macos-ci build."""
 import os
+import subprocess
 import sys
 
 from negative.probe import append, probe, replace_once
@@ -41,6 +42,53 @@ objc2::define_class!(
     }
 );
 """
+
+
+def pinyin_selected():
+    """Whether macos-ime drives the selected input source natively. Reads it, never sets it."""
+    selected = subprocess.run(["defaults", "read", "com.apple.HIToolbox", "AppleSelectedInputSources"],
+                              capture_output=True, text=True, check=False).stdout
+    return any(f'"{mode}"' in selected for mode in ("com.apple.inputmethod.TCIM.Pinyin",
+                                                     "com.apple.inputmethod.SCIM.ITABC"))
+
+
+def ime_controls():
+    ime = "crates/sumie-macos/src/ime.rs"
+    probe("commit sent twice", "macos-ime", ime,
+          replace_once("                if let Some((generation, _)) = self.owner.take() {\n"
+                       "                    out.push(Input::Commit",
+                       "                if let Some((generation, _)) = self.owner.clone() {\n"
+                       "                    out.push(Input::Commit"),
+          "ime: commit: once, then not again without a composition: recorded e68a8ae68a8a")
+    probe("late commit delivered to the new pane", "macos-ime", ime,
+          replace_once("        self.owner = None;\n        self.generation = generation;\n",
+                       "        if let Some((owner, _)) = &mut self.owner {\n"
+                       "            *owner = generation;\n        }\n        self.generation = generation;\n"),
+          "ime: late: commits after a switch and after search opened: recorded e68a8a")
+    probe("swallowed Kitty release not sent", "macos-ime", ime,
+          replace_once("                out.extend(self.release_held());\n", ""),
+          "ime: kitty: release when the composition takes over: recorded 1b5b393775 instead of")
+    probe("swallowed Kitty release sent twice", "macos-ime", "src/input.rs",
+          replace_once("            _ => return false,\n        }\n        true\n",
+                       "            (KeyAction::Release, None) => (),\n            _ => return false,\n        }\n"
+                       "        true\n"),
+          "ime: kitty: one release, then the commit: recorded 1b5b3937751b5b39373b313a33751b5b39373b313a3375")
+    probe("preedit caret dropped before the overlay", "macos-ime", "src/app/pane_input.rs",
+          replace_once("            view.preedit_cursor = cursor;\n", "            view.preedit_cursor = None;\n"),
+          "ime: commit: preedit: the overlay shows 3 - - instead of 3 3 3")
+    probe("commit kept after an input-source change", "test", ime,
+          replace_once(".is_some_and(|(_, owner)| *owner != source)", ".is_some_and(|_| false)"),
+          "test ime::tests::a_commit_from_another_input_source_is_dropped ... FAILED")
+    probe("underline the whole preedit despite its selected clause", "test", "src/view/paint.rs",
+          replace_once(".filter(|(start, end)| start < end);", ".filter(|_| false);"),
+          "test view::tests::preedit::the_preedit_underline_spans_the_selected_clause ... FAILED")
+    # The native cases run only under a Pinyin input method, which hosted runners lack.
+    if pinyin_selected():
+        probe("no native cancel on a recipient change", "macos-ime", "src/macos/window.rs",
+              replace_once("            self.platform.cancel_composition();\n", ""),
+              "ime: cancel: a pane split: a made preedits of")
+    else:
+        print("\n== ime: the native-cancel control needs a Pinyin input method selected; skipped")
 
 
 def macos_controls():
@@ -121,7 +169,7 @@ def macos_controls():
               replace_once('|| eval "${_sumie_trap-}"', "|| :"),
               login + "bash::bash_3_2_reinstalls_its_trap_after_one_set_at_the_prompt ... FAILED")
         probe("stop forwarding keys", "macos-keys", "src/macos/window.rs",
-              replace_once("            Native::Key(key) => self.key(key),\n", "            Native::Key(_) => (),\n"),
+              replace_once("                self.composition.key(&key);\n                self.key(key);\n", ""),
               "keys: plain: recorded nothing instead of")
         probe("report focus on ModifiersChanged", "macos-keys", "src/app/pane_input.rs",
               replace_once("            pane.pane.pointer_modifiers_changed(modifiers);\n",
@@ -202,6 +250,7 @@ def macos_controls():
         probe("OSC 52 write without focus", "macos-pasteboard", "src/macos/window.rs",
               replace_once("        if !self.focused {\n", "        if false && !self.focused {\n"),
               "pasteboard: osc52: a write without focus changed the board")
+        ime_controls()
         probe("configure on Resized", "macos-resize", "src/app/window_events.rs",
               replace_once("session.view.request_resize(scale, logical, device);\n",
                            "session.view.request_resize(scale, logical, device);\n"

@@ -112,6 +112,9 @@ pub(super) fn run(capture: capture::Options) -> Result<()> {
     sumie_macos::run(|context, readiness, event| {
         if let (State::Starting, Event::Resumed) = (&driver.state, &event) {
             driver.open(readiness, Platform::create(context, "sumie", SIZE)?)?;
+            if let State::Open(open) = &mut driver.state {
+                open.window.set_ime(true);
+            }
             return Ok(ControlFlow::Continue(()));
         }
         driver.handle(context, readiness, event)

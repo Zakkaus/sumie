@@ -19,10 +19,7 @@ use sumie_render::{
 use sumie_ui::Palette;
 use sumie_vt::{Rgb, Snapshot};
 
-use crate::{
-    Result,
-    platform::{CaretBounds, LogicalRect},
-};
+use crate::Result;
 pub(crate) use attributes::LinkHighlight;
 pub(crate) use paint::PaneFocus;
 use paint::{PanePaint, PanePainter};
@@ -63,6 +60,8 @@ pub(crate) struct View {
     pub(crate) device: [u32; 2],
     pub(crate) cell: [u32; 2],
     pub(crate) preedit: String,
+    /// The selected clause of a non-empty preedit, set with it; see `Event::ImePreedit`.
+    pub(crate) preedit_cursor: Option<(usize, usize)>,
     /// Formatted query and tab-separated count, without IME preedit.
     pub(crate) search_bar: Option<String>,
     /// Byte range in the formatted query. An empty range is the insertion point.
@@ -145,6 +144,7 @@ impl View {
             device,
             cell,
             preedit: String::new(),
+            preedit_cursor: None,
             search_bar: None,
             search_selection: 0..0,
             search_highlights: Vec::new(),
@@ -362,6 +362,7 @@ impl View {
                 &[]
             },
             preedit: if focus.active { &self.preedit } else { "" },
+            preedit_cursor: self.preedit_cursor,
         }
         .build(
             snapshot,
@@ -450,44 +451,6 @@ impl View {
 
     pub(crate) fn atlas_uploaded(&mut self) {
         self.font.clear_dirty_regions();
-    }
-
-    pub(crate) fn ime_rectangle(
-        &self,
-        cursor: Option<sumie_vt::Cursor>,
-        rect: Rect,
-        project: impl FnOnce(CaretBounds) -> Option<LogicalRect>,
-    ) -> Option<LogicalRect> {
-        let pane = &self.panes[self.active_pane?];
-        if pane.rect != rect {
-            return None;
-        }
-        let [x, y] = if pane.search_box.is_some() {
-            pane.cursor?.rect.origin
-        } else {
-            let cursor = cursor?;
-            [
-                pane.glyphs.offset[0] + (u32::from(cursor.column) * self.cell[0]).cast_signed(),
-                pane.glyphs.offset[1] + (u32::from(cursor.row) * self.cell[1]).cast_signed()
-                    - pane.scroll.offset.cast_signed(),
-            ]
-        };
-        let ends = [
-            i64::from(rect.x + rect.width),
-            i64::from(rect.y + rect.height),
-        ];
-        let start = [x, y];
-        let end =
-            std::array::from_fn(|i| (i64::from(start[i]) + i64::from(self.cell[i])).min(ends[i]));
-        if (0..2).any(|i| i64::from(start[i]) >= end[i]) {
-            return None;
-        }
-        project(CaretBounds {
-            start,
-            end,
-            logical: self.logical,
-            device: self.device,
-        })
     }
 }
 
