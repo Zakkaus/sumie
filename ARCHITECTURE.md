@@ -67,7 +67,7 @@ The pane sets the scrollback byte limit before PTY spawn. Reload updates the liv
 
 PTY readiness clears the wake before draining output into VT. Key commands carry unencoded input; the local pane encodes them with the terminal's current modes. IME preedit only changes the overlay; only commit bytes cross the pane boundary. Input writes remain ordered in the PTY FIFO. Wayland configures the first frame slot. After that, output, geometry or preedit can use a free slot, but a frame callback alone never dirties the view. Close drops GPU state before the Wayland window and drives child reaping from pidfd readiness and the PTY close deadline.
 
-When the PTY input queue rejects a key or an entire paste, the window flashes the terminal area for one presented frame. Terminal output bells retain their separate tab activity behavior.
+When the PTY input queue rejects a key or an entire paste, the window flashes the terminal area for one presented frame. Rejections within one second of that presentation only log. Terminal output bells retain their separate tab activity behavior.
 
 One calloop timer advances the cursor's 600 ms blink phase when the focused viewport permits blinking. Key presses and PTY output restart the visible phase. Steady, off-viewport, VT-hidden, and unfocused cursors have no blink timer, nor do suspended toplevels. A cursor config reload resolves the effective blink mode before waiting for another frame callback. A phase change can present the cached draw list without reshaping the grid. The text-input caret rectangle tracks the terminal cell independently of the drawn cursor.
 

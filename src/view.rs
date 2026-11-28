@@ -5,6 +5,7 @@ use atlas::{collect_dirty, upload};
 use std::{
     collections::HashSet,
     mem::{Discriminant, discriminant},
+    time::{Duration, Instant},
 };
 
 use sumie_core::graphics::ImageSource;
@@ -46,6 +47,13 @@ struct WindowSize {
     device: [u32; 2],
 }
 
+#[derive(PartialEq, Eq)]
+enum InputBell {
+    Idle,
+    Pending,
+    Presented,
+}
+
 pub(crate) struct View {
     font: FontSystem,
     font_settings: FontSettings,
@@ -62,8 +70,8 @@ pub(crate) struct View {
     pub(crate) preedit: String,
     /// The selected clause of a non-empty preedit, set with it; see `Event::ImePreedit`.
     pub(crate) preedit_cursor: Option<(usize, usize)>,
-    pub(crate) input_bell: bool,
-    pub(crate) input_bell_presented: bool,
+    input_bell: InputBell,
+    last_input_bell: Option<Instant>,
     /// Formatted query and tab-separated count, without IME preedit.
     pub(crate) search_bar: Option<String>,
     /// Byte range in the formatted query. An empty range is the insertion point.
@@ -147,8 +155,8 @@ impl View {
             cell,
             preedit: String::new(),
             preedit_cursor: None,
-            input_bell: false,
-            input_bell_presented: false,
+            input_bell: InputBell::Idle,
+            last_input_bell: None,
             search_bar: None,
             search_selection: 0..0,
             search_highlights: Vec::new(),
@@ -377,6 +385,20 @@ impl View {
         );
     }
 
+    pub(crate) fn ring_input_bell(&mut self, now: Instant) {
+        if self.input_bell == InputBell::Idle
+            && self
+                .last_input_bell
+                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1))
+        {
+            self.input_bell = InputBell::Pending;
+        }
+    }
+
+    pub(crate) fn input_bell_dirty(&self) -> bool {
+        self.input_bell != InputBell::Idle
+    }
+
     /// Collect atlas damage after the last pane; then upload before drawing the frame.
     pub(crate) fn end_frame(&mut self) {
         for pane in &mut self.panes[self.pane_count..] {
@@ -384,7 +406,7 @@ impl View {
             pane.images = None;
             pane.viewer = None;
         }
-        if self.input_bell {
+        if self.input_bell == InputBell::Pending {
             let mut color = self.palette.label;
             color[3] = self.palette.overlay[3];
             self.fills.push(Fill {

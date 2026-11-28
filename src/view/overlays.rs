@@ -357,6 +357,12 @@ impl PanePainter<'_> {
 
 impl View {
     pub(crate) fn frame_presented(&mut self) {
+        self.input_bell = if self.input_bell == super::InputBell::Pending {
+            self.last_input_bell = Some(std::time::Instant::now());
+            super::InputBell::Presented
+        } else {
+            super::InputBell::Idle
+        };
         self.tabs.presented();
         self.presented_search = self.active_pane.and_then(|index| {
             let pane = &self.panes[index];
@@ -489,4 +495,33 @@ fn visible_suffix(text: &str, columns: u32) -> (&str, u32) {
         start = i;
     }
     (&text[start..], cells)
+}
+
+#[test]
+fn input_bell_clears_on_the_next_frame_and_flashes_at_most_once_per_second() {
+    use std::time::{Duration, Instant};
+
+    let mut view = super::tests::view();
+    let draws_flash = |view: &mut View| {
+        view.begin_frame([], [0; 3]);
+        view.end_frame();
+        view.frame(true, |_| None)
+            .fills
+            .iter()
+            .any(|fill| fill.color[3] != 0)
+    };
+
+    view.ring_input_bell(Instant::now());
+    assert!(draws_flash(&mut view));
+    view.frame_presented();
+    let flashed_at = view.last_input_bell.unwrap();
+    assert!(view.input_bell_dirty(), "flash needs a clear frame");
+    assert!(!draws_flash(&mut view), "flash lasted two frames");
+    view.frame_presented();
+
+    view.ring_input_bell(flashed_at + Duration::from_millis(999));
+    assert!(!draws_flash(&mut view), "a second flash inside one second");
+    assert!(!view.input_bell_dirty());
+    view.ring_input_bell(flashed_at + Duration::from_secs(1));
+    assert!(draws_flash(&mut view));
 }
