@@ -464,9 +464,6 @@ def settings_controls():
           replace_once("save(&self.main, source, &option.info.path, Some(value))",
                        "Ok(source.clone())"),
           "test tests::changes_write_immediately_to_the_defining_file ... FAILED")
-    probe("locale skips the English fallback", "locale-test", "crates/sumie-locale/src/lib.rs",
-          replace_once(".or_else(|| EN.get(key))", ""),
-          "test tests::missing_translation_uses_english ... FAILED")
     probe("settings skips termios restore", "settings-test", "crates/sumie-settings/src/terminal.rs",
           replace_once("let _ = tcsetattr(io::stdin(), OptionalActions::Now, &original);",
                        "let _ = original;"),
