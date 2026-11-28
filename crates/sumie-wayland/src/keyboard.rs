@@ -24,6 +24,12 @@ pub(crate) struct Keyboard {
 }
 
 impl Keyboard {
+    fn set_focus(&mut self, serial: Option<u32>) -> Option<Event> {
+        let focused = serial.is_some();
+        let was_focused = std::mem::replace(&mut self.selection_serial, serial).is_some();
+        (focused != was_focused).then_some(Event::KeyboardFocus(focused))
+    }
+
     pub(crate) fn modifiers(&self) -> Modifiers {
         self.modifiers
     }
@@ -87,7 +93,11 @@ impl State {
         self.stop_pointer();
         self.leave_text_input();
         self.cancel_primary_writes();
-        drop(self.keyboard.take());
+        let focus = self
+            .keyboard
+            .take()
+            .and_then(|mut keyboard| keyboard.set_focus(None));
+        self.events.extend(focus);
         if let Some(replacement) = self.seats.seats().find(|candidate| {
             candidate != seat
                 && self
@@ -186,7 +196,8 @@ impl KeyboardHandler for State {
     ) {
         let focused = surface == self.wl_surface();
         if let Some(keyboard) = self.keyboard_mut(proxy) {
-            keyboard.selection_serial = focused.then_some(serial);
+            let focus = keyboard.set_focus(focused.then_some(serial));
+            self.events.extend(focus);
         }
     }
 
@@ -199,8 +210,9 @@ impl KeyboardHandler for State {
         _: u32,
     ) {
         if let Some(keyboard) = self.keyboard_mut(proxy) {
-            keyboard.selection_serial = None;
+            let focus = keyboard.set_focus(None);
             keyboard.modifiers = Modifiers::default();
+            self.events.extend(focus);
             self.disable_text_input();
             self.events
                 .push_back(Event::ModifiersChanged(Modifiers::default()));
@@ -254,5 +266,37 @@ impl KeyboardHandler for State {
             keyboard.modifiers = modifiers;
             self.events.push_back(Event::ModifiersChanged(modifiers));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn reports_focus_loss_and_regain_without_repeating_unchanged_focus() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let conn = Connection::from_socket(socket).unwrap();
+        let backend = conn.backend().downgrade();
+        let mut keyboard = Keyboard {
+            seat: WlSeat::inert(backend.clone()),
+            proxy: WlKeyboard::inert(backend),
+            selection_serial: None,
+            modifiers: Modifiers::default(),
+            ime: None,
+            data_device: None,
+            primary_selection: None,
+        };
+
+        let reports: Vec<_> = [Some(10), Some(11), None, None, Some(12)]
+            .into_iter()
+            .filter_map(|serial| keyboard.set_focus(serial))
+            .map(|event| match event {
+                Event::KeyboardFocus(focused) => focused,
+                _ => panic!("expected keyboard focus"),
+            })
+            .collect();
+        assert_eq!(reports, [true, false, true]);
     }
 }

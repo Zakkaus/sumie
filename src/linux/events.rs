@@ -57,6 +57,7 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
             }
         }
         Native::ModifiersChanged(mods) => Event::ModifiersChanged(modifiers(mods)),
+        Native::KeyboardFocus(focused) => Event::KeyboardFocus(focused),
         Native::PointerEntered {
             position: (x, y),
             modifiers: mods,

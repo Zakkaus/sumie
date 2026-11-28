@@ -53,6 +53,7 @@ pub enum Event {
         serial: u32,
     },
     ModifiersChanged(Modifiers),
+    KeyboardFocus(bool),
     PointerEntered {
         position: (f64, f64),
         modifiers: Modifiers,

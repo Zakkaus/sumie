@@ -239,6 +239,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "            serviced.exited = self.pane.pty.exit_fd().is_none();\n"
                            "            if serviced.exited { return Ok(serviced); }"),
               "test app::tabs::tests::exit_readiness_keeps_final_terminal_clipboard_write ... FAILED")
+        probe("Wayland drops keyboard focus changes", "test", "crates/sumie-wayland/src/keyboard.rs",
+              replace_once("(focused != was_focused).then_some(Event::KeyboardFocus(focused))",
+                           "let _ = (focused, was_focused);\n        None"),
+              "test keyboard::tests::reports_focus_loss_and_regain_without_repeating_unchanged_focus ... FAILED")
         probe("IME caret loses the right edge at fractional scale", "test", "src/view/geometry.rs",
               replace_once("bounds.end[i] * logical + device - 1", "bounds.end[i] * logical"),
               "test view::geometry::tests::caret_covers_the_cell_on_a_rounded_fractional_buffer ... FAILED")
