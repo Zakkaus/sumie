@@ -392,6 +392,10 @@ impl WindowOps for MacWindow {
         sumie_macos::double_click_interval()
     }
 
+    fn reduce_motion(&self) -> bool {
+        Platform::reduce_motion()
+    }
+
     fn hostname() -> Result<String> {
         Ok(nix::unistd::gethostname()?
             .into_string()

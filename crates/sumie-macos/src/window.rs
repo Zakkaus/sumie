@@ -4,7 +4,7 @@
 use std::{sync::Arc, time::Instant};
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSEvent, NSScreen, NSTextInputContext};
+use objc2_app_kit::{NSEvent, NSScreen, NSTextInputContext, NSWorkspace};
 use objc2_foundation::{NSNumber, ns_string};
 use sumie_core::{
     KeyModifiers,
@@ -84,6 +84,11 @@ impl Platform {
     #[must_use]
     pub fn scale(&self) -> f64 {
         self.0.scale_factor()
+    }
+
+    #[must_use]
+    pub fn reduce_motion() -> bool {
+        NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
     }
 
     #[must_use]

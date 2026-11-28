@@ -8,6 +8,8 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 在 Wayland 上，OSC 8 連結預設顯示淡色點線。自動辨識的網址只在滑鼠停留時顯示點線。按住 Ctrl 時，滑鼠指標變成手形，連結提示改為實線，換行處也適用。終端機程式指定的底線樣式與顏色不變。按住 Ctrl 點擊連結，放開左鍵時會透過 `xdg-open` 開啟，並保留原有選取範圍；拖曳則重新選取文字。即使程式開啟滑鼠追蹤，這兩種操作仍然有效。sumie 不會開啟裸路徑、遠端 `file:` 網址、不在允許清單內的 URI，或含有控制字元或雙向文字控制符號的 URI。
 
+如果 OSC 8 連結的文字與目標不同，按住 Ctrl 將指標移到連結上，窗格的提示列會顯示目標 URI。
+
 按 Ctrl+Shift+F 可搜尋畫面與捲動記錄。搜尋會接續自動換行的文字，只有搜尋字串含大寫字母時才區分大小寫。結果由舊到新編號。按 Enter 或 F3 可跳到較舊的結果，同時按住 Shift 則跳到較新的結果。按 Escape 會關閉搜尋列，畫面留在目前的位置。
 畫面在底部時才會跟隨新輸出。在終端機輸入會回到底部。
 
@@ -23,7 +25,9 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 按 Ctrl+= 或 Ctrl++ 可放大終端機字型，按 Ctrl+- 可縮小，每次調整 1 pt，範圍為 4 至 200 pt。同一視窗的所有分頁共用字型大小；字元網格會重新排列，視窗尺寸不變。按 Ctrl+0 或修改設定檔中的 `[font].size` 可還原為設定值。
 
-在 macOS 13 以上版本，sumie 會開啟 Metal 測試頁，不啟動 shell。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
+sumie 支援 macOS 26 與 27。建置的部署目標為 13.0，但不支援較早的版本。sumie 會開啟 Metal 測試頁，不啟動 shell。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
+
+在 macOS 的終端機模式下，開啟系統的「減少動態效果」後，歷史記錄會改為逐行捲動，不再滑行。
 
 在 Linux 上首次啟動時，sumie 使用 ncurses 的 `tic` 將 `xterm-sumie` 安裝到 `$XDG_DATA_HOME/sumie/terminfo`（預設為 `~/.local/share/sumie/terminfo`）。內附的原始碼有變更時才重新編譯；若無法安裝，sumie 會改用 `TERM=xterm-256color` 啟動 shell。子行程也會取得 `FORCE_HYPERLINK=1`（已自行設定時不覆寫），讓 Claude Code 這類依終端機名稱判斷是否支援超連結的工具送出 OSC 8 連結。
 

@@ -131,6 +131,7 @@ impl PanePainter<'_> {
         hovered_link: LinkHighlight<'_>,
         banner: Option<&str>,
     ) {
+        let banner = hovered_link.target.or(banner);
         self.pane.backgrounds.clear();
         self.pane.images = (!snapshot.images.is_empty()).then(|| Arc::clone(&snapshot.images));
         self.pane.default_background = rgba(snapshot.background);

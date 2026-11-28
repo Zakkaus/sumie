@@ -47,6 +47,9 @@ fn linkAt(terminal: Terminal.Terminal, reference: *const GridRef, out: *Selectio
         if (oscEntry(pin)) |entry| {
             const uri = entry.uri.slice(pin.node.page().memory);
             if (!sink.uri.emit(uri)) return .no_value;
+            const first = oscEdge(pin, entry, screen.pages.getTopLeft(.viewport), .left);
+            const last = oscEdge(pin, entry, screen.pages.getBottomRight(.viewport).?, .right);
+            out.* = .fromZig(NativeSelection.init(first, last, false));
             if (entry.id == .explicit) {
                 var rows = screen.pages.getTopLeft(.viewport).rowIterator(.right_down, screen.pages.getBottomRight(.viewport));
                 var y: u16 = 0;
@@ -55,9 +58,6 @@ fn linkAt(terminal: Terminal.Terminal, reference: *const GridRef, out: *Selectio
                 }
                 return .success;
             }
-            const first = oscEdge(pin, entry, screen.pages.getTopLeft(.viewport), .left);
-            const last = oscEdge(pin, entry, screen.pages.getBottomRight(.viewport).?, .right);
-            out.* = .fromZig(NativeSelection.init(first, last, false));
             return .success;
         }
     }

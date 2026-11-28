@@ -223,7 +223,8 @@ impl Terminal {
         Ok(!crate::style::has_hyperlink(cell)?)
     }
 
-    /// Find an OSC 8 or detected URI covering a viewport cell, including soft wraps.
+    /// Find an OSC 8 or detected URI and its label at a viewport cell, including soft wraps.
+    /// `ranges` receives every visible span to highlight, including other uses of an OSC 8 ID.
     ///
     /// # Errors
     /// Returns an error for an invalid hit or a native lookup failure.
@@ -232,7 +233,7 @@ impl Terminal {
         hit: CellPosition,
         host: &str,
         ranges: &mut Vec<CellRange>,
-    ) -> Result<Option<LinkUri>, Error> {
+    ) -> Result<Option<(LinkUri, CellRange)>, Error> {
         ranges.clear();
         if !*LINKS_READY {
             return Ok(None);
@@ -269,10 +270,11 @@ impl Terminal {
             return Ok(None);
         }
         check(result)?;
+        let label = self.cell_range(&selection)?;
         if output.ranges.is_empty() {
-            output.ranges.push(self.cell_range(&selection)?);
+            output.ranges.push(label);
         }
-        Ok(output.uri)
+        Ok(output.uri.map(|uri| (uri, label)))
     }
 
     fn select_link(&self, reference: &ffi::GridRef, selection: &mut ffi::Selection) -> bool {
@@ -478,17 +480,17 @@ mod tests {
                 .link_at(CellPosition { row, column }, "host", &mut ranges)
                 .unwrap();
             assert_eq!(
-                found.as_ref().map(LinkUri::as_str),
+                found.as_ref().map(|(uri, _)| uri.as_str()),
                 expected,
                 "hit={row}:{column}, text={text:?}"
             );
-            if let Some(uri) = found {
+            if let Some((uri, span)) = found {
                 let label = if text == osc {
                     "標abcde"
                 } else {
                     uri.as_str()
                 };
-                assert_eq!(terminal.selection_text(ranges[0]).unwrap(), label);
+                assert_eq!(terminal.selection_text(span).unwrap(), label);
             }
         }
     }
@@ -498,11 +500,12 @@ mod tests {
         let mut vt = Terminal::new(24, 2).unwrap();
         vt.write(b"\x1b]8;id=a;https://x\x1b\\old\r\nA\x1b]8;;\x1b\\..\x1b]8;id=a;https://x\x1b\\B\r\n\x1b]8;id=b;https://x\x1b\\C\x1b]8;id=a;https://y\x1b\\D");
         let mut ranges = Vec::new();
-        let uri = vt
+        let (uri, label) = vt
             .link_at(CellPosition { row: 0, column: 3 }, "", &mut ranges)
             .unwrap()
             .unwrap();
         assert_eq!(uri.as_str(), "https://x");
+        assert_eq!(vt.selection_text(label).unwrap(), "B");
         let spans: Vec<_> = ranges
             .iter()
             .map(|range| (range.start.row, range.start.column, range.end.column))

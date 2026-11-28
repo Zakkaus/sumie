@@ -8,6 +8,8 @@ Middle-click in a terminal pane to paste the primary selection. If the program t
 
 On Wayland, OSC 8 links have a faint dotted underline unless the terminal program sets its own. Detected URLs get a dotted underline on hover. Hold Ctrl for a hand pointer; the link hint becomes solid across soft wraps, without changing any underline set by the program. Ctrl+click opens the link on release without changing the selection; Ctrl+drag selects text instead. Both gestures work even when the terminal program tracks the mouse. Sumie passes the URI directly to `xdg-open` and rejects bare paths, remote `file:` URLs, unrecognized schemes, and URIs containing control characters or bidirectional formatting marks.
 
+If an OSC 8 link's label differs from its target, hold Ctrl over it to see the target URI in the pane's banner row.
+
 Press Ctrl+Shift+F to search the screen and scrollback. Search treats wrapped rows as one line and ignores case unless the query contains an uppercase letter. Matches are numbered from oldest to newest. Enter or F3 selects an older match; hold Shift to select a newer one. Escape closes search without moving the viewport.
 New output stays visible when the viewport is at the bottom. Typing in the terminal returns to the bottom.
 
@@ -23,13 +25,15 @@ The bar appears when a second tab opens. Click a numbered tab or scroll over the
 
 Press Ctrl+= or Ctrl++ to increase the terminal font size by 1 pt, or Ctrl+- to decrease it. The shortcuts clamp zoom to 4–200 pt. All tabs in the window share the size, and the grid reflows without resizing the window. Ctrl+0 restores the configured size, as does changing `[font].size` in the config file.
 
-On macOS 13 or later, sumie opens a Metal test page, not a shell. Run `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` to save the third presented frame and close the window.
+Sumie supports macOS 26 and 27. The build's deployment target is 13.0, but earlier releases are not supported. Sumie opens a Metal test page, not a shell. Run `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` to save the third presented frame and close the window.
+
+In the macOS terminal driver, the system's Reduce Motion setting switches history scrolling to whole lines without coasting.
 
 On first launch on Linux, sumie uses ncurses `tic` to install `xterm-sumie` under `$XDG_DATA_HOME/sumie/terminfo` (default: `~/.local/share/sumie/terminfo`). It reuses the entry until the bundled source changes. If it cannot install the entry, it starts the shell with `TERM=xterm-256color` instead.
 
 For bash, zsh and fish login shells, sumie installs scripts under `$XDG_DATA_HOME/sumie/shell-integration` without editing your startup files. They mark prompts and commands (OSC 133) and report the working directory (OSC 7). The `ssh` wrapper sets `TERM=xterm-256color` for SSH only and requests `COLORTERM` and `TERM_PROGRAM` forwarding. The server must allow these variables through `AcceptEnv`. Set `integration = false` in `[shell]` to skip injection and leave `ssh` unchanged. Child processes also get `FORCE_HYPERLINK=1` unless it is already set, so tools that detect hyperlink support by terminal name, such as Claude Code, emit OSC 8 links.
 
-On Wayland, terminal programs can use OSC 52 to write up to 1 MiB of decoded data to the standard clipboard while the window has keyboard focus. Sumie denies OSC 52 reads. OSC 0 and OSC 2 update the window title; sumie does not support CSI 22/23 title push and pop.
+On Wayland, terminal programs can use OSC 52 to write up to 1 MiB of decoded data to the standard clipboard while the window has keyboard focus. Sumie denies OSC 52 reads. OSC 0 and OSC 2 update the window title after removing control and Unicode format characters; sumie does not support CSI 22/23 title push and pop.
 
 The wheel and touchpad scroll history smoothly in whole device pixels, and a touchpad keeps coasting for a moment after you lift your fingers. Scrolling stays stepped, three history lines per wheel notch, when the program tracks the mouse, on the alternate screen, while the search bar is open and while the config banner has focus. Set `smooth = false` in `[scroll]` to step everywhere (default `true`). If the program tracks the mouse, it receives wheel reports instead. In alternate-screen programs such as `less`, the wheel sends three arrow keys per notch when mode 1007 is enabled (the default). With mouse tracking on, hold Shift when you start a selection. You can release Shift while dragging without sending mouse motion to the program. Scrolling clears the selection once the view moves by a whole row; typing returns to the bottom.
 

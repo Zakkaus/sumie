@@ -84,6 +84,30 @@ fn focus(id: u64, active: bool) -> PaneFocus<'static> {
 }
 
 #[test]
+fn osc8_target_is_drawn_in_the_banner_row() {
+    let mut view = view();
+    let rect = view.content_rect();
+    let snapshot = snapshot(&view, rect);
+    for target in [Some("https://ex.io/actual"), None] {
+        let link = LinkHighlight {
+            target,
+            ..LinkHighlight::default()
+        };
+        view.begin_frame([], snapshot.background);
+        view.build_pane(rect, &snapshot, None, link, None, focus(1, false));
+        view.end_frame();
+        let draw = view.draw_list(false);
+        let row_color = if target.is_some() {
+            snapshot.foreground
+        } else {
+            snapshot.background
+        };
+        assert_eq!(draw.backgrounds[0][..3], row_color);
+        assert_eq!(draw.glyphs.is_empty(), target.is_none());
+    }
+}
+
+#[test]
 fn background_opacity_respects_vt_colors_and_opaque_overlays() {
     let mut view = view();
     let rect = view.content_rect();

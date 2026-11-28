@@ -78,9 +78,9 @@ struct State {
 
 impl State {
     fn forget(&mut self, key: Key) -> Option<Registration> {
+        self.ready.retain(|ready| *ready != key);
         let registration = self.live.remove(&key)?;
         self.keys.remove(&registration.generation);
-        self.ready.retain(|ready| *ready != key);
         Some(registration)
     }
 }

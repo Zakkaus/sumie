@@ -157,6 +157,19 @@ fn deadlines_fire_once_and_replacement_keeps_one() {
 }
 
 #[test]
+fn removing_a_fired_timer_drops_its_untaken_report() {
+    let (bridge, wakes) = bridge();
+    let readiness = bridge.readiness();
+    let key = readiness.timer(Instant::now()).unwrap();
+    wakes.recv_timeout(WAIT).unwrap();
+
+    readiness.remove(key);
+
+    assert!(!readiness.accept_wake());
+    assert!(readiness.take().is_empty());
+}
+
+#[test]
 fn reports_coalesce_into_one_wake_per_take() {
     let (bridge, wakes) = bridge();
     let readiness = bridge.readiness();
