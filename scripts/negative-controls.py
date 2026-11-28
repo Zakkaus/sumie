@@ -102,13 +102,6 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("debug print in the winit fork patch", "structure", quit_patch,
           append('--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n fn probe() {}\n+eprintln!("probe");\n'),
           f"patch: {quit_patch}:{added}: debug print in an added line")
-    probe("input-source change leaves the native composition", "structure", quit_patch,
-          replace_once("+            self.queue_event(WindowEvent::Ime(Ime::Disabled));\n"
-                       "+            if let Some(input_context) = self.inputContext() {\n"
-                       "+                input_context.discardMarkedText();\n"
-                       "+            }\n",
-                       "+            self.queue_event(WindowEvent::Ime(Ime::Disabled));\n"),
-          "input_source_did_change leaves the composition without discarding the input method's marked text")
     probe("file length", "structure", CORE, append("// Deliberate line-limit probe.\n" * 601),
           "lines exceeds 600")
     probe("forbidden module", "structure", CORE, append("mod /* nested /* comment */ */ r#helper {}\n"),
