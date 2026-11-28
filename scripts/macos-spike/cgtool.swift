@@ -7,6 +7,7 @@
 //   cgtool menuitem PID         print x y w h of the application menu's title
 //   cgtool minbutton PID        print the centre of the window's minimize button
 //   cgtool click X Y            press and release at X Y
+//   cgtool clickown PID X Y     the same, only if PID is frontmost and owns the topmost window there
 //   cgtool hold X Y MS RX RY    press at X Y, hold MS, move to RX RY, release
 //   cgtool cmdq PID             post Cmd+Q to the HID tap if PID is frontmost
 //   cgtool axquit PID           press the application menu's Quit item through AX
@@ -125,6 +126,27 @@ case "minbutton":
     print(Int(p.x + s.width / 2), Int(p.y + s.height / 2))
 case "click":
     let point = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
+    post(.mouseMoved, point)
+    usleep(100_000)
+    post(.leftMouseDown, point)
+    usleep(60_000)
+    post(.leftMouseUp, point)
+case "clickown":
+    let (pid, point) = (Int32(args[2])!, CGPoint(x: Double(args[3])!, y: Double(args[4])!))
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
+    let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier
+    // The Dock's full-screen layer and transparent windows let clicks through.
+    let top = list.first { info in
+        guard let b = info[kCGWindowBounds as String] as? [String: Double],
+              (info[kCGWindowOwnerPID as String] as? Int32) != dock,
+              ((info[kCGWindowAlpha as String] as? Double) ?? 1) > 0 else { return false }
+        return CGRect(x: b["X"]!, y: b["Y"]!, width: b["Width"]!, height: b["Height"]!).contains(point)
+    }
+    // Never click another application's window.
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+          (top?[kCGWindowOwnerPID as String] as? Int32) == pid else {
+        print("covered"); exit(1)
+    }
     post(.mouseMoved, point)
     usleep(100_000)
     post(.leftMouseDown, point)
