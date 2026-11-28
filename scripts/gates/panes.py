@@ -43,8 +43,11 @@ def check_linux_panes():
 def check_panes():
     """20 writer panes in a private nested KWin, release build: every writer advances, each
     pane repaints within 200 ms of every line, and no presentation gap exceeds 100 ms."""
-    if sys.platform != "linux" or not shutil.which("kwin_wayland"):
-        raise CannotCheck("the pane budget needs kwin_wayland for a private nested session")
+    if sys.platform != "linux":
+        raise CannotCheck("the pane budget needs Linux and KWin")
+    missing = [tool for tool in PANES_TOOLS if shutil.which(tool) is None]
+    if missing:
+        raise CannotCheck(f"the pane budget needs {', '.join(missing)}")
     binary = built_binary("--release")
     artifacts = tempfile.mkdtemp(prefix="sumie-panes.")
     try:
@@ -52,10 +55,15 @@ def check_panes():
             result = subprocess.run(["sh", ROOT / "scripts/perf/stall.sh", artifacts,
                                      str(PANES_SECONDS), "--panes", str(PANES)],
                                     env={**os.environ, "SUMIE_BIN": binary},
-                                    stdin=subprocess.DEVNULL)
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
+            print(result.stdout, end="", flush=True)
             if not result.returncode:
                 shutil.rmtree(artifacts)
                 return 0
+            violation = result.returncode == 1 and any(line.startswith("FAIL: ")
+                                                       for line in result.stdout.splitlines())
+            if not violation:
+                break
             if attempt == 1:
                 print("panes: retrying once", file=sys.stderr, flush=True)
     except BaseException:
@@ -63,4 +71,4 @@ def check_panes():
         raise
     print(f"panes: stall.sh exited {result.returncode}; artifacts kept in {artifacts}",
           file=sys.stderr)
-    return 1
+    return 1 if violation else 2

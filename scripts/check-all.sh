@@ -14,8 +14,10 @@ macos_ci=
 macos_window=
 if [ "$(uname -s)" = Darwin ]; then
     macos_ci=clippy-macos-ci
-    macos_window='macos-wake macos-keys macos-pasteboard macos-ime macos-resize macos-idle macos-flood macos-timeout macos-throughput macos-loading
-        macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit'
+    if [ "$fast" = false ]; then
+        macos_window='macos-wake macos-keys macos-pasteboard macos-ime macos-resize macos-idle macos-flood macos-timeout macos-throughput macos-loading
+            macos-close macos-repeat macos-fatal macos-system macos-stuck macos-exit'
+    fi
 fi
 # These Linux gates drive a private KWin.
 linux_window=
@@ -33,6 +35,7 @@ fi
 for gate in structure terminfo shell fmt clippy $macos_ci test $macos_window $panes; do
     python3 "$scripts/check-gate.py" "$gate" || exit "$?"
 done
+python3 "$scripts/test-gates.py" || exit "$?"
 
 if [ "$fast" = false ]; then
     for gate in $linux_window; do

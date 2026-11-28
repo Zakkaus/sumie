@@ -155,7 +155,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           "test splits::tests::tiny_windows_partition_every_pixel ... FAILED")
     probe("contrast above the supported range", "test", "crates/sumie-config/src/lib.rs",
           replace_once("(1.0..=21.0).contains(&ratio)", "(1.0..=22.0).contains(&ratio)"),
-          "test tests::load_configuration ... FAILED")
+          ("test tests::load_configuration ... FAILED",
+           "minimum_contrast: Some(21.00000001)", "; 1 failed;"))
     if sys.platform.startswith("linux"):
         probe("config load opens a FIFO with no writer", "test", "crates/sumie-config/src/load.rs",
               replace_once("check_with(path, visit, &mut read_file)",
@@ -368,6 +369,13 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "the shell was not reaped within 6 s of the close")
     input_controls()
     macos_controls()
+    if sys.platform == "darwin":
+        probe("extra bytes reach the recorder before it stops", "macos-pasteboard", "scripts/macos/keys.py",
+              replace_once('        self.runner.wait_for_file(out.with_name(out.name + ".done"))\n',
+                           '        self.runner.wait_for_file(out.with_name(out.name + ".done"))\n'
+                           '        if name == "framed":\n'
+                           '            out.write_text(out.read_text() * 2)\n'),
+              "pasteboard: framed: recorded")
     if sys.platform.startswith("linux") and shutil.which("kwin_wayland"):
         pane_controls()
     else:
