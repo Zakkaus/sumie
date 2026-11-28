@@ -60,7 +60,24 @@ pub(crate) fn load_visited(path: &Path, visit: &mut impl FnMut(&Path)) -> Result
 }
 
 fn check_visited(path: &Path, visit: &mut impl FnMut(&Path)) -> Result<Config, Vec<Error>> {
-    check_with(path, visit, &mut |path| fs::read_to_string(path))
+    check_with(path, visit, &mut read_file)
+}
+
+pub(crate) fn read_file(path: &Path) -> io::Result<String> {
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::fs::{Mode, OFlags, open};
+
+        // Check the opened file, so a replacement FIFO cannot block between stat and open.
+        let flags = OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC | OFlags::NOCTTY;
+        let file = fs::File::from(open(path, flags, Mode::empty())?);
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::other("not a regular file"));
+        }
+        io::read_to_string(file)
+    }
+    #[cfg(not(target_os = "linux"))]
+    fs::read_to_string(path)
 }
 
 /// Reads a settings file; the editor substitutes the text it is about to write.

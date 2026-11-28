@@ -8,7 +8,7 @@ use toml::{
     de::{DeTable, DeValue, ValueDeserializer},
 };
 
-use crate::{colors, load::MAX_INCLUDE_DEPTH, settings, window};
+use crate::{MAX_FONT_SIZE, colors, load::MAX_INCLUDE_DEPTH, settings, window};
 
 /// What is wrong with a settings file. [`crate::Error::Invalid`] locates it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub enum Problem {
         min: String,
         max: String,
     },
-    /// `font.size` is not a positive finite number of points.
+    /// `font.size` is outside the allowed range in points.
     FontSize,
     /// The value at `key` is not a `#rrggbb` color.
     Color {
@@ -76,9 +76,10 @@ impl fmt::Display for Problem {
                 };
                 write!(formatter, "{noun} must be between {min} and {max}")
             }
-            Self::FontSize => {
-                formatter.write_str("font size must be a positive finite number of points")
-            }
+            Self::FontSize => write!(
+                formatter,
+                "font size must be greater than 0 and at most {MAX_FONT_SIZE} points"
+            ),
             Self::Color { value, .. } => write!(
                 formatter,
                 "invalid value: string {value:?}, expected a color in #rrggbb notation"

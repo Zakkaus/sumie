@@ -21,6 +21,56 @@ impl Scratch {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn fifo_include_is_rejected_without_a_writer() {
+    use rustix::fs::{CWD, Mode, mkfifoat};
+    use std::{sync::mpsc, thread, time::Duration};
+
+    let scratch = Scratch::new("fifo-include");
+    let main = scratch.0.join("sumie.toml");
+    let fifo = scratch.0.join("fifo.toml");
+    fs::write(&main, "include = ['fifo.toml']\n").unwrap();
+    mkfifoat(CWD, &fifo, Mode::RUSR | Mode::WUSR).unwrap();
+
+    let (send, recv) = mpsc::channel();
+    thread::spawn(move || send.send(load(&main)).unwrap());
+    let error = recv
+        .recv_timeout(Duration::from_secs(2))
+        .expect("loading a FIFO without a writer blocked")
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Invalid { line: 1, column: 12, message: Problem::Read { path, .. }, .. } if *path == fifo),
+        "{error}"
+    );
+}
+
+#[test]
+fn oversized_font_sizes_are_rejected() {
+    let scratch = Scratch::new("font-size");
+    let main = scratch.0.join("sumie.toml");
+    fs::write(&main, "[font]\nsize = 200\n").unwrap();
+    assert_eq!(
+        load(&main).unwrap().font.logical_px().to_bits(),
+        (200.0 * POINT_TO_PX).to_bits()
+    );
+
+    for size in [4096.0, 200.25] {
+        fs::write(&main, format!("[font]\nsize = {size}\n")).unwrap();
+        assert!(matches!(
+            load(&main),
+            Err(Error::Invalid {
+                line: 2,
+                column: 8,
+                message: Problem::FontSize,
+                ..
+            })
+        ));
+        let json = format!(r#"{{"font":{{"size":{size}}}}}"#);
+        assert!(Config::from_json(json.as_bytes()).is_err());
+    }
+}
+
 #[test]
 fn load_configuration() {
     type Case<'a> = (&'a str, Result<fn(Config), (usize, usize, &'static str)>);
