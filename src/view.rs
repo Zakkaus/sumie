@@ -5,7 +5,7 @@ use atlas::{collect_dirty, upload};
 use std::{
     collections::HashSet,
     mem::{Discriminant, discriminant},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use sumie_core::graphics::ImageSource;
@@ -32,6 +32,7 @@ use geometry::{grid_size, scaled_padding};
 mod images;
 use images::{PresentedImages, ViewerPaint};
 mod overlays;
+use overlays::InputBell;
 use overlays::{Glyphs, PresentedSearch};
 mod paint;
 mod settings;
@@ -45,13 +46,6 @@ struct WindowSize {
     scale: u32,
     logical: [u32; 2],
     device: [u32; 2],
-}
-
-#[derive(PartialEq, Eq)]
-enum InputBell {
-    Idle,
-    Pending,
-    Presented,
 }
 
 pub(crate) struct View {
@@ -389,20 +383,6 @@ impl View {
             hovered_link,
             banner.filter(|_| focus.active),
         );
-    }
-
-    pub(crate) fn ring_input_bell(&mut self, now: Instant) {
-        if self.input_bell == InputBell::Idle
-            && self
-                .last_input_bell
-                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1))
-        {
-            self.input_bell = InputBell::Pending;
-        }
-    }
-
-    pub(crate) fn input_bell_dirty(&self) -> bool {
-        self.input_bell != InputBell::Idle
     }
 
     /// Collect atlas damage after the last pane; then upload before drawing the frame.

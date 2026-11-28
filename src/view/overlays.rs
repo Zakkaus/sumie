@@ -357,11 +357,11 @@ impl PanePainter<'_> {
 
 impl View {
     pub(crate) fn frame_presented(&mut self) {
-        self.input_bell = if self.input_bell == super::InputBell::Pending {
+        self.input_bell = if self.input_bell == InputBell::Pending {
             self.last_input_bell = Some(std::time::Instant::now());
-            super::InputBell::Presented
+            InputBell::Presented
         } else {
-            super::InputBell::Idle
+            InputBell::Idle
         };
         self.tabs.presented();
         self.presented_search = self.active_pane.and_then(|index| {
@@ -507,6 +507,29 @@ fn visible_suffix(text: &str, columns: u32) -> (&str, u32) {
         start = i;
     }
     (&text[start..], cells)
+}
+
+#[derive(PartialEq, Eq)]
+pub(super) enum InputBell {
+    Idle,
+    Pending,
+    Presented,
+}
+
+impl View {
+    pub(crate) fn ring_input_bell(&mut self, now: std::time::Instant) {
+        if self.input_bell == InputBell::Idle
+            && self
+                .last_input_bell
+                .is_none_or(|last| now.duration_since(last) >= std::time::Duration::from_secs(1))
+        {
+            self.input_bell = InputBell::Pending;
+        }
+    }
+
+    pub(crate) fn input_bell_dirty(&self) -> bool {
+        self.input_bell != InputBell::Idle
+    }
 }
 
 #[test]
