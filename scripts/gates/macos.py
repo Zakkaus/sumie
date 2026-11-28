@@ -1,4 +1,4 @@
-"""The macOS window gates: wake, keys, pasteboard, frame slot, and close and Quit."""
+"""The macOS window gates: wake, keys, typed shell, pasteboard, frame slot, and close and Quit."""
 import os
 from pathlib import Path
 import subprocess
@@ -90,6 +90,20 @@ def check_macos_keys():
                               timeout=FRAME_TIMEOUT).returncode
     except subprocess.TimeoutExpired:
         print("macos-keys: the check timed out", file=sys.stderr)
+        return 1
+
+
+def check_macos_shell():
+    """Typed commands in the account's login shell, against the VT and the presented frames; see
+    scripts/macos/shell.py."""
+    if sys.platform != "darwin":
+        raise CannotCheck("the typed-shell check needs the macOS window server")
+    binary = runner_binary()
+    try:
+        return subprocess.run([sys.executable, ROOT / "scripts/macos/shell.py", binary],
+                              timeout=FRAME_TIMEOUT).returncode
+    except subprocess.TimeoutExpired:
+        print("macos-shell: the check timed out", file=sys.stderr)
         return 1
 
 

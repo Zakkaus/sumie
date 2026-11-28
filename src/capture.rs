@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufWriter, Write as _};
@@ -13,6 +14,12 @@ use crate::Result;
 pub(crate) struct Options {
     pub(crate) frames: Option<u64>,
     pub(crate) screenshot: Option<PathBuf>,
+    /// The runner's `capture DIR`: every presentation goes to `DIR/N.png` while it is set.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) every: Option<PathBuf>,
+    /// Whether the surface can be read back although no screenshot was requested.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) readback: bool,
 }
 
 impl Options {
@@ -41,6 +48,27 @@ impl Options {
             return Err("--screenshot requires --exit-after-frames".into());
         }
         Ok(options)
+    }
+
+    /// Whether the surface must allow reading presentations back.
+    pub(crate) fn reads_back(&self) -> bool {
+        #[cfg(feature = "macos-ci")]
+        if self.readback {
+            return true;
+        }
+        self.screenshot.is_some()
+    }
+
+    /// Where presentation number `count` is written, if it is captured.
+    pub(crate) fn capture_path(&self, count: u64) -> Option<Cow<'_, Path>> {
+        #[cfg(feature = "macos-ci")]
+        if let Some(dir) = &self.every {
+            return Some(Cow::Owned(dir.join(format!("{count}.png"))));
+        }
+        self.screenshot
+            .as_deref()
+            .filter(|_| self.frames == Some(count))
+            .map(Cow::Borrowed)
     }
 }
 
