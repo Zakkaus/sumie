@@ -100,7 +100,7 @@ blink = true
 
 `cursor.style` 可設為 `block`、`bar` 或 `underline`。終端機內的程式可用 DECSCUSR 覆寫形狀與閃爍設定，直到重設為止。視窗失焦時，可見的游標改為不閃爍的空心方框。
 
-在終端機執行 `sumie config` 可編輯設定。在 sumie 按 Ctrl+,（Linux）或 Cmd+,（macOS）可在新分頁開啟設定。按 Tab 或 1–5 切換分類，按 ↑／↓ 選取項目。點一下選取，再點一下修改；也可用滾輪捲動清單。
+在終端機執行 `sumie config` 可編輯設定。在 sumie 按 Ctrl+,（Linux）或 Cmd+,（macOS）可在新分頁開啟設定。按 Tab 或 1–5 切換分類，按 ↑／↓ 選取項目。點一下選取，再點一下修改。
 
 在快捷鍵項目按 Enter 即可錄製，與其他動作衝突時會顯示該動作的名稱，不會覆寫。將 `settings-vim-keys` 設為 `false` 可停用 `h`、`j`、`k`、`l`。
 

@@ -32,7 +32,7 @@ impl Layout {
             Some(row)
         };
         let prompt = model.mode.line().and_then(|_| footer());
-        let notice = if model.has_notice() { footer() } else { None };
+        let notice = model.notice().and_then(|_| footer());
         let keys = footer();
         let end = bottom + 1;
         let side_by_side = width >= SIDE_BY_SIDE;
@@ -81,11 +81,6 @@ impl Layout {
                     if selected < model.visible().len() {
                         model.click_option(selected);
                     }
-                }
-            }
-            Key::Wheel { column, row, down } => {
-                if self.list.contains(&row) && column < list_width {
-                    model.wheel(down, self.page());
                 }
             }
             _ => return false,

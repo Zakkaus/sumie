@@ -30,7 +30,6 @@
 "ui.unconfirmed" = "無法確認是否已儲存。請檢查目前的值。"
 "ui.no-terminal" = "請在互動式終端機開啟設定。"
 "ui.no-config-path" = "找不到設定目錄。"
-"ui.terminal-error" = "無法在此終端機開啟設定。"
 "confirm.window" = "關閉視窗？y · Enter/Esc/n · 程式仍在執行"
 "confirm.tab" = "關閉分頁？y · Enter/Esc/n · 程式仍在執行"
 "confirm.pane" = "關閉窗格？y · Enter/Esc/n · 程式仍在執行"

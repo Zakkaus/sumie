@@ -3,13 +3,12 @@ use std::{borrow::Cow, path::PathBuf};
 use sumie_config::{
     Category, EditValues, Error, Kind, Problem, Value, WriteError, load, save, settings,
 };
-use sumie_core::{Chord, binding_conflict};
+use sumie_core::{Chord, Platform, binding_conflict};
 use sumie_locale::Locale;
 
 use crate::{
     input::{Key, Line},
-    log::Log,
-    value::{OptionInfo, PLATFORM, same},
+    value::{OptionInfo, same},
 };
 
 pub(crate) struct Tab {
@@ -49,7 +48,6 @@ pub(crate) struct Model {
     main: PathBuf,
     values: EditValues,
     invalid_config: bool,
-    pub(crate) log: Log,
     pub(crate) locale: Locale,
     pub(crate) options: Vec<OptionInfo>,
     pub(crate) tabs: Vec<Tab>,
@@ -57,14 +55,13 @@ pub(crate) struct Model {
     pub(crate) selected: usize,
     pub(crate) mode: Mode,
     matches: Vec<usize>,
-    top: usize,
     clicked: Option<usize>,
     error: Option<Notice>,
     vim_keys: bool,
 }
 
 impl Model {
-    pub(crate) fn new(main: PathBuf, log: Log) -> Self {
+    pub(crate) fn new(main: PathBuf) -> Self {
         let options: Vec<_> = settings().into_iter().map(OptionInfo::new).collect();
         let tabs = Category::ALL
             .into_iter()
@@ -86,7 +83,6 @@ impl Model {
             main,
             values: EditValues::default(),
             invalid_config: false,
-            log,
             locale: Locale::En,
             options,
             tabs,
@@ -94,7 +90,6 @@ impl Model {
             selected: 0,
             mode: Mode::Browse,
             matches: Vec::new(),
-            top: 0,
             clicked: None,
             error: None,
             vim_keys: false,
@@ -112,9 +107,7 @@ impl Model {
             .and_then(|value| value.try_into().ok())
             .unwrap_or_default();
         self.locale = Locale::from_language(language);
-        self.invalid_config = load(&self.main)
-            .inspect_err(|error| self.log.error(error))
-            .is_err();
+        self.invalid_config = load(&self.main).is_err();
         let vim_keys = self
             .options
             .iter()
@@ -125,10 +118,6 @@ impl Model {
             .and_then(Value::as_bool)
             .or_else(|| vim_keys.default.as_ref().and_then(Value::as_bool))
             .expect("Vim key setting has a boolean default");
-    }
-
-    pub(crate) fn has_notice(&self) -> bool {
-        self.error.is_some() || self.invalid_config
     }
 
     pub(crate) fn notice(&self) -> Option<Cow<'static, str>> {
@@ -144,7 +133,7 @@ impl Model {
             Some(Notice::BindingConflict { chord, option }) => Some(
                 locale
                     .text("ui.binding-conflict")
-                    .replace("{chord}", &chord.display(PLATFORM))
+                    .replace("{chord}", &chord.display(Platform::current()))
                     .replace("{action}", self.options[option].label(locale))
                     .into(),
             ),
@@ -185,24 +174,9 @@ impl Model {
         !same(self.value(option), self.default(option))
     }
 
+    /// The list scrolls a page at a time, so the first row follows from the selection.
     pub(crate) fn first_row(&self, page: usize) -> usize {
-        self.top
-            .clamp((self.selected + 1).saturating_sub(page), self.selected)
-            .min(self.visible().len().saturating_sub(page))
-    }
-
-    pub(crate) fn wheel(&mut self, down: bool, page: usize) {
-        if !matches!(self.mode, Mode::Browse | Mode::Search { .. }) || self.visible().is_empty() {
-            return;
-        }
-        let top = self.first_row(page);
-        self.top = if down {
-            (top + 1).min(self.visible().len().saturating_sub(page))
-        } else {
-            top.saturating_sub(1)
-        };
-        self.selected = self.selected.clamp(self.top, self.top + page - 1);
-        self.clicked = None;
+        self.selected - self.selected % page
     }
 
     pub(crate) fn click_tab(&mut self, tab: usize) {
@@ -255,7 +229,7 @@ impl Model {
             matches!(option.info.kind, Kind::Binding(binding) if binding.id == id)
         }).expect("every binding has an option")
             };
-        if let Some(other) = binding_conflict(PLATFORM, chord, target, |binding| {
+        if let Some(other) = binding_conflict(Platform::current(), chord, target, |binding| {
             self.values
                 .get(&self.options[find(binding.id)].info.path)
                 .and_then(Value::as_str)
@@ -273,7 +247,6 @@ impl Model {
     /// Return false when the session should exit.
     pub(crate) fn key(&mut self, key: Key, page: usize) -> bool {
         self.clicked = None;
-        self.top = self.first_row(page);
         match &mut self.mode {
             Mode::Edit(line) => match key {
                 Key::Esc => {
@@ -307,7 +280,6 @@ impl Model {
                     self.error = None;
                 }
                 Key::Chord(chord) => self.record(chord),
-                Key::Pasted(_) => (),
                 _ => self.error = Some(Notice::Message("ui.unbindable")),
             },
             Mode::Browse => return self.browse(key, page),
@@ -349,7 +321,6 @@ impl Model {
         if self.tab != tab {
             self.tab = tab;
             self.selected = 0;
-            self.top = 0;
         }
     }
 
@@ -384,7 +355,6 @@ impl Model {
                 }),
         );
         self.selected = 0;
-        self.top = 0;
     }
 
     fn accept_match(&mut self) {
@@ -398,7 +368,6 @@ impl Model {
         }) {
             self.tab = tab;
             self.selected = selected;
-            self.top = 0;
             self.mode = Mode::Browse;
         }
     }
@@ -407,10 +376,7 @@ impl Model {
         let index = self.visible()[self.selected];
         let option = &self.options[index];
         let current = self.value(option);
-        if let Some(value) = option
-            .step(current, right)
-            .filter(|value| !same(Some(value), current))
-        {
+        if let Some(value) = option.step(current, right) {
             self.write(index, &value);
         }
     }
@@ -433,11 +399,8 @@ impl Model {
         let index = self.visible()[self.selected];
         let option = &self.options[index];
         if let Some(value) = option.parse(&line.text) {
-            if (!self.invalid_config && same(self.value(option), Some(&value)))
-                || self.write(index, &value)
-            {
+            if self.write(index, &value) {
                 self.mode = Mode::Browse;
-                self.error = None;
             }
         } else {
             self.error = Some(Notice::Allowed(index));
@@ -447,7 +410,7 @@ impl Model {
     fn write(&mut self, index: usize, value: &Value) -> bool {
         self.error = None;
         let option = &self.options[index];
-        if !self.invalid_config && same(self.values.get(&option.info.path), Some(value)) {
+        if !self.invalid_config && same(self.value(option), Some(value)) {
             return true;
         }
         let Some(source) = self.values.source(&option.info.path) else {
@@ -474,7 +437,6 @@ impl Model {
     }
 
     fn write_error(&self, index: usize, error: &WriteError) -> Notice {
-        self.log.error(error);
         let key = match error {
             WriteError::Conflict { .. } => "ui.save-conflict",
             WriteError::Unconfirmed { .. } => "ui.unconfirmed",

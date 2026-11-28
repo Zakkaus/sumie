@@ -35,14 +35,15 @@ mod grid_tests;
 // PTY-driven tests; Darwin PTY behaviour is checked with the login shell.
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
-use std::process::ExitCode;
 
 type Error = Box<dyn std::error::Error>;
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-fn main() -> ExitCode {
+fn main() -> std::process::ExitCode {
+    use std::process::ExitCode;
+
     match run() {
-        Ok(status) => status,
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("sumie: {error}");
             ExitCode::FAILURE
@@ -50,7 +51,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<ExitCode> {
+fn run() -> Result<()> {
     use std::io::Write as _;
 
     let mut args = std::env::args_os().skip(1).peekable();
@@ -63,51 +64,46 @@ fn run() -> Result<ExitCode> {
             .next()
             .filter(|_| args.next().is_none())
             .ok_or("link opener requires one URI")?;
-        return run_link_opener(&uri).map(|()| ExitCode::SUCCESS);
+        return run_link_opener(&uri);
     }
     #[cfg(target_os = "macos")]
     if args.next_if(|arg| arg == macos::CONFIG_WATCH_ARG).is_some() {
         if args.next().is_some() {
             return Err("the configuration watcher takes no arguments".into());
         }
-        return macos::run_config_watch().map(|()| ExitCode::SUCCESS);
+        return macos::run_config_watch();
     }
     #[cfg(target_os = "macos")]
     if args.next_if(|arg| arg == macos::PASTEBOARD_ARG).is_some() {
         if args.next().is_some() {
             return Err("the pasteboard helper takes no arguments".into());
         }
-        return macos::run_pasteboard().map(|()| ExitCode::SUCCESS);
+        return macos::run_pasteboard();
     }
 
     if args.next_if(|arg| arg == "config").is_some() {
-        return match args.next() {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
-            None => sumie_settings::run().map_err(Into::into),
-            Some(command) if command == "schema" && args.next().is_none() => {
-                writeln!(std::io::stdout().lock(), "{}", sumie_config::schema_json()?)?;
-                Ok(ExitCode::SUCCESS)
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if args.peek().is_none() {
+            return sumie_settings::run();
+        }
+        let mut stdout = std::io::stdout().lock();
+        return match args.next().as_deref().and_then(std::ffi::OsStr::to_str) {
+            Some("schema") if args.next().is_none() => {
+                Ok(writeln!(stdout, "{}", sumie_config::schema_json()?)?)
             }
-            Some(command)
-                if command == "show"
-                    && args.next().is_some_and(|arg| arg == "--defaults")
-                    && args.next().is_none() =>
+            Some("show")
+                if args.next().is_some_and(|arg| arg == "--defaults") && args.next().is_none() =>
             {
-                write!(
-                    std::io::stdout().lock(),
-                    "{}",
-                    sumie_config::defaults_toml()
-                )?;
-                Ok(ExitCode::SUCCESS)
+                Ok(write!(stdout, "{}", sumie_config::defaults_toml())?)
             }
             _ => Err("usage: sumie config [schema | show --defaults]".into()),
         };
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    return run_app(args).map(|()| ExitCode::SUCCESS);
+    return run_app(args);
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    Ok(ExitCode::SUCCESS)
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]

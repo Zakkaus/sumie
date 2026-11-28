@@ -4,66 +4,37 @@ use sumie_config::{Kind, SettingInfo, Value, format_list, parse_list};
 use sumie_core::{Chord, Platform};
 use sumie_locale::Locale;
 
-pub(crate) const PLATFORM: Platform = if cfg!(target_os = "macos") {
-    Platform::MacOS
-} else {
-    Platform::Linux
-};
-
 pub(crate) struct OptionInfo {
     pub(crate) info: SettingInfo,
     pub(crate) default: Option<Value>,
-    label: String,
-    help: String,
-    choices: Vec<String>,
 }
 
 impl OptionInfo {
     pub(crate) fn new(info: SettingInfo) -> Self {
-        let choices = if let Kind::Choice(choices) = &info.kind {
-            choices
-                .iter()
-                .map(|choice| format!("choice.{}.{}", info.path, choice.value))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let label = format!("setting.{}.label", info.path);
-        let help = if matches!(info.kind, Kind::Binding(_)) {
-            "setting.keybinds.help".into()
-        } else {
-            format!("setting.{}.help", info.path)
-        };
         let default = info
             .default
             .as_ref()
             .map(|value| Value::try_from(value).expect("settings defaults are TOML values"))
             .or_else(|| matches!(info.kind, Kind::Paths).then(|| Value::Array(Vec::new())));
-        Self {
-            info,
-            default,
-            label,
-            help,
-            choices,
-        }
+        Self { info, default }
     }
 
-    pub(crate) fn label(&self, locale: Locale) -> &'static str {
-        locale.text(&self.label)
+    pub(crate) fn label(&self, locale: Locale) -> &str {
+        locale.setting_label(&self.info)
     }
 
-    pub(crate) fn help(&self, locale: Locale) -> &'static str {
-        locale.text(&self.help)
+    pub(crate) fn help(&self, locale: Locale) -> &str {
+        locale.setting_help(&self.info)
     }
 
-    pub(crate) fn display<'a>(&self, locale: Locale, value: Option<&'a Value>) -> Cow<'a, str> {
+    pub(crate) fn display<'a>(&'a self, locale: Locale, value: Option<&'a Value>) -> Cow<'a, str> {
         match (&self.info.kind, value) {
             (Kind::Choice(choices), Some(Value::String(value))) => choices
                 .iter()
-                .position(|choice| choice.value == *value)
+                .find(|choice| choice.value == *value)
                 .map_or_else(
                     || locale.text("ui.invalid-value"),
-                    |index| locale.text(&self.choices[index]),
+                    |choice| locale.choice_label(&self.info, choice),
                 )
                 .into(),
             (Kind::Bool, Some(Value::Boolean(value))) => {
@@ -72,7 +43,7 @@ impl OptionInfo {
             (Kind::Text | Kind::Color, Some(Value::String(text))) => text.as_str().into(),
             (Kind::Binding(_), Some(Value::String(text))) => Chord::parse(text).map_or_else(
                 || locale.text("ui.invalid-value").into(),
-                |chord| chord.display(PLATFORM).into(),
+                |chord| chord.display(Platform::current()).into(),
             ),
             (Kind::Integer { .. } | Kind::Number { .. }, Some(Value::Integer(value))) => {
                 value.to_string().into()
@@ -89,13 +60,12 @@ impl OptionInfo {
         }
     }
 
-    pub(crate) fn allowed(&self, locale: Locale) -> Cow<'static, str> {
+    pub(crate) fn allowed(&self, locale: Locale) -> Cow<'_, str> {
         match &self.info.kind {
             Kind::Bool => format!("{} / {}", locale.text("ui.off"), locale.text("ui.on")).into(),
-            Kind::Choice(_) => self
-                .choices
+            Kind::Choice(choices) => choices
                 .iter()
-                .map(|key| locale.text(key))
+                .map(|choice| locale.choice_label(&self.info, choice))
                 .collect::<Vec<_>>()
                 .join(" / ")
                 .into(),

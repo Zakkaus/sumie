@@ -16,8 +16,8 @@ use crate::{
     screen::{Layout, Screen, frame},
 };
 
-const ENTER: &[u8] = b"\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[?1000h\x1b[?1006h\x1b[>0u\x1b[2J";
-const LEAVE: &[u8] = b"\x1b[<u\x1b[?1006l\x1b[?1000l\x1b[?2004l\x1b[?1049l\x1b[?25h";
+const ENTER: &[u8] = b"\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[>0u\x1b[2J";
+const LEAVE: &[u8] = b"\x1b[<u\x1b[?1006l\x1b[?1000l\x1b[?1049l\x1b[?25h";
 const RECORD: &[u8] = b"\x1b[=3u";
 const BROWSE: &[u8] = b"\x1b[=0u";
 // A lone Esc must be distinguishable from an arrow sequence split by SSH jitter.
@@ -48,17 +48,8 @@ impl Terminal {
 
     fn size() -> io::Result<(usize, usize)> {
         let size = tcgetwinsize(io::stdout())?;
-        let width = if size.ws_col == 0 {
-            80
-        } else {
-            size.ws_col.into()
-        };
-        let height = if size.ws_row == 0 {
-            24
-        } else {
-            size.ws_row.into()
-        };
-        Ok((width, height))
+        let cells = |n: u16, fallback| if n == 0 { fallback } else { n.into() };
+        Ok((cells(size.ws_col, 80), cells(size.ws_row, 24)))
     }
 }
 
@@ -102,7 +93,7 @@ fn write(mut bytes: &[u8]) -> io::Result<()> {
 
 type Signals = SignalDelivery<UnixStream, SignalOnly>;
 
-pub(crate) fn run(model: &mut Model) -> io::Result<u8> {
+pub(crate) fn run(model: &mut Model) -> io::Result<()> {
     let (reader, writer) = UnixStream::pair()?;
     let mut signals = Signals::with_pipe(
         reader,
@@ -114,11 +105,7 @@ pub(crate) fn run(model: &mut Model) -> io::Result<u8> {
     event_loop(model, &mut signals)
 }
 
-fn signal_status(signal: i32) -> u8 {
-    128 + u8::try_from(signal).expect("Unix terminal signal fits in one byte")
-}
-
-fn event_loop(model: &mut Model, signals: &mut Signals) -> io::Result<u8> {
+fn event_loop(model: &mut Model, signals: &mut Signals) -> io::Result<()> {
     let stdin = io::stdin();
     let mut decoder = Decoder::default();
     let mut screen = Screen::default();
@@ -150,7 +137,7 @@ fn event_loop(model: &mut Model, signals: &mut Signals) -> io::Result<u8> {
             Ok(0) => {
                 if let Some(key) = decoder.escape_timeout() {
                     if !model.key(key, Layout::new(model, width, height).page()) {
-                        return Ok(0);
+                        return Ok(());
                     }
                     dirty = true;
                 }
@@ -165,7 +152,7 @@ fn event_loop(model: &mut Model, signals: &mut Signals) -> io::Result<u8> {
             let mut resize = false;
             for signal in signals.pending() {
                 if signal != SIGWINCH {
-                    return Ok(signal_status(signal));
+                    return Ok(());
                 }
                 resize = true;
             }
@@ -176,23 +163,23 @@ fn event_loop(model: &mut Model, signals: &mut Signals) -> io::Result<u8> {
         }
         if input.contains(PollFlags::IN) {
             let n = match rustix::io::read(&stdin, &mut bytes) {
-                Ok(0) => return Ok(0),
+                Ok(0) => return Ok(()),
                 Ok(n) => n,
                 Err(Errno::INTR) => continue,
                 Err(error) => return Err(error.into()),
             };
             for key in bytes[..n].iter().filter_map(|&byte| decoder.push(byte)) {
                 if key == Key::Interrupt {
-                    return Ok(signal_status(SIGINT));
+                    return Ok(());
                 }
                 let layout = Layout::new(model, size.0, size.1);
                 if !layout.mouse(model, size.0, key) && !model.key(key, layout.page()) {
-                    return Ok(0);
+                    return Ok(());
                 }
                 dirty = true;
             }
         } else if !input.is_empty() {
-            return Ok(0);
+            return Ok(());
         }
     }
 }

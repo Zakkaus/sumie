@@ -467,7 +467,7 @@ def settings_controls():
     probe("settings skips termios restore", "settings-test", "crates/sumie-settings/src/terminal.rs",
           replace_once("let _ = tcsetattr(io::stdin(), OptionalActions::Now, &original);",
                        "let _ = original;"),
-          "test terminal::tests::restores_after_error ... FAILED")
+          "test terminal::tests::restores_after_signal ... FAILED")
     probe("recorded shortcut is not saved", "settings-test", "crates/sumie-settings/src/model.rs",
           replace_once("} else if self.write(index, &Value::String(chord.to_string())) {",
                        "} else {"),
@@ -476,15 +476,9 @@ def settings_controls():
           "crates/sumie-core/src/shortcuts/bindings.rs",
           replace_once("binding.action != target.action", "binding.action == target.action"),
           "test tests::shortcut_conflict_names_the_other_action_and_can_be_cancelled ... FAILED")
-    probe("settings mouse wheel scrolls in the wrong direction", "settings-test",
-          "crates/sumie-settings/src/screen.rs", replace_once("model.wheel(down,", "model.wheel(!down,"),
-          "test tests::mouse_clicks_select_then_edit_and_wheel_scrolls_only_the_list ... FAILED")
     probe("settings mouse edits on the first click", "settings-test", "crates/sumie-settings/src/model.rs",
           replace_once("if second {", "if !second {"),
-          "test tests::mouse_clicks_select_then_edit_and_wheel_scrolls_only_the_list ... FAILED")
-    probe("settings leaves SGR mouse reporting enabled", "settings-test", "crates/sumie-settings/src/terminal.rs",
-          replace_once(r"\x1b[?1006l", ""),
-          "test terminal::tests::restores_and_reports_signal_status ... FAILED")
+          "test tests::mouse_clicks_select_then_edit ... FAILED")
     probe("settings ignores the Vim key switch", "settings-test", "crates/sumie-settings/src/model.rs",
           replace_once("Key::Char('j') if self.vim_keys", "Key::Char('j')"),
           "test tests::disabling_vim_keys_leaves_arrow_keys_active ... FAILED")
