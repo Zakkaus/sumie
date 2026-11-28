@@ -73,7 +73,7 @@ fn an_input_method_commit_dismisses_without_being_consumed() {
     let mut hint = Some("hint".to_owned());
     let commit = Event::ImeCommit {
         text: "あ".into(),
-        generation: 0,
+        recipient: 0,
     };
     assert!(!consume(&mut hint, &commit));
     assert!(hint.is_none());

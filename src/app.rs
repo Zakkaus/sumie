@@ -76,7 +76,7 @@ struct PaneState {
     cell: [u32; 2],
     viewport_px: [u16; 2],
     exited: bool,
-    paste_recipient: Option<u64>,
+    text_recipient: Option<u64>,
     search: Option<search::Bar>,
     viewer: Option<viewer::Viewer>,
     selection: Selection,
@@ -115,7 +115,8 @@ impl Session {
             config.window.padding(),
         )?;
         let home = std::env::home_dir().ok_or("no home directory for login shell")?;
-        let first = spawn.open(0, view.content_rect(), &view, config, &home, watches)?;
+        let mut first = spawn.open(0, view.content_rect(), &view, config, &home, watches)?;
+        first.text_recipient = Some(0);
         Ok(Self {
             tabs: WindowTabs::new(PaneTab::new(first)),
             routing: input::Routing::default(),

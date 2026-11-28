@@ -134,6 +134,6 @@ pub(crate) enum Event {
     },
     ImeCommit {
         text: String,
-        generation: u64,
+        recipient: u64,
     },
 }

@@ -212,7 +212,7 @@ pub(crate) fn route(
     if matches!(
         &event,
         Event::ImePreedit { generation, .. }
-            | Event::ImeCommit { generation, .. }
+            | Event::ImeCommit { recipient: generation, .. }
             | Event::ClipboardText { generation, .. }
             if *generation != recipient
     ) {

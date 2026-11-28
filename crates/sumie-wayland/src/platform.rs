@@ -172,11 +172,13 @@ impl Platform {
         }
     }
 
-    /// Change the focused input recipient; restart IME composition on the same surface.
-    /// IME text events carry this generation until the next focus change.
+    /// Restart IME composition on the same surface. Preedit carries `generation`; commits
+    /// carry the `recipient` that was enabled at their serial.
     /// Call outside the interval between `begin_frame` and the buffer commit.
-    pub fn set_input_generation(&mut self, generation: u64) {
-        self.state.set_input_generation(generation);
+    pub fn set_input_generation(&mut self, generation: u64, recipient: u64) {
+        let connection = Connection::from_backend(self.state.window.display.0.clone());
+        self.state
+            .set_input_generation(generation, recipient, &connection);
     }
 
     /// Stage the latest title for the next committed frame.
@@ -289,6 +291,7 @@ pub(crate) struct State {
     pub(crate) pointer: Option<Pointer>,
     pub(crate) text_input_manager: Option<ZwpTextInputManagerV3>,
     pub(crate) input_generation: u64,
+    pub(crate) text_recipient: u64,
     pub(crate) cursor_rect: Option<CursorRect>,
     pub(crate) events: VecDeque<Event>,
     logical: (u32, u32),
@@ -362,6 +365,7 @@ impl State {
             pointer: None,
             text_input_manager,
             input_generation: 0,
+            text_recipient: 0,
             cursor_rect: None,
             events: VecDeque::new(),
             logical: (800, 600),

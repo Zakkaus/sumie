@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 
 use smithay_client_toolkit::reexports::client::{
-    Connection, Dispatch, Proxy, QueueHandle, delegate_noop, protocol::wl_seat::WlSeat,
+    Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
+    protocol::{wl_callback::WlCallback, wl_seat::WlSeat},
 };
+use wayland_backend::client::ObjectId;
 use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3::ZwpTextInputManagerV3,
     zwp_text_input_v3::{self, ContentHint, ContentPurpose, ZwpTextInputV3},
@@ -32,6 +34,8 @@ struct ImeState {
     serial: u32,
     wait_for_match: bool,
     enabled_at: Option<u32>,
+    // Inclusive serial ranges from previous recipients that the compositor may not have seen yet.
+    previous_recipients: VecDeque<(u32, u32, u64)>,
     sent_rect: Option<CursorRect>,
     pending: Batch,
     has_preedit: bool,
@@ -48,6 +52,7 @@ impl ImeState {
 
     fn disable(&mut self, generation: u64, events: &mut VecDeque<Event>) {
         self.enabled_at = None;
+        self.previous_recipients.clear();
         self.pending = Batch::default();
         if std::mem::take(&mut self.has_preedit) {
             events.push_back(Event::ImePreedit {
@@ -82,7 +87,18 @@ impl ImeState {
         Some(rect)
     }
 
-    fn done(&mut self, serial: u32, generation: u64, events: &mut VecDeque<Event>) {
+    fn discard_before(&mut self, serial: u32) {
+        let age = self.serial.wrapping_sub(serial);
+        while self
+            .previous_recipients
+            .front()
+            .is_some_and(|&(_, last, _)| age < self.serial.wrapping_sub(last))
+        {
+            self.previous_recipients.pop_front();
+        }
+    }
+
+    fn done(&mut self, serial: u32, generation: u64, recipient: u64, events: &mut VecDeque<Event>) {
         let Batch {
             commit,
             preedit,
@@ -92,14 +108,24 @@ impl ImeState {
         let Some(enabled_at) = self.enabled_at.or(enabled_before_leave) else {
             return;
         };
-        // Only a serial from this recipient may apply text. A mismatch within
-        // that interval still applies the batch, but defers outgoing state.
-        if self.serial.wrapping_sub(serial) > self.serial.wrapping_sub(enabled_at) {
+        let age = self.serial.wrapping_sub(serial);
+        let current = age <= self.serial.wrapping_sub(enabled_at);
+        self.discard_before(serial);
+        let recipient = if current {
+            recipient
+        } else if let Some(&(first, _, previous)) = self.previous_recipients.front()
+            && age <= self.serial.wrapping_sub(first)
+        {
+            previous
+        } else {
             return;
-        }
+        };
         self.wait_for_match = serial != self.serial;
         if let Some(text) = commit {
-            events.push_back(Event::ImeCommit { text, generation });
+            events.push_back(Event::ImeCommit { text, recipient });
+        }
+        if !current || self.enabled_at.is_none() {
+            return;
         }
         let has_preedit = !preedit.is_empty();
         if std::mem::replace(&mut self.has_preedit, has_preedit) || has_preedit {
@@ -170,11 +196,17 @@ impl Drop for TextInput {
 }
 
 impl State {
-    pub(crate) fn set_input_generation(&mut self, generation: u64) {
+    pub(crate) fn set_input_generation(
+        &mut self,
+        generation: u64,
+        recipient: u64,
+        connection: &Connection,
+    ) {
         if self.input_generation == generation {
             return;
         }
         self.input_generation = generation;
+        let previous = std::mem::replace(&mut self.text_recipient, recipient);
         self.cursor_rect = None;
         let Some(ime) = self
             .keyboard
@@ -183,12 +215,22 @@ impl State {
         else {
             return;
         };
-        if ime.state.enabled_at.is_none() {
+        let Some(enabled_at) = ime.state.enabled_at else {
             ime.state.pending = Batch::default();
             return;
-        }
+        };
+        ime.state
+            .previous_recipients
+            .push_back((enabled_at, ime.state.serial, previous));
+        let commit = ime.state.pending.commit.take();
         ime.disable();
-        if ime.enable(None) {
+        let commit_surface = ime.enable(None);
+        ime.state.pending.commit = commit;
+        // After the compositor sees the new enable, it cannot send an older serial.
+        connection
+            .display()
+            .sync(&self.qh, (ime.proxy.id(), ime.state.serial));
+        if commit_surface {
             self.commit_ime_surface();
         }
     }
@@ -242,6 +284,26 @@ impl State {
     }
 }
 
+impl Dispatch<WlCallback, (ObjectId, u32)> for State {
+    fn event(
+        state: &mut Self,
+        _: &WlCallback,
+        _: <WlCallback as Proxy>::Event,
+        (id, serial): &(ObjectId, u32),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let Some(ime) = state
+            .keyboard
+            .as_mut()
+            .and_then(|keyboard| keyboard.ime.as_mut())
+            && ime.proxy.id() == *id
+        {
+            ime.state.discard_before(*serial);
+        }
+    }
+}
+
 impl Dispatch<ZwpTextInputV3, ()> for State {
     fn event(
         state: &mut Self,
@@ -286,8 +348,12 @@ impl Dispatch<ZwpTextInputV3, ()> for State {
                 false
             }
             zwp_text_input_v3::Event::Done { serial } => {
-                ime.state
-                    .done(serial, state.input_generation, &mut state.events);
+                ime.state.done(
+                    serial,
+                    state.input_generation,
+                    state.text_recipient,
+                    &mut state.events,
+                );
                 ime.update_cursor(state.cursor_rect)
             }
             zwp_text_input_v3::Event::DeleteSurroundingText { .. } => {
@@ -360,11 +426,11 @@ mod tests {
                 ime.keyboard_leave(generation, &mut events);
                 ime.serial = ime.serial.wrapping_add(1);
             }
-            ime.done(serial, generation, &mut events);
+            ime.done(serial, generation, 7, &mut events);
             if let Some(commit) = commit {
                 assert!(matches!(
                     events.pop_front(),
-                    Some(Event::ImeCommit { text, generation: g }) if text == commit && g == generation
+                    Some(Event::ImeCommit { text, recipient: 7 }) if text == commit
                 ));
             }
             if !keyboard_left {
@@ -387,8 +453,35 @@ mod tests {
         ime.keyboard_leave(0, &mut events);
         assert!(ime.accepts_text());
         ime.pending.commit = Some("水".to_owned());
-        ime.done(ime.serial, 0, &mut events);
+        ime.done(ime.serial, 0, 0, &mut events);
         assert!(matches!(events.pop_front(), Some(Event::ImeCommit { text, .. }) if text == "水"));
+    }
+
+    #[test]
+    fn late_done_delivers_commit_to_its_serial_owner_without_preedit() {
+        let mut ime = ImeState {
+            serial: 3,
+            enabled_at: Some(3),
+            previous_recipients: VecDeque::from([(u32::MAX, u32::MAX, 7), (1, 1, 8)]),
+            ..ImeState::default()
+        };
+        let mut events = VecDeque::new();
+        for (serial, recipient) in [(u32::MAX, 7), (1, 8), (3, 9)] {
+            ime.pending.commit = Some("字".into());
+            ime.pending.preedit = "ㄅ".into();
+            ime.done(serial, 10, 9, &mut events);
+            assert!(matches!(
+                events.pop_front(),
+                Some(Event::ImeCommit { text, recipient: got }) if text == "字" && got == recipient
+            ));
+            if serial == 3 {
+                assert!(matches!(
+                    events.pop_front(),
+                    Some(Event::ImePreedit { text, generation: 10, .. }) if text == "ㄅ"
+                ));
+            }
+            assert!(events.is_empty());
+        }
     }
 
     #[test]
@@ -401,16 +494,16 @@ mod tests {
             ime.pending.commit = Some("partial".into());
             ime.enable();
             ime.serial = enabled;
-            ime.done(enabled, generation, &mut events);
+            ime.done(enabled, generation, generation, &mut events);
             assert!(events.is_empty());
 
             for serial in [previous, disabled, enabled] {
                 ime.pending.commit = Some("水".into());
-                ime.done(serial, generation, &mut events);
+                ime.done(serial, generation, generation, &mut events);
                 if serial == enabled {
                     assert!(matches!(
                         events.pop_front(),
-                        Some(Event::ImeCommit { text, generation: g }) if g == generation && text == "水"
+                        Some(Event::ImeCommit { text, recipient }) if recipient == generation && text == "水"
                     ));
                 }
                 assert!(events.is_empty());

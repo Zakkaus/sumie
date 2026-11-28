@@ -399,8 +399,7 @@ fn apply_pane_effect(
             }
             if matches!(action, SearchAction::Open | SearchAction::Close) {
                 pane.pane.reset_pointer_gestures();
-                pane.paste_recipient = None;
-                window.set_input_generation(routing.change_recipient());
+                pane.reset_text_recipient(routing, window);
             }
             pane.search_action(action, view)?;
         }
@@ -415,10 +414,10 @@ fn apply_pane_effect(
             pane.snapshot_dirty = true;
         }
         Effect::ReadClipboard => {
-            window.read_clipboard(*pane.paste_recipient.get_or_insert(routing.generation));
+            window.read_clipboard(pane.text_recipient.expect("focused text recipient"));
         }
         Effect::ReadPrimary => {
-            window.read_primary(*pane.paste_recipient.get_or_insert(routing.generation));
+            window.read_primary(pane.text_recipient.expect("focused text recipient"));
         }
         Effect::Preedit(text, cursor) if text != view.preedit || cursor != view.preedit_cursor => {
             view.preedit = text;
@@ -428,6 +427,18 @@ fn apply_pane_effect(
         _ => (),
     }
     Ok(())
+}
+
+impl PaneState {
+    pub(super) fn reset_text_recipient(
+        &mut self,
+        routing: &mut Routing,
+        window: &mut impl WindowOps,
+    ) {
+        let generation = routing.change_recipient();
+        self.text_recipient = Some(generation);
+        window.set_input_generation(generation, generation);
+    }
 }
 
 #[cfg(test)]

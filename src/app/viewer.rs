@@ -144,10 +144,9 @@ fn change_recipient(
     routing: &mut Routing,
     window: &mut impl WindowOps,
 ) {
-    pane.paste_recipient = None;
     view.preedit.clear();
     routing.reset_pointer();
-    window.set_input_generation(routing.change_recipient());
+    pane.reset_text_recipient(routing, window);
 }
 
 pub(super) fn escape_pressed(event: &Event) -> bool {

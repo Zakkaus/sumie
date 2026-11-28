@@ -35,12 +35,10 @@ pub(super) fn wheel_phase(scroll: Scroll, scale: f64) -> MousePhase {
     }
 }
 
-/// A finished paste, stamped with the recipient its request named, not with `current`, the
-/// input generation when it arrives: a recipient that changed while the helper ran must not
-/// receive it.
+/// A finished paste keeps the recipient its request named, even if focus changed.
 pub(super) fn paste_event(Pasted { text, recipient }: Pasted, current: u64) -> Event {
     if recipient != current {
-        tracing::debug!("a paste arrived after the input generation changed");
+        tracing::debug!("a paste arrived for a recipient that is no longer focused");
     }
     Event::ClipboardText {
         text,

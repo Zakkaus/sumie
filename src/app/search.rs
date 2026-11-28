@@ -450,7 +450,7 @@ mod tests {
         let plain = |physical, symbol| key_event(physical, symbol, Press, Modifiers::default());
         let commit = |text: &str| Event::ImeCommit {
             text: text.into(),
-            generation: 0,
+            recipient: 0,
         };
         [
             (commit("replace-me"), "replace-me"),

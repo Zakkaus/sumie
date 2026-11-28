@@ -148,7 +148,7 @@ impl PaneHost {
             cell: view.cell,
             viewport_px: [size.width_px, size.height_px],
             exited: false,
-            paste_recipient: None,
+            text_recipient: None,
             search: None,
             viewer: None,
             selection: Selection::default(),
@@ -256,10 +256,7 @@ impl PaneState {
         let mut serviced = Serviced::default();
         if ready.exit {
             self.pane.pty.service_child()?;
-            if self.pane.pty.exit_fd().is_none() {
-                serviced.exited = true;
-                return Ok(serviced);
-            }
+            serviced.exited = self.pane.pty.exit_fd().is_none();
         }
         if ready.output {
             let batch =
@@ -288,7 +285,9 @@ impl PaneState {
                 window.stop_output(self.id);
             }
         }
-        serviced.exited = ready.input && !self.pane.pty.flush_input()?;
+        if !serviced.exited {
+            serviced.exited = ready.input && !self.pane.pty.flush_input()?;
+        }
         Ok(serviced)
     }
 }
@@ -343,7 +342,12 @@ impl Session {
                 .position(|tab| tab.panes.binary_search_by_key(&id, |p| p.id).is_ok())?;
             return Some((index, id, self.routing.generation));
         }
-        if let Event::ClipboardText { generation, .. } = event {
+        if let Event::ClipboardText { generation, .. }
+        | Event::ImeCommit {
+            recipient: generation,
+            ..
+        } = event
+        {
             return self
                 .tabs
                 .as_slice()
@@ -353,7 +357,7 @@ impl Session {
                     let pane = tab
                         .panes
                         .iter()
-                        .find(|p| p.paste_recipient == Some(*generation))?;
+                        .find(|p| p.text_recipient == Some(*generation))?;
                     Some((i, pane.id, *generation))
                 });
         }
@@ -449,7 +453,9 @@ impl Session {
             self.pane_pointer.reset();
         }
         self.routing.reset_pointer();
-        window.set_input_generation(self.routing.change_recipient());
+        let generation = self.routing.change_recipient();
+        let recipient = *self.active_mut().text_recipient.get_or_insert(generation);
+        window.set_input_generation(generation, recipient);
         self.view.reset_hits();
         self.view.preedit.clear();
         self.view.search_bar = self.active().search.as_ref().map(|_| String::new());
@@ -567,32 +573,4 @@ impl Session {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn middle_click_on_a_tab_closes_it_and_captures_release() {
-        let mut pointer = BarPointer::default();
-        assert!(matches!(
-            pointer.route(Some(TabHit::Tab(1)), true, Phase::Press(Button::Middle, 0)),
-            Break(Some(Action::Close(1)))
-        ));
-        assert!(matches!(
-            pointer.route(None, false, Phase::Release(Button::Middle)),
-            Break(None)
-        ));
-    }
-
-    #[test]
-    fn wheel_counts_whole_notches_and_keeps_the_remainder() {
-        let mut pointer = BarPointer::default();
-        for (delta, expected) in [(375., 3), (105., 1), (-90., 0), (-150., -2)] {
-            let steps = match pointer.route(None, true, Phase::Wheel(delta)) {
-                Break(Some(Action::Key(TabAction::Cycle(steps)))) => steps,
-                Break(None) => 0,
-                _ => panic!("wheel did not stay on the tab bar"),
-            };
-            assert_eq!(steps, expected);
-        }
-    }
-}
+mod tests;
