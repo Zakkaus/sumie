@@ -42,11 +42,7 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
             repeat,
             serial,
         } => {
-            let (action, origin) = match (pressed, repeat) {
-                (_, true) => (KeyAction::Repeat, None),
-                (true, false) => (KeyAction::Press, Some(serial)),
-                (false, false) => (KeyAction::Release, None),
-            };
+            let (action, origin) = key_action(pressed, repeat, serial);
             copy_serial = origin;
             Event::Key {
                 physical: keycodes::physical_key(physical),
@@ -92,6 +88,14 @@ pub(super) fn convert(native: Native) -> Option<(Event, Option<u32>)> {
         Native::ImeCommit { text, recipient } => Event::ImeCommit { text, recipient },
     };
     Some((event, copy_serial))
+}
+
+fn key_action(pressed: bool, repeat: bool, serial: u32) -> (KeyAction, Option<u32>) {
+    match (pressed, repeat) {
+        (_, true) => (KeyAction::Repeat, None),
+        (true, false) => (KeyAction::Press, Some(serial)),
+        (false, false) => (KeyAction::Release, None),
+    }
 }
 
 fn preedit_cursor(text: &str, cursor: Option<(u32, u32)>) -> Option<(usize, usize)> {

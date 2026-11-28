@@ -67,9 +67,7 @@ pub(super) struct Pointer {
 impl Pointer {
     pub(super) fn present_layout(&mut self, tab: &PaneTab) {
         self.presented = Some(tab.layout_key());
-        self.visible_panes.clear();
-        self.visible_panes
-            .extend(tab.layout.panes.iter().map(|&(id, _)| id));
+        self.visible_panes = tab.layout.panes.iter().map(|&(id, _)| id).collect();
     }
 
     pub(super) fn layout_is_presented(&self, tab: &PaneTab) -> bool {
@@ -320,10 +318,9 @@ impl Session {
                 // The search bar and the config banner sit over the grid; they would slide with it.
                 if self.smooth_scroll && !searching && !(banner && focused) {
                     let now = self.clock.elapsed();
-                    let scale = self.view.scale();
                     let smooth = || pane.pane.wheel_scrolls_history() && !window.reduce_motion();
                     let scroll = &mut pane.scroll;
-                    if scroll.wheel(event.phase, scale, pane.cell[1], now, smooth) {
+                    if scroll.wheel(event.phase, self.view.scale(), pane.cell[1], now, smooth) {
                         return Ok(());
                     }
                 }

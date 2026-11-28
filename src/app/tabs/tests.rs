@@ -269,10 +269,15 @@ fn pointer_hits_use_the_old_scroll_offset_until_presented() {
     let terminal = &mut session.active_mut().pane.terminal;
     terminal.write(b"one\r\n".repeat(40).as_slice());
     terminal.scroll_rows(-2).unwrap();
-    session
-        .active_mut()
-        .smooth_wheel(MousePhase::Touch(24.0), 120, Duration::ZERO);
-    session.step_scroll(Instant::now()).unwrap();
+    let pane = session.active_mut();
+    pane.scroll.wheel(
+        MousePhase::Touch(24.0),
+        120,
+        pane.cell[1],
+        Duration::ZERO,
+        || true,
+    );
+    session.step_scroll(Instant::now(), || false).unwrap();
     for (frame, row) in [(SurfaceFrame::Timeout, 0), (PRESENTED, 1)] {
         session.present_pointer_hits(frame);
         let (cell, _, _) =
