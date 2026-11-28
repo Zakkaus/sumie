@@ -75,10 +75,50 @@ fn a_composition_keeps_its_owner_through_the_empty_preedit_and_commits_once() {
         feed(&mut composition, Ime::Commit("把".into())),
         [Seen::Commit("把".into(), 3)]
     );
-    // A second commit without a new composition has no owner.
-    assert_eq!(feed(&mut composition, Ime::Commit("把".into())), []);
-    // Nor does an empty preedit after it.
+    // An empty preedit after it has no owner.
     assert_eq!(feed(&mut composition, empty()), []);
+}
+
+#[test]
+fn a_commit_without_marked_text_goes_to_the_current_recipient() {
+    let mut composition = Composition::default();
+    composition.set_generation(5, 1);
+    // Pinyin ends ni with the comma key: the candidate commits, then the comma without marked
+    // text.
+    feed(&mut composition, preedit("ni"));
+    assert_eq!(
+        feed(&mut composition, Ime::Commit("你".into())),
+        [Seen::Commit("你".into(), 1)]
+    );
+    assert_eq!(
+        feed(&mut composition, Ime::Commit("，".into())),
+        [Seen::Commit("，".into(), 1)]
+    );
+    composition.set_generation(6, 2);
+    assert_eq!(
+        feed(&mut composition, Ime::Commit("，".into())),
+        [Seen::Commit("，".into(), 2)]
+    );
+}
+
+#[test]
+fn only_one_commit_after_a_cancel_is_dropped() {
+    let mut composition = Composition::default();
+    feed(&mut composition, preedit("ni"));
+    composition.cancel();
+    assert_eq!(feed(&mut composition, Ime::Commit("你".into())), []);
+    assert_eq!(
+        feed(&mut composition, Ime::Commit("，".into())),
+        [Seen::Commit("，".into(), 0)]
+    );
+    // A key pressed after the cancel comes after its late commit, if there was one.
+    feed(&mut composition, preedit("ni"));
+    composition.cancel();
+    composition.key(&key(KeyCode::Digit1, '1', KeyAction::Press));
+    assert_eq!(
+        feed(&mut composition, Ime::Commit("，".into())),
+        [Seen::Commit("，".into(), 0)]
+    );
 }
 
 #[test]

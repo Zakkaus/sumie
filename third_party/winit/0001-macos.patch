@@ -477,7 +477,7 @@ index 83398030..38b8b9d0 100644
          // SAFETY: The runloop is valid, the mode is a `CFStringRef`, and the block is `'static`.
          unsafe { CFRunLoopPerformBlock(self.0, mode, &block) }
 diff --git a/src/platform_impl/macos/view.rs b/src/platform_impl/macos/view.rs
-index c7ca5bc6..5d00fd43 100644
+index c7ca5bc6..e97389a5 100644
 --- a/src/platform_impl/macos/view.rs
 +++ b/src/platform_impl/macos/view.rs
 @@ -7,13 +7,14 @@ use objc2::rc::{Retained, WeakId};
@@ -486,7 +486,7 @@ index c7ca5bc6..5d00fd43 100644
  use objc2_app_kit::{
 -    NSApplication, NSCursor, NSEvent, NSEventPhase, NSResponder, NSTextInputClient,
 -    NSTrackingRectTag, NSView, NSViewFrameDidChangeNotification,
-+    NSApplication, NSCursor, NSEvent, NSEventModifierFlags, NSEventPhase, NSResponder,
++    NSApplication, NSCursor, NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType, NSResponder,
 +    NSTextInputClient, NSTextInputContextKeyboardSelectionDidChangeNotification, NSTrackingRectTag,
 +    NSView, NSViewFrameDidChangeNotification,
  };
@@ -525,7 +525,39 @@ index c7ca5bc6..5d00fd43 100644
          #[method(frameDidChange:)]
          fn frame_did_change(&self, _event: &NSEvent) {
              trace_scope!("frameDidChange:");
-@@ -441,16 +454,8 @@ declare_class!(
+@@ -407,11 +420,30 @@ declare_class!(
+ 
+             let is_control = string.chars().next().is_some_and(|c| c.is_control());
+ 
+-            // Commit only if we have marked text.
+             if unsafe { self.hasMarkedText() } && self.is_ime_enabled() && !is_control {
+                 self.queue_event(WindowEvent::Ime(Ime::Preedit(String::new(), None)));
+                 self.queue_event(WindowEvent::Ime(Ime::Commit(string)));
+                 self.ivars().ime_state.set(ImeState::Committed);
++            } else if self.ivars().ime_allowed.get() && !is_control {
++                // Without marked text, the input method can still insert text of its own, as
++                // Pinyin does with punctuation the keyboard layout types differently. That is a
++                // commit, unless it is the key's own text, which its key event carries.
++                let mtm = MainThreadMarker::from(self);
++                let key = NSApplication::sharedApplication(mtm)
++                    .currentEvent()
++                    .filter(|event| unsafe { event.r#type() } == NSEventType::KeyDown);
++                if key.as_deref().is_some_and(|event| is_key_text(event, &string)) {
++                    return;
++                }
++                if self.ivars().ime_state.get() == ImeState::Disabled {
++                    *self.ivars().input_source.borrow_mut() = self.current_input_source();
++                    self.queue_event(WindowEvent::Ime(Ime::Enabled));
++                }
++                self.queue_event(WindowEvent::Ime(Ime::Commit(string)));
++                // The key that caused it is not forwarded.
++                if key.is_some() {
++                    self.ivars().ime_state.set(ImeState::Committed);
++                }
+             }
+         }
+ 
+@@ -441,16 +473,8 @@ declare_class!(
          #[method(keyDown:)]
          fn key_down(&self, event: &NSEvent) {
              trace_scope!("keyDown:");
@@ -544,7 +576,7 @@ index c7ca5bc6..5d00fd43 100644
  
              // Get the characters from the event.
              let old_ime_state = self.ivars().ime_state.get();
-@@ -463,7 +468,11 @@ declare_class!(
+@@ -463,7 +487,11 @@ declare_class!(
              // we must send the `KeyboardInput` event during IME if it triggered
              // `doCommandBySelector`. (doCommandBySelector means that the keyboard input
              // is not handled by IME and should be handled by the application)
@@ -557,7 +589,7 @@ index c7ca5bc6..5d00fd43 100644
                  let events_for_nsview = NSArray::from_slice(&[&*event]);
                  unsafe { self.interpretKeyEvents(&events_for_nsview) };
  
-@@ -487,7 +496,15 @@ declare_class!(
+@@ -487,7 +515,15 @@ declare_class!(
                  _ => old_ime_state != self.ivars().ime_state.get(),
              };
  
@@ -574,7 +606,7 @@ index c7ca5bc6..5d00fd43 100644
                  let key_event = create_key_event(&event, true, unsafe { event.isARepeat() });
                  self.queue_event(WindowEvent::KeyboardInput {
                      device_id: DEVICE_ID,
-@@ -504,11 +521,21 @@ declare_class!(
+@@ -504,11 +540,21 @@ declare_class!(
              let event = replace_event(event, self.option_as_alt());
              self.update_modifiers(&event, false);
  
@@ -601,7 +633,7 @@ index c7ca5bc6..5d00fd43 100644
                  self.queue_event(WindowEvent::KeyboardInput {
                      device_id: DEVICE_ID,
                      event: create_key_event(&event, false, false),
-@@ -803,6 +830,7 @@ impl WinitView {
+@@ -803,6 +849,7 @@ impl WinitView {
              input_source: Default::default(),
              ime_allowed: Default::default(),
              forward_key_to_app: Default::default(),
@@ -609,7 +641,7 @@ index c7ca5bc6..5d00fd43 100644
              marked_text: Default::default(),
              accepts_first_mouse,
              _ns_window: WeakId::new(&window.retain()),
-@@ -818,7 +846,13 @@ impl WinitView {
+@@ -818,7 +865,13 @@ impl WinitView {
                  sel!(frameDidChange:),
                  Some(NSViewFrameDidChangeNotification),
                  Some(&this),
@@ -624,7 +656,7 @@ index c7ca5bc6..5d00fd43 100644
          }
  
          *this.ivars().input_source.borrow_mut() = this.current_input_source();
-@@ -847,6 +881,29 @@ impl WinitView {
+@@ -847,6 +900,30 @@ impl WinitView {
          !matches!(self.ivars().ime_state.get(), ImeState::Disabled)
      }
  
@@ -633,8 +665,9 @@ index c7ca5bc6..5d00fd43 100644
 +    /// `keyDown:` and the input-source notification both call this, whichever comes first;
 +    /// the other finds the source already recorded and does nothing, so `Disabled` is sent once.
 +    /// The composition is ended in AppKit too, as disallowing input methods does, or its text
-+    /// can stay marked there. Our state is clear first, so a commit the old input method sends
-+    /// on deactivation or while discarding finds no marked text and is dropped.
++    /// can stay marked there. Our marked text is clear first, so a commit the old input method
++    /// sends on deactivation or while discarding is reported after `Disabled`, without a
++    /// preedit; the state stays `Disabled`, so the key being handled is still forwarded.
 +    fn leave_changed_input_source(&self) {
 +        let current_input_source = self.current_input_source();
 +        let mut prev_input_source = self.ivars().input_source.borrow_mut();
@@ -644,34 +677,41 @@ index c7ca5bc6..5d00fd43 100644
 +        *prev_input_source = current_input_source;
 +        drop(prev_input_source);
 +        *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
-+        self.ivars().ime_state.set(ImeState::Disabled);
 +        self.queue_event(WindowEvent::Ime(Ime::Disabled));
 +        if let Some(input_context) = self.inputContext() {
 +            input_context.discardMarkedText();
 +        }
++        self.ivars().ime_state.set(ImeState::Disabled);
 +    }
 +
      fn current_input_source(&self) -> String {
          self.inputContext()
              .expect("input context")
-@@ -893,6 +950,13 @@ impl WinitView {
+@@ -893,6 +970,13 @@ impl WinitView {
              self.ivars().ime_state.set(ImeState::Disabled);
              self.queue_event(WindowEvent::Ime(Ime::Disabled));
          }
 +
 +        // End the input method's own composition too, or its candidate window stays open and
-+        // the next key continues the old text. Our state is already clear, so a commit the
-+        // input method sends while discarding finds no marked text and is dropped.
++        // the next key continues the old text. Input methods are already disallowed, so a
++        // commit the input method sends while discarding is dropped.
 +        if let Some(input_context) = self.inputContext() {
 +            input_context.discardMarkedText();
 +        }
      }
  
      pub(super) fn set_ime_cursor_area(&self, position: NSPoint, size: NSSize) {
-@@ -1140,3 +1204,7 @@ fn replace_event(event: &NSEvent, option_as_alt: OptionAsAlt) -> Retained<NSEven
+@@ -1140,3 +1224,14 @@ fn replace_event(event: &NSEvent, option_as_alt: OptionAsAlt) -> Retained<NSEven
          event.copy()
      }
  }
++
++/// Whether `text` is what the key event itself types, with or without its modifiers (Option
++/// as Alt types the latter).
++fn is_key_text(event: &NSEvent, text: &str) -> bool {
++    let typed = unsafe { [event.characters(), event.charactersIgnoringModifiers()] };
++    typed.into_iter().flatten().any(|typed| typed.to_string() == text)
++}
 +
 +fn is_command(event: &NSEvent) -> bool {
 +    unsafe { event.modifierFlags() }.contains(NSEventModifierFlags::NSEventModifierFlagCommand)

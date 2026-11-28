@@ -6,9 +6,13 @@
 //! focus changes goes to the original recipient. A composition ends at its commit, when winit
 //! reports it disabled, at focus loss, or at its first event under another input source.
 //! A generation change cancels it natively; winit's `Disabled` follows the events it already
-//! delivered. A commit without an owner answers a cancelled composition or repeats a commit.
-//! The window converts events in delivery order, so a new generation applies from the event
-//! that caused it, and a composition the next key starts belongs to the new recipient.
+//! delivered. A commit without an owner belongs to no running composition. After a cancel and
+//! before the next composition or forwarded key press, it answers the cancelled composition,
+//! so it is stale and dropped. Otherwise the input method inserted it without marked text, as
+//! Pinyin does with the punctuation that ends a composition, and it goes to the current
+//! recipient. The window converts events in delivery order, so a new generation applies from
+//! the event that caused it, and a composition the next key starts belongs to the new
+//! recipient.
 //!
 //! winit forwards no key-up while the input method composes, so a press reported before the
 //! composition took over would never end. Its release is sent when the composition starts,
@@ -55,6 +59,8 @@ pub struct Composition {
     recipient: u64,
     /// Generation, text recipient, and input source of the running composition.
     owner: Option<(u64, u64, Option<String>)>,
+    /// A composition was cancelled, and its input method may still commit it.
+    cancelled: bool,
     /// Presses forwarded to the session whose release has not arrived.
     held: Vec<(PhysicalKey, Symbol)>,
     modifiers: KeyModifiers,
@@ -75,6 +81,7 @@ impl Composition {
     /// late events have no owner.
     pub fn cancel(&mut self) -> Option<Input> {
         let (generation, _, _) = self.owner.take()?;
+        self.cancelled = true;
         Some(Input::Preedit {
             text: String::new(),
             cursor: None,
@@ -90,6 +97,7 @@ impl Composition {
     pub fn key(&mut self, key: &Key) {
         match key.action {
             KeyAction::Press => {
+                self.cancelled = false;
                 self.held.retain(|&(physical, _)| physical != key.physical);
                 self.held.push((key.physical, key.symbol));
             }
@@ -115,6 +123,7 @@ impl Composition {
                     .owner
                     .get_or_insert((self.generation, self.recipient, source))
                     .0;
+                self.cancelled = false;
                 out.extend(self.release_held());
                 let cursor = cursor.filter(|&(start, end)| {
                     start <= end && text.is_char_boundary(start) && text.is_char_boundary(end)
@@ -137,13 +146,17 @@ impl Composition {
             Ime::Commit(text) => {
                 if let Some((_, recipient, _)) = self.owner.take() {
                     out.push(Input::Commit { text, recipient });
+                } else if std::mem::take(&mut self.cancelled) {
+                    // The composition was cancelled (natively at a recipient change or focus
+                    // loss, or by another input source), and this is its late commit. A
+                    // cancelled composition commits nothing; Ghostty and iTerm2 likewise never
+                    // commit marked text on focus loss.
+                    tracing::debug!("dropped the commit of a cancelled composition");
                 } else {
-                    // No composition is running: it was cancelled (natively at a recipient
-                    // change or focus loss, or by another input source), or this repeats the
-                    // commit that ended it. Either way it is stale. A cancelled composition
-                    // commits nothing; Ghostty and iTerm2 likewise never commit marked text
-                    // on focus loss.
-                    tracing::debug!("dropped an input-method commit without an owner");
+                    out.push(Input::Commit {
+                        text,
+                        recipient: self.recipient,
+                    });
                 }
             }
             Ime::Disabled => out.extend(self.cancel()),

@@ -48,12 +48,18 @@ def ime_controls():
     """Without a Pinyin input source macos-ime exits 2, so these report "could not run"."""
     ime = "crates/sumie-macos/src/ime.rs"
     late = "ime: late: queued commit reaches the original pane: recorded nothing instead of e68a8a"
-    probe("commit sent twice", "macos-ime", ime,
+    probe("commit keeps its owner", "macos-ime", ime,
           replace_once("                if let Some((_, recipient, _)) = self.owner.take() {\n"
                        "                    out.push(Input::Commit",
                        "                if let Some((_, recipient, _)) = self.owner.clone() {\n"
                        "                    out.push(Input::Commit"),
-          "ime: commit: once, then not again without a composition: recorded e68a8ae68a8a")
+          "ime: late: pane 2's composition: the overlay shows 0 - - instead of 3 3 3")
+    probe("commit without marked text dropped", "macos-ime", ime,
+          replace_once("} else if std::mem::take(&mut self.cancelled) {", "} else if true {"),
+          "ime: commit: once, then a commit without a composition: recorded e68a8a instead of")
+    probe("late commit of a cancelled composition delivered", "test", ime,
+          replace_once("        self.cancelled = true;\n", ""),
+          "test ime::tests::cancelling_clears_the_overlay_once_and_drops_the_late_commit ... FAILED")
     probe("late commit delivered to the new pane", "macos-ime", ime,
           replace_once("if let Some((_, recipient, _)) = self.owner.take() {\n"
                        "                    out.push(Input::Commit { text, recipient });",
