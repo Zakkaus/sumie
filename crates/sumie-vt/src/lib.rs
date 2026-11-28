@@ -212,6 +212,14 @@ impl Terminal {
         unsafe { &mut *self.effects }
     }
 
+    /// Whether the application has enabled bracketed paste (mode 2004).
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot query the mode.
+    pub fn bracketed_paste(&self) -> Result<bool, Error> {
+        self.mode(ffi::MODE_BRACKETED_PASTE)
+    }
+
     /// Encode a single paste for atomic admission to the PTY queue.
     ///
     /// # Errors
@@ -221,7 +229,7 @@ impl Terminal {
         if text.is_empty() {
             return Ok(Vec::new());
         }
-        let bracketed = self.mode(ffi::MODE_BRACKETED_PASTE)?;
+        let bracketed = self.bracketed_paste()?;
         if bracketed && text.contains(END) {
             text = text.replace(END, "");
         }

@@ -1,13 +1,15 @@
 //! Apply window events and reloaded settings to the session, GPU and window.
 
 use sumie_config::Config;
+use sumie_core::KeyAction;
+use sumie_locale::Locale;
 
-use super::{App, Session, tabs};
+use super::{App, PaneState, Session, tabs};
 use crate::{
     Result,
     gpu::{self, Gpu},
     pane::{set_colors, set_cursor_defaults},
-    platform::{Event, WindowOps},
+    platform::{Event, LogicalKey, WindowOps},
 };
 
 impl App {
@@ -100,7 +102,11 @@ impl App {
         window: &mut W,
     ) -> Result<bool> {
         match event {
-            Event::CloseRequested => return Ok(true),
+            Event::CloseRequested => {
+                return self.session.as_mut().map_or(Ok(true), |session| {
+                    session.request_window_close(&self.config)
+                });
+            }
             Event::Exposed => {
                 if let Some(session) = &mut self.session {
                     session.active_mut().frame_dirty = true;
@@ -153,29 +159,27 @@ impl App {
                     session.clock.presented(at, refresh);
                 }
             }
-            event => {
-                if self.hint_drawn && self.banner.is_none() {
-                    let consumed = super::first_run::consume(&mut self.hint, &event);
-                    if self.hint.is_none() {
-                        self.hint_drawn = false;
-                        if let Some(session) = &mut self.session {
-                            session.active_mut().frame_dirty = true;
-                        }
-                    }
-                    if consumed {
-                        return Ok(false);
-                    }
-                }
-                let banner = self.banner.is_some() || self.hint.is_some();
-                if let Some(session) = &mut self.session
-                    && let Some(action) = session.input(event, window, banner)?
-                {
-                    session.apply(action, window, &self.config)?;
-                    return Ok(session.tabs.active().is_none());
-                }
-            }
+            event => return self.handle_input(event, window),
         }
         Ok(false)
+    }
+
+    fn handle_input(&mut self, event: Event, window: &mut impl WindowOps) -> Result<bool> {
+        let Some(session) = &mut self.session else {
+            return Ok(false);
+        };
+        if session.confirmation.is_none() && self.hint_drawn && self.banner.is_none() {
+            let consumed = super::first_run::consume(&mut self.hint, &event);
+            if self.hint.is_none() {
+                self.hint_drawn = false;
+                session.active_mut().frame_dirty = true;
+            }
+            if consumed {
+                return Ok(false);
+            }
+        }
+        let banner = self.banner.is_some() || self.hint.is_some();
+        session.dispatch_input(event, window, banner, &self.config)
     }
 
     /// Start the session at the window's first size.
@@ -209,6 +213,155 @@ impl App {
         self.hint = super::first_run::hint(self.config.language());
         self.session = Some(session);
         Ok(())
+    }
+}
+
+pub(super) enum Confirmation {
+    Window,
+    Tab(u64),
+    Pane(u64),
+    Paste { text: String, generation: u64 },
+}
+
+impl Confirmation {
+    pub(super) fn text(&self, locale: Locale) -> &'static str {
+        locale.text(match self {
+            Self::Window => "confirm.window",
+            Self::Tab(_) => "confirm.tab",
+            Self::Pane(_) => "confirm.pane",
+            Self::Paste { .. } => "confirm.paste",
+        })
+    }
+
+    pub(super) fn targets(&self, pane: &PaneState) -> bool {
+        match *self {
+            Self::Window => false,
+            Self::Tab(id) | Self::Pane(id) => id == pane.id,
+            Self::Paste { generation, .. } => pane.text_recipient == Some(generation),
+        }
+    }
+}
+
+pub(super) fn running(panes: &[PaneState]) -> Result<bool> {
+    for pane in panes {
+        let local = &pane.pane;
+        if !pane.exited
+            && local.pty.child_pid().is_some()
+            && match local.terminal.semantic_prompt()? {
+                Some(at_prompt) => !at_prompt,
+                None => local.pty.has_foreground_job(),
+            }
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+impl Session {
+    pub(super) fn request_window_close(&mut self, config: &Config) -> Result<bool> {
+        if config.window.confirm_close() {
+            for tab in self.tabs.as_slice() {
+                if running(&tab.panes)? {
+                    if !matches!(self.confirmation, Some((Confirmation::Window, _))) {
+                        self.ask(Confirmation::Window, config);
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    pub(super) fn ask(&mut self, confirmation: Confirmation, config: &Config) {
+        let message = confirmation.text(Locale::from_language(config.language()));
+        self.confirmation = Some((confirmation, message));
+        self.view.preedit.clear();
+        self.confirmation_presented = false;
+        self.active_mut().frame_dirty = true;
+    }
+
+    pub(super) fn dismiss_confirmation(&mut self) -> Option<Confirmation> {
+        if let Some(tab) = self.tabs.active_mut() {
+            tab.focused_mut().frame_dirty = true;
+        }
+        self.confirmation_presented = false;
+        self.confirmation
+            .take()
+            .map(|(confirmation, _)| confirmation)
+    }
+
+    pub(super) fn dispatch_input(
+        &mut self,
+        event: Event,
+        window: &mut impl WindowOps,
+        banner: bool,
+        config: &Config,
+    ) -> Result<bool> {
+        if self.confirmation.is_some() {
+            return self.answer_confirmation(event, window);
+        }
+        if let Some(action) = self.input(event, window, banner, Some(config))? {
+            self.apply(action, window, config)?;
+        }
+        Ok(self.tabs.active().is_none())
+    }
+
+    fn answer_confirmation(&mut self, event: Event, window: &mut impl WindowOps) -> Result<bool> {
+        if self.routing.release_owner(&event).is_some() {
+            self.input(event, window, true, None)?;
+            return Ok(false);
+        }
+        let Event::Key {
+            logical,
+            action: KeyAction::Press,
+            modifiers,
+            ..
+        } = event
+        else {
+            return Ok(false);
+        };
+        if modifiers.control || modifiers.alt || modifiers.right_alt || modifiers.super_key {
+            return Ok(false);
+        }
+        match logical {
+            LogicalKey::Escape | LogicalKey::Character('n' | 'N') => {
+                self.dismiss_confirmation();
+                return Ok(false);
+            }
+            LogicalKey::Enter | LogicalKey::NumpadEnter | LogicalKey::Character('y' | 'Y') => {
+                if !self.confirmation_presented {
+                    return Ok(false);
+                }
+            }
+            _ => return Ok(false),
+        }
+        match self.dismiss_confirmation().expect("pending confirmation") {
+            Confirmation::Window => return Ok(true),
+            Confirmation::Paste { text, generation } => {
+                self.input(
+                    Event::ClipboardText { text, generation },
+                    window,
+                    false,
+                    None,
+                )?;
+            }
+            close @ (Confirmation::Tab(id) | Confirmation::Pane(id)) => {
+                if let Some(index) = self
+                    .tabs
+                    .as_slice()
+                    .iter()
+                    .position(|tab| tab.panes.binary_search_by_key(&id, |pane| pane.id).is_ok())
+                {
+                    if matches!(close, Confirmation::Tab(_)) {
+                        self.close_tab(index, window)?;
+                    } else {
+                        self.close_pane(index, id, window)?;
+                    }
+                }
+            }
+        }
+        Ok(self.tabs.active().is_none())
     }
 }
 

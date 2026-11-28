@@ -62,6 +62,7 @@ pub(crate) struct View {
     pub(crate) preedit: String,
     /// The selected clause of a non-empty preedit, set with it; see `Event::ImePreedit`.
     pub(crate) preedit_cursor: Option<(usize, usize)>,
+    pub(crate) confirming: bool,
     /// Formatted query and tab-separated count, without IME preedit.
     pub(crate) search_bar: Option<String>,
     /// Byte range in the formatted query. An empty range is the insertion point.
@@ -145,6 +146,7 @@ impl View {
             cell,
             preedit: String::new(),
             preedit_cursor: None,
+            confirming: false,
             search_bar: None,
             search_selection: 0..0,
             search_highlights: Vec::new(),
@@ -342,7 +344,9 @@ impl View {
         pane.focused = focused;
         pane.viewer = focus
             .viewer
+            .filter(|_| !focus.active || !self.confirming)
             .and_then(|p| ViewerPaint::new(p, grid, self.scale));
+        let show_input = focus.active && !self.confirming;
         PanePainter {
             pane,
             font: &mut self.font,
@@ -352,16 +356,19 @@ impl View {
             cell: self.cell,
             background_alpha: self.background_alpha,
             link_hint: self.palette.link_hint(),
+            confirmation_colors: self
+                .confirming
+                .then_some((self.palette.surface, self.palette.selected)),
             selection_foreground: self.selection_foreground,
             selection_background: self.selection_background,
-            search_bar: self.search_bar.as_deref().filter(|_| focus.active),
+            search_bar: self.search_bar.as_deref().filter(|_| show_input),
             search_selection: self.search_selection.clone(),
-            search_highlights: if focus.active {
+            search_highlights: if show_input {
                 &self.search_highlights
             } else {
                 &[]
             },
-            preedit: if focus.active { &self.preedit } else { "" },
+            preedit: if show_input { &self.preedit } else { "" },
             preedit_cursor: self.preedit_cursor,
         }
         .build(

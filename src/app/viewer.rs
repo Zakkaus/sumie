@@ -170,6 +170,9 @@ impl Session {
         let focused = tab.tree.focused();
         for pane in &mut tab.panes {
             pane.frame_dirty = false;
+            if pane.id == focused && self.confirmation.is_some() {
+                continue;
+            }
             let Some(viewer) = &mut pane.viewer else {
                 continue;
             };

@@ -7,6 +7,19 @@ const DATA_CURSOR_AT_PROMPT: c_int = 39;
 const DATA_PWD: c_int = 13;
 
 impl Terminal {
+    /// `None` until the primary screen has received an OSC 133 prompt or input mark.
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot read the cursor state.
+    pub fn semantic_prompt(&self) -> Result<Option<bool>, Error> {
+        // SAFETY: The bridge only reads the live terminal's primary screen.
+        if unsafe { ffi::sumie_semantic_prompt_seen(self.raw) } {
+            self.cursor_at_prompt().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Whether the cursor is at an OSC 133 prompt or input area on the primary screen.
     ///
     /// # Errors

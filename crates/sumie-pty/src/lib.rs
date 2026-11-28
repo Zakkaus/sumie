@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
 use rustix::io::Errno;
 use rustix::process::Pid;
-use rustix::termios::{Winsize, tcsetwinsize};
+use rustix::termios::{Winsize, tcgetpgrp, tcsetwinsize};
 
 use child::{Child, Cleanup, ExitWatch};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -258,6 +258,17 @@ impl Pty {
     #[must_use]
     pub fn child_pid(&self) -> Option<Pid> {
         self.child.as_ref().map(Child::pid)
+    }
+
+    /// Whether a foreground process group other than the child owns the terminal.
+    #[must_use]
+    pub fn has_foreground_job(&self) -> bool {
+        self.child_pid().is_some_and(|child| {
+            self.master
+                .as_ref()
+                .and_then(|master| tcgetpgrp(master).ok())
+                .is_some_and(|group| group != child)
+        })
     }
 
     /// The readable pidfd on Linux or kqueue on macOS, until the child is reaped.

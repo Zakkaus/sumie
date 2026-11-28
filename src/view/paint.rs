@@ -104,6 +104,7 @@ pub(super) struct PanePainter<'a> {
     pub(super) cell: [u32; 2],
     pub(super) background_alpha: u8,
     pub(super) link_hint: Rgba,
+    pub(super) confirmation_colors: Option<(Rgba, Rgba)>,
     pub(super) selection_foreground: Option<Rgb>,
     pub(super) selection_background: Option<Rgb>,
     pub(super) search_bar: Option<&'a str>,

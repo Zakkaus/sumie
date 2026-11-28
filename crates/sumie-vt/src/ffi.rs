@@ -337,6 +337,7 @@ unsafe extern "C" {
     pub fn sumie_screen_clear_epoch(terminal: Terminal) -> u64;
     pub fn sumie_screen_stamp(terminal: Terminal, has_placements: *mut bool) -> u64;
     pub fn sumie_palette_color(terminal: Terminal, index: u8, out: *mut [u8; 3]) -> c_int;
+    pub fn sumie_semantic_prompt_seen(terminal: Terminal) -> bool;
     pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
     pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
     pub fn ghostty_terminal_point_from_grid_ref(

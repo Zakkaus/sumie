@@ -203,17 +203,19 @@ impl PanePainter<'_> {
     }
 
     pub(super) fn draw_banner(&mut self, snapshot: &Snapshot, message: &str) {
-        self.pane.backgrounds.extend(std::iter::repeat_n(
-            rgba(snapshot.foreground),
-            self.pane.grid[0] as usize,
-        ));
+        let (background, foreground) = self
+            .confirmation_colors
+            .unwrap_or_else(|| (rgba(snapshot.foreground), rgba(snapshot.background)));
+        self.pane
+            .backgrounds
+            .extend(std::iter::repeat_n(background, self.pane.grid[0] as usize));
         self.line.ellipsize(message, self.pane.grid[0]);
         self.line.draw(
             self.font,
             self.font_errors,
             &mut self.pane.glyphs,
             [0, 0],
-            rgba(snapshot.background),
+            foreground,
             FontStyle::default(),
         );
     }
