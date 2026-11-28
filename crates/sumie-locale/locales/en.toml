@@ -92,3 +92,9 @@
 "choice.language.zh-TW" = "Traditional Chinese"
 "choice.language.zh-CN" = "Simplified Chinese"
 "choice.language.ja" = "Japanese"
+
+"hint.tab" = "tab"
+"hint.split" = "split"
+"hint.copy-paste" = "copy/paste"
+"hint.find" = "find"
+"hint.settings" = "settings"

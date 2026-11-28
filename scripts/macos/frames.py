@@ -69,6 +69,9 @@ class Runner:
         self.home = Path(home)
         config = Path(home) / "config"
         (config / "sumie").mkdir(parents=True)
+        state = Path(home) / "Library/Application Support/sumie"  # the first-run hint takes a key
+        state.mkdir(parents=True)
+        (state / "first-run").touch()
         self.slow = config / "sumie/slow.toml"
         if loading:
             os.mkfifo(self.slow)

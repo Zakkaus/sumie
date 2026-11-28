@@ -11,6 +11,7 @@ Edges in the last column go from the row's crate to the listed crates. They are 
 | `sumie` (binary) | Composition, CLI parsing, platform traits, config-to-core option conversion, passing font atlases to the renderer | Business logic | All library crates |
 | `sumie-core` | Tabs, panes, selections, link and shortcut matching, commands, agent state, plain-data options | Platform code, config, GPU, FFI, unsafe code, blocking I/O | None |
 | `sumie-config` | Settings types, loading, validation, hot reload, writing TOML, JSON Schema generation | Manage windows or render | None |
+| `sumie-locale` | Embedded interface strings per language, English fallback | Read settings files, render or format text | `sumie-config` |
 | `sumie-vt` | Safe libghostty-vt wrapper | Render, call platform code, match shortcuts | `sumie-core`, `sumie-config` |
 | `sumie-font` | Font discovery and fallback, shaping, rasterization, glyph atlas data | Issue GPU calls or read or change terminal state | `sumie-core`, `sumie-config` |
 | `sumie-render` | wgpu rendering from atlas data and draw lists | Discover fonts, depend on `sumie-font`, change terminal state, allocate GPU objects per frame, submit GPU work while holding a terminal lock | `sumie-core`, `sumie-config` |

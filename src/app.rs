@@ -1,6 +1,7 @@
 mod animation;
 pub(crate) use animation::Wake;
 mod directory;
+mod first_run;
 mod frame_log;
 mod frame_steps;
 pub(crate) use frame_steps::App;

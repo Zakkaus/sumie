@@ -92,3 +92,9 @@
 "choice.language.zh-TW" = "繁體中文"
 "choice.language.zh-CN" = "簡體中文"
 "choice.language.ja" = "日文"
+
+"hint.tab" = "分頁"
+"hint.split" = "分割"
+"hint.copy-paste" = "複製/貼上"
+"hint.find" = "搜尋"
+"hint.settings" = "設定檔"

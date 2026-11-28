@@ -1854,6 +1854,7 @@ dependencies = [
  "sumie-config",
  "sumie-core",
  "sumie-font",
+ "sumie-locale",
  "sumie-macos",
  "sumie-pty",
  "sumie-render",
@@ -1899,6 +1900,14 @@ dependencies = [
  "skrifa",
  "thiserror 2.0.21",
  "zeno",
+]
+
+[[package]]
+name = "sumie-locale"
+version = "0.0.0"
+dependencies = [
+ "sumie-config",
+ "toml",
 ]
 
 [[package]]

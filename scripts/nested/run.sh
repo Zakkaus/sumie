@@ -25,6 +25,8 @@ export XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=wl-sumie
 export XDG_CONFIG_HOME="$runtime/config" XDG_DATA_HOME="$runtime/data"
 export XDG_STATE_HOME="$runtime/state" XDG_CACHE_HOME="$runtime/cache"
 mkdir "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+# The first-run hint would take the first injected key.
+mkdir "$XDG_STATE_HOME/sumie" && : > "$XDG_STATE_HOME/sumie/first-run"
 
 if [ "$session_bus" = false ]; then
     # Keep libdbus from autolaunching and keep clients off the host bus.

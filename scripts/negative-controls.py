@@ -47,6 +47,9 @@ def controls():
     probe("spawn ignores descriptor creation", "test", "crates/sumie-pty/src/spawn.rs",
           replace_once("    let _spawning = spawning();\n    command.spawn()", "    command.spawn()"),
           "test spawn::tests::a_spawn_waits_for_a_descriptor_being_created ... FAILED")
+    probe("first-run hint lets the dismissing press through", "test", "src/app/first_run.rs",
+          replace_once("pressed && hint.take().is_some()", "pressed && hint.take().is_some() && false"),
+          "test app::first_run::tests::a_press_dismisses_the_hint_and_is_consumed ... FAILED")
     probe("Bash 3.2 lacks [[ -v", "shell", "shell-integration/bash/sumie.bash",
           replace_once("[[ -n ${SUMIE_ORIG_ENV+set} ]]", "[[ -v SUMIE_ORIG_ENV ]]"),
           "bash/sumie.bash: [[ -v needs Bash 4.2; macOS has 3.2")

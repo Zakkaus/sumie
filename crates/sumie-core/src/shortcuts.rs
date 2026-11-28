@@ -14,7 +14,7 @@ pub struct Shortcuts {
     consumed: Vec<PhysicalKey>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shortcut {
     Copy,
     Paste,
@@ -241,6 +241,18 @@ fn letter_shortcut(letter: char) -> Option<Shortcut> {
     })
 }
 
+/// The letter chord that runs `shortcut`, for labels: its prefix (`Ctrl+Shift+` on Linux,
+/// `Cmd+` on macOS) and the uppercase letter.
+#[must_use]
+pub fn letter_chord(platform: Platform, shortcut: Shortcut) -> Option<(&'static str, char)> {
+    let letter = ('a'..='z').find(|&letter| letter_shortcut(letter) == Some(shortcut))?;
+    let prefix = match platform {
+        Platform::Linux => "Ctrl+Shift+",
+        Platform::MacOS => "Cmd+",
+    };
+    Some((prefix, letter.to_ascii_uppercase()))
+}
+
 fn control_shortcut(physical: PhysicalKey, symbol: Option<char>, shift: bool) -> Option<Shortcut> {
     use KeyCode as K;
     use PhysicalKey::Code;
@@ -342,7 +354,20 @@ fn alt_tab_shortcut(physical: PhysicalKey, symbol: Option<char>) -> Option<TabAc
 mod tests {
     use super::{
         KeyAction, KeyCode as K, KeyModifiers, PhysicalKey, Platform, Shortcut, Shortcuts,
+        letter_chord,
     };
+    use crate::TabAction;
+
+    #[test]
+    fn letter_chords_come_from_the_table() {
+        let open = Shortcut::Tab(TabAction::Open);
+        assert_eq!(
+            letter_chord(Platform::Linux, open),
+            Some(("Ctrl+Shift+", 'T'))
+        );
+        assert_eq!(letter_chord(Platform::MacOS, open), Some(("Cmd+", 'T')));
+        assert_eq!(letter_chord(Platform::Linux, Shortcut::Consume), None);
+    }
 
     #[test]
     fn super_never_matches_a_shortcut() {

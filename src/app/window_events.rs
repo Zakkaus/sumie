@@ -154,8 +154,15 @@ impl App {
                 }
             }
             event => {
+                if super::first_run::consume(&mut self.hint, &event) {
+                    if let Some(session) = &mut self.session {
+                        session.active_mut().frame_dirty = true;
+                    }
+                    return Ok(false);
+                }
+                let banner = self.banner.is_some() || self.hint.is_some();
                 if let Some(session) = &mut self.session
-                    && let Some(action) = session.input(event, window, self.banner.is_some())?
+                    && let Some(action) = session.input(event, window, banner)?
                 {
                     session.apply(action, window, &self.config)?;
                     return Ok(session.tabs.active().is_none());
@@ -193,6 +200,7 @@ impl App {
         let (alpha, _) = set_background(gpu, window, &self.config.window);
         session.view.set_background_alpha(alpha);
         gpu.resize(device);
+        self.hint = super::first_run::hint(self.config.language());
         self.session = Some(session);
         Ok(())
     }

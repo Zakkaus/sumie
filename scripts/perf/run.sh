@@ -17,5 +17,7 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" NO_AT_BRIDGE=1 QT_ACCES
 export XDG_CONFIG_HOME="$runtime/config" XDG_DATA_HOME="$runtime/data"
 export XDG_STATE_HOME="$runtime/state" XDG_CACHE_HOME="$runtime/cache"
 mkdir "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+# The first-run hint would take the first injected key.
+mkdir "$XDG_STATE_HOME/sumie" && : > "$XDG_STATE_HOME/sumie/first-run"
 
 python3 -B "$scripts/nested/run.py" 1.25 "$@"

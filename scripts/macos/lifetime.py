@@ -70,6 +70,9 @@ class Runner:
         self.home = Path(home)
         config = self.home / "config"
         (config / "sumie").mkdir(parents=True)
+        state = Path(home) / "Library/Application Support/sumie"  # the first-run hint takes a key
+        state.mkdir(parents=True)
+        (state / "first-run").touch()
         (config / "sumie/sumie.toml").write_text(CONFIG)
         env = {**os.environ, "SUMIE_MACOS_CI_RUNNER": "terminal", "HOME": home, "XDG_CONFIG_HOME": str(config),
                "SHELL": "/bin/sh", "RUST_LOG": "debug"}

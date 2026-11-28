@@ -19,6 +19,8 @@ pub(crate) struct App {
     pub(super) config: sumie_config::Config,
     /// The settings diagnostic over the active pane's first row.
     pub(super) banner: Option<String>,
+    /// The first-run hint, on the banner row below a diagnostic until the first key or click.
+    pub(super) hint: Option<String>,
     /// What every pane's login shell starts from; the session takes it when it starts.
     pub(super) environment: Option<Environment>,
     pub(super) session: Option<Session>,
@@ -105,6 +107,7 @@ impl App {
             capture,
             config,
             banner: None,
+            hint: None,
             environment: Some(environment),
             session: None,
             focused: false,
@@ -192,7 +195,7 @@ impl App {
         } else {
             None
         };
-        let banner = self.banner.as_deref();
+        let banner = self.banner.as_deref().or(self.hint.as_deref());
         session.update_link_hover(window, banner.is_some(), self.focused)?;
         session.watch_blink(window, self.focused && !self.suspended, banner)?;
         if ready && session.draw(gpu, window, &self.capture, banner, self.focused)? {
