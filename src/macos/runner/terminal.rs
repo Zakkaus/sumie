@@ -38,16 +38,12 @@ struct Control {
     presented: u64,
     /// Injected input-method events, reported once the batch that carries them is delivered.
     injected: Vec<String>,
-    /// Set by `SUMIE_MACOS_CI_READBACK`: the surface allows `capture`.
-    readback: bool,
 }
 
 pub(in crate::macos) fn run(mut capture: capture::Options) -> Result<()> {
-    capture.readback = env::var_os("SUMIE_MACOS_CI_READBACK").is_some();
-    let mut control = Control {
-        readback: capture.readback,
-        ..Control::default()
-    };
+    let readback = env::var_os("SUMIE_MACOS_CI_READBACK").is_some();
+    capture.readback = readback;
+    let mut control = Control::default();
     let mut driver = Driver::new(capture)?;
     let started = Instant::now();
     let result = native::run(|context, readiness, event| {
@@ -60,10 +56,13 @@ pub(in crate::macos) fn run(mut capture: capture::Options) -> Result<()> {
                 return Ok(ControlFlow::Continue(()));
             }
             Event::RunnerCommand(command) => {
-                let result = self::command(&mut driver, context, command, &mut control);
+                let result = self::command(&mut driver, context, command, &mut control, readback);
                 driver.settle(context, readiness, result.map(ControlFlow::Continue))?
             }
             event => {
+                if matches!(event, Event::Quit(_)) {
+                    control.cycle = false;
+                }
                 let delivered = matches!(event, Event::AboutToWait);
                 match &event {
                     Event::Focused(focused) => println!("runner focused {focused}"),
@@ -85,7 +84,10 @@ pub(in crate::macos) fn run(mut capture: capture::Options) -> Result<()> {
         };
         if flow.is_break() && std::mem::take(&mut control.cycle) {
             driver.termination.cancel();
-            driver = Driver::new(capture::Options::default())?;
+            driver = Driver::new(capture::Options {
+                readback,
+                ..capture::Options::default()
+            })?;
             control.presented = 0;
             control.cycles += 1;
             println!("runner cycled {}", control.cycles);
@@ -123,6 +125,7 @@ fn command(
     context: &WindowContext,
     command: Command,
     control: &mut Control,
+    readback: bool,
 ) -> Result<()> {
     match command {
         Command::Ping(sequence) => println!("runner ack {sequence}"),
@@ -142,7 +145,7 @@ fn command(
             let State::Open(open) = &mut driver.state else {
                 return Err("the terminal window is not open".into());
             };
-            open_command(open, context, command, control)?;
+            open_command(open, context, command, control, readback)?;
         }
     }
     Ok(())
@@ -154,11 +157,12 @@ fn open_command(
     context: &WindowContext,
     command: Command,
     control: &mut Control,
+    readback: bool,
 ) -> Result<()> {
     match command {
         Command::Type(text) => open.window.commit_text(text),
         Command::Capture(dir) => {
-            if !control.readback {
+            if !readback {
                 return Err("capture needs SUMIE_MACOS_CI_READBACK".into());
             }
             let app = open.app.as_mut().ok_or("the session has not started")?;

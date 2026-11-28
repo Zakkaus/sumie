@@ -20,11 +20,14 @@ At the window's first size, and again after a native resize to a second one:
          骨 takes two cells, 直 wraps (a spacer ends the row) and the other six follow on the
          next row, each two cells wide, none U+FFFD at the VT boundary; in the frame every
          one has ink in both of its cells, and the log has no missing-glyph warning.
-Then `exit` and Return, typed: the window leaves the screen and the process exits 0.
+Before the checks, a reopen must still capture a PNG. Then `exit` and Return, typed: the window
+leaves the screen and the runner exits 0. Without the runner, an immediately exiting shell
+must fail a third-frame screenshot request without writing a PNG.
 """
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
@@ -310,6 +313,39 @@ def check_exit(runner, tool, result):
     return []
 
 
+def check_reopened_capture(runner):
+    runner.send("cycle")
+    runner.wait_for("runner", "cycled", "1")
+    asked = time.monotonic()
+    runner.send("open")
+    runner.wait_for("runner", "first", since=asked)
+    runner.wait_for("runner", "focused", "true", since=asked)
+    count, = runner.ask(f"capture {runner.frames}", "capture")
+    frame = str(int(count) + 1)
+    runner.send("type printf 'cycle capture'")
+    try:
+        runner.wait_for("runner", "present", frame, since=asked)
+    except CannotCheck as error:
+        raise Violation("cycle capture: the reopened window did not present a PNG") from error
+    png = runner.frames / f"{frame}.png"
+    if not png.is_file() or not png.stat().st_size:
+        raise Violation("cycle capture: the reopened window did not present a PNG")
+    print(f"cycle capture: wrote {frame}.png after reopening")
+
+
+def check_early_screenshot(binary, home):
+    png = home / "early.png"
+    env = {**os.environ, "HOME": str(home), "XDG_CONFIG_HOME": str(home / "config"), "SHELL": "/usr/bin/true"}
+    env.pop("SUMIE_MACOS_CI_RUNNER", None)
+    result = subprocess.run([binary, "--exit-after-frames", "3", "--screenshot", png], env=env,
+                            capture_output=True, text=True, timeout=30)
+    if (result.returncode != 1 or png.exists()
+            or not re.search(r"window closed after [012] of 3 presentations", result.stderr)):
+        return [f"exit: early screenshot: expected exit 1 and no PNG, got {result.returncode}: {result.stderr.strip()}"]
+    print("exit: early screenshot: exit 1 with no PNG")
+    return []
+
+
 def main():
     if len(sys.argv) not in (2, 3):
         print(__doc__, file=sys.stderr)
@@ -328,16 +364,17 @@ def main():
             return 2
         try:
             runner.wait_for("runner", "first", timeout=30)
-            runner.wait_for("runner", "focused", "true")
-            runner.ask(f"capture {runner.frames}", "capture")
+            check_reopened_capture(runner)
             errors = check_size(runner, "size 1", result)
             errors += check_resize(runner, result)
             errors += check_size(runner, "size 2", result)
             if not errors:
                 errors += check_exit(runner, tool, result)
+            if not errors:
+                errors += check_early_screenshot(binary, runner.home)
         except Violation as violation:
             errors = [str(violation)]
-        except (CannotCheck, OSError, subprocess.CalledProcessError) as error:
+        except (CannotCheck, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             print(f"shell: could not check: {error}", file=sys.stderr)
             return 2
         finally:

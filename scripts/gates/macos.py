@@ -19,13 +19,13 @@ FRAME_TIMEOUT = 300
 # Hosted CI only records macos-cycles' counts (SUMIE_TIMING=record).
 LIFETIME_GATES = {"macos-close": ("close",), "macos-repeat": ("repeat",),
                   "macos-fatal": ("fatal", "fatal-quit"), "macos-system": ("system", "system-fatal"),
-                  "macos-stuck": ("stuck", "stuck-system"), "macos-exit": ("exit",),
+                  "macos-stuck": ("stuck", "stuck-system"), "macos-exit": ("exit", "cycle-quit"),
                   "macos-cycles": ("cycles",)}
 LIFETIME_TIMEOUT = 120
 # Close and Quit the way a person does; scripts/macos/routes.py needs Accessibility, so hosts
 # without it set SUMIE_QUIT_ROUTES=skip.
 ROUTE_CASES = ("close-button", "cmd-q", "menu-quit", "dock-quit", "minimized")
-# 200 cycles, each sampled with vmmap after its reap: about 4 minutes on an M-series Mac.
+# 200 cycles, with repeated resource probes after each reap.
 CYCLES_TIMEOUT = 900
 
 
