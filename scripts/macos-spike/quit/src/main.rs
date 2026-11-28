@@ -176,12 +176,17 @@ impl ApplicationHandler<QuitReason> for Probe {
     }
 
     fn user_event(&mut self, context: &ActiveEventLoop, reason: QuitReason) {
+        // winit asks again for each ordinary Quit until `finish_quit`, so an application can
+        // ask its user again, and to upgrade an ordinary drain to a system one.
         let (started, upgrade) = match self.draining {
             None => (Instant::now(), false),
+            Some((_, QuitReason::Ordinary)) if reason == QuitReason::Ordinary => {
+                eprintln!("quit: asked again");
+                return;
+            },
             Some((started, QuitReason::Ordinary)) if reason == QuitReason::System => {
                 (started, true)
             },
-            Some((_, QuitReason::Ordinary)) if reason == QuitReason::Ordinary => return,
             Some(_) => panic!("duplicate QuitRequested"),
         };
         self.draining = Some((started, reason));

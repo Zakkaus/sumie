@@ -7,7 +7,8 @@ import time
 
 # Phases are the fixture's `quit: <phase>` lines and winit's `winit::quit: <phase>` decisions.
 FIRST = ["intercept", "first request returned", "draining"]
-SYNC_REPEAT = ["veto", "repeat request returned"]
+# winit forwards the repeated ordinary Quit too, so the application could ask again.
+SYNC_REPEAT = ["veto", "repeat request returned", "asked again"]
 GRANT = ["grant", "exiting"]
 # A system quit is answered NSTerminateLater and drained inside AppKit's modal-panel loop. The
 # self-sent Apple event is dispatched inside the send, so the send returns only after the reply.
@@ -16,9 +17,9 @@ SYSTEM = ["request", "later", "draining in later", "reaped", "reply", "request r
 CASES = {
     "menu": ("menu", FIRST + SYNC_REPEAT + ["reaped"] + GRANT),
     "key": ("key", ["first request returned", "intercept", "draining", "repeat request returned",
-                    "veto", "reaped"] + GRANT),
+                    "veto", "asked again", "reaped"] + GRANT),
     "cg": ("cg", ["first request returned", "intercept", "draining", "repeat request returned",
-                  "veto", "reaped"] + GRANT),
+                  "veto", "asked again", "reaped"] + GRANT),
     "nested": ("nested", FIRST + SYNC_REPEAT + ["reaped", "handler busy",
                                                 "nested run loop returned"] + GRANT),
     "logout": ("logout", SYSTEM),

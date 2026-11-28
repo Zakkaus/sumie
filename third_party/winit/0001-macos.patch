@@ -21,7 +21,7 @@ index 71f7c581..e9131594 100644
      "NSAttributedString",
      "NSData",
 diff --git a/src/platform/macos.rs b/src/platform/macos.rs
-index 30623b01..c18adaa5 100644
+index 30623b01..65afa6a6 100644
 --- a/src/platform/macos.rs
 +++ b/src/platform/macos.rs
 @@ -87,7 +87,7 @@ use std::os::raw::c_void;
@@ -50,12 +50,12 @@ index 30623b01..c18adaa5 100644
 +    /// Intercept native Quit (`-[NSApplication terminate:]`) so that the application can clean
 +    /// up before it exits.
 +    ///
-+    /// The first Quit request sends `map(reason)` through `proxy`. An ordinary request is
-+    /// cancelled, as are the requests that arrive before [`finish_quit`](Self::finish_quit). A
-+    /// [`QuitReason::System`] request is answered `NSTerminateLater` instead, so log out, restart
-+    /// and shut down are never refused; AppKit then runs its modal-panel run loop until
-+    /// `finish_quit`. A system request while an ordinary one drains sends `map` again with
-+    /// [`QuitReason::System`]. Without this hook, AppKit exits as soon as Quit is chosen.
++    /// Before [`finish_quit`](Self::finish_quit), each ordinary request sends `map(reason)`
++    /// through `proxy` and is cancelled in AppKit, unless a system request is pending. This
++    /// lets the user try again after dismissing an application confirmation. A system request
++    /// sends `map(QuitReason::System)` and is answered `NSTerminateLater`, so AppKit runs its
++    /// modal-panel run loop until `finish_quit`. A system request upgrades a pending ordinary
++    /// request. Without this hook, AppKit exits as soon as Quit is chosen.
 +    ///
 +    /// # Panics
 +    ///
@@ -113,7 +113,7 @@ index 30623b01..c18adaa5 100644
  
  /// Option as alt behavior.
 diff --git a/src/platform_impl/macos/app_state.rs b/src/platform_impl/macos/app_state.rs
-index dd2ccd11..a83c3d12 100644
+index dd2ccd11..8128a862 100644
 --- a/src/platform_impl/macos/app_state.rs
 +++ b/src/platform_impl/macos/app_state.rs
 @@ -1,14 +1,19 @@
@@ -178,7 +178,7 @@ index dd2ccd11..a83c3d12 100644
          });
          unsafe { msg_send_id![super(this), init] }
      }
-@@ -163,6 +178,77 @@ impl ApplicationDelegate {
+@@ -163,6 +178,81 @@ impl ApplicationDelegate {
          }
      }
  
@@ -220,10 +220,10 @@ index dd2ccd11..a83c3d12 100644
 +        }
 +    }
 +
-+    /// Forward the first request to the application. An ordinary request is cancelled, and
-+    /// `complete_quit` re-issues it; a system request is never refused: AppKit waits for
-+    /// `complete_quit`'s reply instead. Repeats are cancelled while the application drains,
-+    /// except that a system request upgrades a pending ordinary one.
++    /// Forward ordinary requests until the app finishes or a system request takes precedence.
++    /// Cancel each ordinary request in AppKit; `complete_quit` reissues it when the app accepts.
++    /// A system request upgrades a pending ordinary one, and AppKit waits for
++    /// `complete_quit`'s reply instead of cancelling it.
 +    fn should_terminate(&self) -> NSApplicationTerminateReply {
 +        use NSApplicationTerminateReply as Reply;
 +
@@ -235,6 +235,10 @@ index dd2ccd11..a83c3d12 100644
 +            (QuitState::Armed, QuitReason::Ordinary) => {
 +                request();
 +                (QuitState::Draining(reason), "intercept", Reply::NSTerminateCancel)
++            },
++            (state @ QuitState::Draining(QuitReason::Ordinary), QuitReason::Ordinary) => {
++                request();
++                (state, "veto", Reply::NSTerminateCancel)
 +            },
 +            (QuitState::Armed | QuitState::Draining(QuitReason::Ordinary), QuitReason::System) => {
 +                request();
@@ -256,7 +260,7 @@ index dd2ccd11..a83c3d12 100644
      fn will_terminate(&self, _notification: &NSNotification) {
          trace_scope!("applicationWillTerminate:");
          let mtm = MainThreadMarker::from(self);
-@@ -321,7 +407,42 @@ impl ApplicationDelegate {
+@@ -321,7 +411,42 @@ impl ApplicationDelegate {
  
      #[track_caller]
      fn handle_event(&self, event: Event<HandlePendingUserEvents>) {
@@ -300,7 +304,7 @@ index dd2ccd11..a83c3d12 100644
      }
  
      /// dispatch `NewEvents(Init)` + `Resumed`
-@@ -415,6 +536,86 @@ impl ApplicationDelegate {
+@@ -415,6 +540,86 @@ impl ApplicationDelegate {
  #[derive(Debug)]
  pub(crate) struct HandlePendingUserEvents;
  
