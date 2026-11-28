@@ -23,8 +23,6 @@ pub struct ImageExpansion {
     pub bytes: u64,
     /// Scratch textures created.
     pub scratch_allocations: u64,
-    /// Scratch bind groups created.
-    pub scratch_bindings: u64,
 }
 
 #[derive(Default)]
@@ -85,7 +83,6 @@ impl Expander {
                 }
                 let height = (*row + rows).next_multiple_of(ROW_STEP).min(stride);
                 self.stats.scratch_allocations += 1;
-                self.stats.scratch_bindings += 1;
                 let pipeline = self.pipeline.get_or_insert_with(|| Pipeline::new(device));
                 let scratch = scratch(device, [stride, height], pipeline);
                 &self.scratch.insert(scratch).0
