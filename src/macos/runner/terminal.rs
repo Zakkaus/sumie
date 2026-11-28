@@ -155,6 +155,8 @@ fn command(
         Command::RequestQuit(quit) => native::request_quit(context, quit),
         Command::Fail => return Err("injected fault".into()),
         Command::Stall => {
+            // A watchdog must exit even when logging cannot acquire stderr.
+            let _stderr = std::io::stderr().lock();
             println!("runner stalling");
             thread::sleep(STALL);
         }

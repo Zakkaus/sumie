@@ -5,17 +5,16 @@
 //! red button, Quit, the last shell's `exit`, a fatal error) leaves closing children their
 //! shell grace period before SIGKILL. A system quit (log out, restart, shut down) must not
 //! hold up the system: children get at most [`SYSTEM_KILL`], and `AppKit` gets its reply by
-//! [`SYSTEM_REPLY`] even if some were not reaped; launchd inherits them. The watchdog thread
-//! reads only the hard deadline and atomic words. At [`HARD`] ([`SYSTEM_HARD`]) it logs the
-//! open stage and its count and calls `_exit`: 0 for a system quit, 70 (`EX_SOFTWARE`)
-//! otherwise. It never reports a reap, so a stalled stage cannot block a log out.
+//! [`SYSTEM_REPLY`] even if some were not reaped; launchd inherits them. At [`HARD`]
+//! ([`SYSTEM_HARD`]) the watchdog calls `_exit`: 0 for a system quit, 70 (`EX_SOFTWARE`)
+//! otherwise. It does not log, so blocked stderr cannot delay the exit.
 //!
 //! Stages and counts are logged; payloads never are.
 
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread::{self, Thread},
     time::{Duration, Instant},
@@ -59,9 +58,8 @@ impl From<QuitReason> for Quit {
     }
 }
 
-/// What draining waits for; the watchdog logs the open one.
+/// What draining waits for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
 pub enum Stage {
     /// Panes and the configuration child got their signals; `orderOut:` is queued.
     Hiding = 1,
@@ -74,8 +72,6 @@ pub enum Stage {
 }
 
 impl Stage {
-    const ALL: [Self; 4] = [Self::Hiding, Self::Releasing, Self::Reaping, Self::Exiting];
-
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
@@ -104,8 +100,6 @@ struct Words {
     started: Instant,
     hard_ms: AtomicU64,
     system: AtomicBool,
-    stage: AtomicU8,
-    open: AtomicUsize,
     cancelled: AtomicBool,
 }
 
@@ -122,8 +116,6 @@ impl Termination {
                     started: Instant::now(),
                     hard_ms: AtomicU64::new(millis(hard(quit))),
                     system: AtomicBool::new(quit == Quit::System),
-                    stage: AtomicU8::new(0),
-                    open: AtomicUsize::new(0),
                     cancelled: AtomicBool::new(false),
                 });
                 let watched = Arc::clone(&words);
@@ -170,8 +162,6 @@ impl Termination {
             return;
         }
         drain.stage = Some((stage, open));
-        drain.words.open.store(open, Ordering::Release);
-        drain.words.stage.store(stage as u8, Ordering::Release);
         tracing::info!(
             stage = stage.name(),
             open,
@@ -225,18 +215,7 @@ fn watch(words: &Words) {
     if words.cancelled.load(Ordering::Acquire) {
         return;
     }
-    let stage = words.stage.load(Ordering::Acquire);
-    let stage = Stage::ALL
-        .into_iter()
-        .find(|candidate| *candidate as u8 == stage)
-        .map_or("closing", Stage::name);
     let system = words.system.load(Ordering::Acquire);
-    tracing::error!(
-        stage,
-        open = words.open.load(Ordering::Acquire),
-        system,
-        "draining missed its deadline; exiting without reaping"
-    );
     signal_hook::low_level::exit(if system { 0 } else { STALLED });
 }
 

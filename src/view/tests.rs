@@ -12,6 +12,34 @@ use crate::{
     platform::Position,
 };
 
+#[test]
+fn missing_glyph_logs_only_the_error_kind() {
+    use std::io::Read as _;
+
+    let (mut reader, writer) = sumie_pty::socket_pair().unwrap();
+    let log_writer = writer.try_clone().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(move || log_writer.try_clone().unwrap())
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        let mut errors = super::FontErrors::default();
+        for codepoint in [0xE000, 0xE001] {
+            errors.warn(&sumie_font::FontError::MissingGlyph {
+                codepoint,
+                rejected: Vec::new(),
+                pending: false,
+            });
+        }
+    });
+    writer.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut log = String::new();
+    reader.read_to_string(&mut log).unwrap();
+    assert!(log.contains("MissingGlyph"), "{log}");
+    assert!(!log.contains("E000") && !log.contains("E001"), "{log}");
+    assert_eq!(log.lines().count(), 1, "{log}");
+}
+
 fn view() -> View {
     let mut view = scaled_view(150, [800, 500], [1000, 625]);
     view.set_tab_count(2).unwrap();

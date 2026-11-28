@@ -18,8 +18,7 @@ Each case starts a fresh `SUMIE_MACOS_CI_RUNNER=terminal` process with a throwaw
   system        A quit Apple event with a log-out reason bypasses confirmation. AppKit gets
                 NSTerminateLater, then a reply within 4 s of the request, exit 0.
   system-fatal  The injected error while that reply is owed: logged, then the reply, exit 0.
-  stuck         Quit, then a main thread blocked for a minute: the watchdog exits 70 within
-                10 s of the Quit and logs the open stage; no reap is reported.
+  stuck         The main thread stalls holding stderr's lock: exit 70 within 10 s of Quit.
   stuck-system  The same after a system quit: exit 0 within 6 s.
   exit          The last shell runs `exit`: the window closes and the process exits 0.
   cycle-quit    Quit while a cycle reaps: AppKit grants Quit and the runner exits 0.
@@ -62,7 +61,6 @@ MARKS = {
     "kill": "sending SIGKILL",
     "reaped": "reaped a closing child and removed its exit watch",
     "draining": "draining reason=",
-    "watchdog": "draining missed its deadline",
     "after-fatal": "replying to the system quit after a fatal error",
 }
 PHASE = re.compile(r"winit::quit: (\w+)")
@@ -368,9 +366,7 @@ def system_errors(name, runner, code, marks, sent, result):
     result["reply"] = None if reply is None else round(reply - sent, 3)
     if "later" not in phases:
         errors.append(f"{name}: the system quit was not answered NSTerminateLater: {phases}")
-    if marks["watchdog"] is not None:
-        errors.append(f"{name}: the watchdog ended the process {marks['watchdog'] - sent:.2f} s after the request")
-    elif reply is None or reply - sent > REPLY:
+    if reply is None or reply - sent > REPLY:
         errors.append(f"{name}: no reply within {REPLY:.0f} s of the system quit")
     if code != 0:
         errors.append(f"{name}: exited {code}")
@@ -419,23 +415,20 @@ def stuck(name, runner, tool, result, system):
     if began is None or runner.wait_for("err", 'stage="reaping"', 3, sent) is None:
         return [f"{name}: draining did not reach the reaping stage"]
     runner.send("stall")
+    if runner.wait_for("out", "runner stalling", 1, began) is None:
+        return [f"{name}: the runner did not stall holding stderr"]
     limit = HARD["system" if system else "ordinary"]
     code, marks = drained(runner, result, began, limit)
     if code is None:
         return [f"{name}: still running {limit + SLACK:.1f} s after the quit"]
     errors = []
-    watchdog = runner.lines("err", MARKS["watchdog"], began)
-    result["watchdog_line"] = watchdog[0][1] if watchdog else None
     expected = 0 if system else 70
     if code != expected:
         errors.append(f"{name}: exited {code}, expected {expected}")
-    if not watchdog or 'stage="reaping"' not in watchdog[0][1]:
-        errors.append(f"{name}: the watchdog did not log the open stage")
     if marks["reaped"] is not None:
         errors.append(f"{name}: a reap was reported while the main thread was stuck")
     if not errors:
-        print(f"{name}: exit {code} {runner.exited - began:.3f} s after draining began; "
-              f"{watchdog[0][1].split(': ', 1)[-1]}")
+        print(f"{name}: exit {code} {runner.exited - began:.3f} s after draining began with stderr locked")
     return errors
 
 
