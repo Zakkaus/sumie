@@ -139,8 +139,8 @@ def case_paste(check):
     for name, modes, want in (("paste", "plain", CONTENT.encode().hex()), ("framed", "paste", framed(CONTENT))):
         out = check.keys.start(name, modes)
         check.paste()
-        got = check.keys.await_recorded(out, len(want))
-        check.keys.stop(name)
+        check.keys.await_recorded(out, len(want))
+        got = check.keys.stop(name)
         expect(name, got, want, "the board's string only" if modes == "plain" else "the string framed once")
 
 
@@ -152,8 +152,8 @@ def case_empty(check):
         time.sleep(1.0)
     check.board.set("after empty")
     check.paste()
-    got = check.keys.await_recorded(out, len(framed("after empty")))
-    check.keys.stop("empty")
+    check.keys.await_recorded(out, len(framed("after empty")))
+    got = check.keys.stop("empty")
     expect("empty", got, framed("after empty"), "nothing for no string and an empty one, then the next paste")
 
 
@@ -166,8 +166,8 @@ def case_oversized(check):
     fits = "x" * (LIMIT - 12)
     check.board.set(fits)
     check.paste()
-    got = check.keys.await_recorded(out, len(framed(fits)), timeout=20.0)
-    check.keys.stop("oversized")
+    check.keys.await_recorded(out, len(framed(fits)), timeout=20.0)
+    got = check.keys.stop("oversized")
     expect("oversized", got, framed(fits), "nothing for 1 MiB + 1 and a framed 1 MiB + 1, then a whole 1 MiB")
 
 
@@ -246,8 +246,8 @@ def case_stalled(check):
             errors.append(message)
     check.board.set("after stall")
     check.paste()
-    got = check.keys.await_recorded(out, len(early) + len(framed("after stall")))
-    check.keys.stop("stalled")
+    check.keys.await_recorded(out, len(early) + len(framed("after stall")))
+    got = check.keys.stop("stalled")
     if errors:
         raise Violation("\n".join(errors))
     expect("stalled", got, framed("after stall"), "nothing from the stalled provider, then the next paste")
