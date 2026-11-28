@@ -165,12 +165,13 @@ impl Session {
         &mut self,
         render: &Gpu,
         window: &mut impl WindowOps,
+        banner: bool,
     ) -> Result<()> {
         let tab = self.tabs.active_mut().expect("live window");
         let focused = tab.tree.focused();
         for pane in &mut tab.panes {
             pane.frame_dirty = false;
-            if pane.id == focused && self.confirmation.is_some() {
+            if banner && pane.id == focused {
                 continue;
             }
             let Some(viewer) = &mut pane.viewer else {

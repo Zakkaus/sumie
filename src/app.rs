@@ -60,7 +60,8 @@ pub(crate) struct Session {
     smooth_scroll: bool,
     notices: Gate,
     frame_log: frame_log::FrameLog,
-    confirmation: Option<(window_events::Confirmation, &'static str)>,
+    locale: sumie_locale::Locale,
+    confirmation: Option<window_events::Confirmation>,
     confirmation_presented: bool,
 }
 
@@ -138,6 +139,7 @@ impl Session {
             smooth_scroll: config.scroll.smooth(),
             notices: Gate::default(),
             frame_log: frame_log::FrameLog::from_env(),
+            locale: sumie_locale::Locale::from_language(config.language()),
             confirmation: None,
             confirmation_presented: false,
         })
@@ -246,7 +248,6 @@ impl Session {
         let tab = self.tabs.active().unwrap();
         let active = tab.focused();
         active.prepare_search_view(&mut self.view)?;
-        self.view.confirming = self.confirmation.is_some();
         self.view.begin_frame(
             tab.layout.dividers.iter().map(|d| d.rect),
             active.snapshot.as_ref().unwrap().background,
@@ -342,7 +343,7 @@ impl Session {
                 self.pane_pointer.present_layout(tab);
                 self.frame_log
                     .presented(self.view.repainted_panes().filter(|_| dirty));
-                self.panes_presented(gpu, window)?;
+                self.panes_presented(gpu, window, banner.is_some())?;
                 self.cursor_hidden = cursor_hidden;
                 gpu.log_present();
                 if suboptimal {

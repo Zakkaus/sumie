@@ -203,9 +203,7 @@ impl PanePainter<'_> {
     }
 
     pub(super) fn draw_banner(&mut self, snapshot: &Snapshot, message: &str) {
-        let (background, foreground) = self
-            .confirmation_colors
-            .unwrap_or_else(|| (rgba(snapshot.foreground), rgba(snapshot.background)));
+        let (background, foreground) = (rgba(snapshot.foreground), rgba(snapshot.background));
         self.pane
             .backgrounds
             .extend(std::iter::repeat_n(background, self.pane.grid[0] as usize));

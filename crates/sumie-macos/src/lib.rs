@@ -46,8 +46,8 @@ pub enum Event {
     AboutToWait,
     /// The readiness bridge has reports; take them with [`Readiness::take`].
     Ready,
-    /// `AppKit` asked to quit: drain, then return `Break`. A repeat arrives only to upgrade an
-    /// ordinary Quit to a system one.
+    /// `AppKit` asked to quit. Ordinary requests may await confirmation; a system request
+    /// requires a reply after draining and can upgrade a pending ordinary Quit.
     Quit(Quit),
     Key(Key),
     /// The keyboard modifiers changed; winit reports empty modifiers when the window loses

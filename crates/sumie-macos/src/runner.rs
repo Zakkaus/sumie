@@ -76,6 +76,8 @@ pub enum Command {
     /// `ime source`: print the selected keyboard input source.
     InputSource,
     Close,
+    /// Send the logical key that confirms (`y`) or cancels (Enter) a close prompt.
+    CloseAnswer(bool),
     /// Window steps for the idle mode; see `scripts/macos-spike/animations.py`.
     Step(Step),
     /// Ask `AppKit` to quit: `terminate:` as the Quit menu item does, or a quit Apple event
@@ -115,6 +117,8 @@ impl Command {
             "appkit" => Self::AppKitKeys,
             "cg" => Self::CgKeys,
             "close" => Self::Close,
+            "close-yes" => Self::CloseAnswer(true),
+            "close-cancel" => Self::CloseAnswer(false),
             "minimize-after" => Self::Step(Step::MinimizeAfterHandler),
             "minimize-in" => Self::Step(Step::MinimizeInHandler),
             "restore" => Self::Step(Step::Restore),
