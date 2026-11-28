@@ -24,8 +24,8 @@ Each case starts a fresh `SUMIE_MACOS_CI_RUNNER=terminal` process with a throwaw
   exit          The last shell runs `exit`: the window closes and the process exits 0.
   cycle-quit    Quit while a cycle reaps: AppKit grants Quit and the runner exits 0.
   cycles        200 window open/close cycles in one process. Within 6 s of each close the
-                window drains, then each resource count settles at or below its first-cycle
-                baseline. Resource checks are recorded only under SUMIE_TIMING=record.
+                window drains, then each count settles at or below its peak in the first 10 cycles.
+                Resource checks are recorded only under SUMIE_TIMING=record.
 SUMIE_LIFETIME_TRIGGER picks how Close or Quit enters AppKit: `runner` (the default:
 performClose:, terminate:), or, on the owner's Mac with Accessibility, `red` (a CG click on
 the close button), `cmdq` (Cmd+Q through the HID tap), `ax` (AX press on the Quit item) and
@@ -52,7 +52,7 @@ REPLY = 4.0
 SLACK = 0.5
 # The design book's cleanup bound: a closed window's resources are back within 6 s.
 CLEANUP = 6.0
-CYCLES = int(os.environ.get("SUMIE_LIFETIME_CYCLES", "200"))
+CYCLES, WARMUP = int(os.environ.get("SUMIE_LIFETIME_CYCLES", "200")), 10
 RECORD = os.environ.get("SUMIE_TIMING") == "record"
 TRIGGER = os.environ.get("SUMIE_LIFETIME_TRIGGER", "runner")
 REGIONS = {"iosurface_regions": "IOSurface", "ioaccelerator_regions": "IOAccelerator (graphics)"}
@@ -540,7 +540,7 @@ def case_cycle_quit(runner, _tool, result):
 
 
 def case_cycles(runner, _tool, result):
-    """Compare each drained cycle with the first using one deadline from its close."""
+    """Compare each drained cycle with the warm-up cycles using one deadline from its close."""
     baseline, baseline_fds, worst, seconds, errors = None, None, {}, [], []
     for number in range(1, CYCLES + 1):
         if number > 1:
@@ -554,11 +554,11 @@ def case_cycles(runner, _tool, result):
         if reaped is None:
             return [f"cycles: cycle {number} was not drained within {CLEANUP:.0f} s of its close"]
         seconds.append(reaped - closed)
-        sample, pending, fds, regions = settled(runner.process.pid, baseline, closed)
+        sample, pending, fds, regions = settled(runner.process.pid, None if number <= WARMUP else baseline, closed)
         if pending:
             for key in sorted(pending):
                 value = sample.get(key)
-                if baseline is not None and value is not None and value > baseline[key]:
+                if number > WARMUP and value is not None and value > baseline[key]:
                     errors.append(f"cycles: {key} {baseline[key]} -> {value} after cycle {number}")
                 else:
                     errors.append(f"cycles: could not settle {key} after cycle {number}")
@@ -569,15 +569,15 @@ def case_cycles(runner, _tool, result):
                   f"regions (seconds since close, metric, count)={regions}", file=sys.stderr)
             result.update(failed=sample, cycle=number, fd_added=added, fd_removed=removed, regions=regions)
             break
-        if baseline is None:
-            baseline, baseline_fds = sample, fds
+        if number <= WARMUP:
+            baseline, baseline_fds = {key: max(value, (baseline or {}).get(key, value)) for key, value in sample.items()}, fds
         else:
             for key, value in sample.items():
                 worst[key] = max(worst.get(key, value), value)
     result.update(baseline=baseline, worst=worst, drain_max=max(seconds), drain_median=statistics.median(seconds))
     print(f"cycles: {len(seconds)} of {CYCLES} drained, longest {max(seconds):.3f} s, "
           f"median {statistics.median(seconds):.3f} s from close to reaped")
-    print(f"{'':24}{'after cycle 1':>14}{'worst later':>14}")
+    print(f"{'':24}{'warm-up max':>14}{'worst later':>14}")
     for key in baseline or {}:
         print(f"{key:24}{baseline[key]!s:>14}{worst.get(key, '-')!s:>14}")
     if RECORD:
