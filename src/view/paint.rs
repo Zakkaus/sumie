@@ -1,5 +1,6 @@
 //! Compose one owned viewport snapshot into a reusable, pane-local grid.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use sumie_core::CellRange;
@@ -10,7 +11,7 @@ use sumie_render::{Cursor, CursorShape, DrawList, PixelRect, Rgba, Scroll};
 use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
 
 use super::attributes::{Decorations, Ink, LinkHighlight};
-use super::overlays::{Glyphs, SearchBox};
+use super::overlays::{Glyphs, SearchBox, link_banner_host};
 use super::{FontErrors, Line, View, ViewerPaint, rgba};
 
 #[derive(Clone, Copy)]
@@ -145,7 +146,12 @@ impl PanePainter<'_> {
             .filter(|composed| composed.row != 0 || banner.is_none());
         let overlay = composed.map(|c| (c.row, c.column, c.cells));
         if let Some(message) = banner {
-            self.draw_banner(snapshot, message, hovered_link.target.is_some());
+            let columns = self.pane.grid[0];
+            let shown: Cow<str> = hovered_link
+                .target
+                .and_then(|uri| link_banner_host(uri, columns))
+                .map_or(message.into(), |host| format!("…{host}").into());
+            self.draw_banner(snapshot, &shown);
             if self.pane.images.is_some() {
                 self.pane
                     .default_backgrounds

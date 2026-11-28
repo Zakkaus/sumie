@@ -316,8 +316,9 @@ impl Session {
                 if self.smooth_scroll && !searching && !(banner && focused) {
                     let now = self.clock.elapsed();
                     let scale = self.view.scale();
-                    let reduce_motion = || window.reduce_motion();
-                    if pane.smooth_wheel(event.phase, scale, now, reduce_motion) {
+                    let smooth = || pane.pane.wheel_scrolls_history() && !window.reduce_motion();
+                    let scroll = &mut pane.scroll;
+                    if scroll.wheel(event.phase, scale, pane.cell[1], now, smooth) {
                         return Ok(());
                     }
                 }
