@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use sumie_core::{mouse::MousePhase, scroll::Motion};
 
-use super::{PaneState, PaneTab, Result, Session};
+use super::{PaneState, Result, Session};
 
 /// Rows one wheel notch scrolls, as in the stepped mode.
 const ROWS_PER_NOTCH: f64 = 3.0;
@@ -55,16 +55,16 @@ impl PaneScroll {
         self.motion.stop();
         self.sub = 0.0;
     }
-}
 
-impl PaneState {
-    /// Take a wheel or touchpad event unless it belongs to the program or the stepped route.
-    pub(super) fn smooth_wheel(
+    /// Take a wheel or touchpad event as smooth scrolling. Returns false when the program or
+    /// the stepped route owns it.
+    pub(super) fn wheel(
         &mut self,
         phase: MousePhase,
         scale: u32,
+        cell: u32,
         now: Duration,
-        reduce_motion: impl FnOnce() -> bool,
+        smooth: impl FnOnce() -> bool,
     ) -> bool {
         if !matches!(
             phase,
@@ -72,20 +72,20 @@ impl PaneState {
         ) {
             return false;
         }
-        if !self.pane.wheel_scrolls_history() || reduce_motion() {
-            self.scroll.reset();
+        if !smooth() {
+            self.reset();
             return false;
         }
         match phase {
             MousePhase::Wheel(value) => {
-                let px = value / VALUE120_PER_NOTCH * ROWS_PER_NOTCH * f64::from(self.cell[1]);
-                self.scroll.motion.wheel(px);
+                let px = value / VALUE120_PER_NOTCH * ROWS_PER_NOTCH * f64::from(cell);
+                self.motion.wheel(px);
             }
             MousePhase::Touch(value) => {
                 let px = value / VALUE120_PER_LOGICAL_PX * f64::from(scale) / 120.0;
-                self.scroll.motion.touch(px, now);
+                self.motion.touch(px, now);
             }
-            _ => self.scroll.motion.release(now),
+            _ => self.motion.release(now),
         }
         true
     }
@@ -190,24 +190,6 @@ impl PaneState {
     }
 }
 
-impl PaneTab {
-    fn keep_scrolling(&mut self, reduce_motion: impl FnOnce() -> bool) -> bool {
-        let animating = self
-            .layout
-            .panes
-            .iter()
-            .any(|&(id, _)| self.get(id).scroll.motion.active());
-        if animating && reduce_motion() {
-            for pane in &mut self.panes {
-                pane.scroll.reset();
-            }
-            false
-        } else {
-            animating
-        }
-    }
-}
-
 impl Session {
     /// Switch smooth scrolling; turning it off drops every pane's offset so nothing stays shifted.
     pub(super) fn set_smooth_scroll(&mut self, on: bool) {
@@ -227,7 +209,17 @@ impl Session {
         reduce_motion: impl FnOnce() -> bool,
     ) -> Result<()> {
         let tab = self.tabs.active_mut().expect("live window");
-        if !tab.keep_scrolling(reduce_motion) {
+        let animating = tab
+            .layout
+            .panes
+            .iter()
+            .any(|&(id, _)| tab.get(id).scroll.motion.active());
+        if !animating || reduce_motion() {
+            if animating {
+                for pane in &mut tab.panes {
+                    pane.scroll.reset();
+                }
+            }
             self.clock.restart();
             return Ok(());
         }
@@ -258,88 +250,43 @@ impl Session {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
-    use crate::app::{directory, links, tabs::SnapshotPace};
-    use crate::input::{self, Effect};
-    use crate::tests::{close, ready_pane};
-    use sumie_core::{CellPosition, KeyModifiers, Selection, splits::Rect};
 
-    fn pane_with_history() -> PaneState {
-        let mut pane = ready_pane("printf 'READY\\n'; exec /bin/cat", &BTreeMap::new());
+    #[test]
+    fn reduced_motion_routes_wheel_to_stepped_scrolling_and_stops_coasting() {
+        let mut scroll = PaneScroll::default();
+        let event = MousePhase::Wheel(120.0);
+        assert!(scroll.wheel(event, 120, 16, Duration::ZERO, || true));
+        assert!(scroll.pending());
+        assert!(!scroll.wheel(event, 120, 16, Duration::ZERO, || false));
+        assert!(!scroll.pending());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reduced_motion_wheel_falls_through_and_scrolls_three_rows() {
+        use std::collections::BTreeMap;
+
+        use crate::input::{self, Effect, Routing};
+        use crate::tests::{close, ready_pane};
+        use sumie_core::{CellPosition, KeyModifiers};
+
+        let mut pane = ready_pane("printf 'READY\\n'; exec /bin/cat", &BTreeMap::default());
         for _ in 0..12 {
             pane.terminal.write(b"\r\n");
         }
-        PaneState {
-            id: 1,
-            rect: Rect {
-                x: 0,
-                y: 0,
-                width: 480,
-                height: 240,
-            },
-            cell: [12, 24],
-            viewport_px: [480, 240],
-            exited: false,
-            paste_recipient: None,
-            search: None,
-            viewer: None,
-            selection: Selection::default(),
-            selected_text: String::new(),
-            pane,
-            directory: directory::Directory::at_spawn(std::path::Path::new("/")),
-            title: String::new(),
-            snapshot: None,
-            snapshot_dirty: false,
-            snapshot_pace: SnapshotPace::default(),
-            frame_dirty: false,
-            activity_after: None,
-            hover: links::Hover::default(),
-            scroll: PaneScroll::default(),
-            progress: None,
-        }
-    }
-
-    #[test]
-    fn reduced_motion_wheel_scrolls_three_rows_immediately() {
-        let mut pane = pane_with_history();
-        let wheel = MousePhase::Wheel(-120.0);
-        if !pane.smooth_wheel(wheel, 120, Duration::ZERO, || true) {
-            let mut routing = input::Routing::default();
-            let event = input::mouse_event(
-                wheel,
-                KeyModifiers::default(),
-                (CellPosition { column: 0, row: 0 }, [0.0; 2], true),
-            );
-            assert_eq!(
-                routing
-                    .pointer(&mut pane.pane, false, event, || None)
-                    .unwrap(),
-                Effect::ViewportChanged,
-            );
-        }
-        assert_eq!(pane.pane.terminal.scroll_extent().unwrap().1, 3);
-        assert!(!pane.scroll.pending());
-        close(pane.pane);
-    }
-
-    #[test]
-    fn enabling_reduced_motion_stops_an_in_flight_scroll() {
-        let mut tab = PaneTab::new(pane_with_history());
-        let pane = tab.focused_mut();
-        assert!(pane.smooth_wheel(MousePhase::Wheel(-120.0), 120, Duration::ZERO, || false));
-        pane.step_scroll(0.01).unwrap();
-        pane.scroll.show();
-        assert!(pane.scroll.shown() > 0);
-        assert!(tab.keep_scrolling(|| false));
-        assert!(!tab.keep_scrolling(|| true));
-        let pane = tab.focused_mut();
-        assert_eq!(pane.scroll.offset(), 0);
-        pane.scroll.show();
-        assert!(!pane.scroll.pending());
-        close(tab.remove(1).pane);
+        let event = MousePhase::Wheel(-120.0);
+        assert!(!PaneScroll::default().wheel(event, 120, 24, Duration::ZERO, || false));
+        let mouse = input::mouse_event(
+            event,
+            KeyModifiers::default(),
+            (CellPosition { column: 0, row: 0 }, [0.0; 2], true),
+        );
+        let effect = Routing::default().pointer(&mut pane, false, mouse, || None);
+        assert_eq!(effect.unwrap(), Effect::ViewportChanged);
+        assert_eq!(pane.terminal.scroll_extent().unwrap().1, 3);
+        close(pane);
     }
 }
