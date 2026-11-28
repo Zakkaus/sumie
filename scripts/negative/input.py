@@ -48,12 +48,13 @@ def input_controls():
           replace_once("text.contains(['\\n', '\\r'])", "text.contains('\\0')"),
           "test app::tabs::tests::multiline_paste_waits_unless_bracketed ... FAILED")
     probe("a timed-out frame publishes its scroll offset", "test", "src/app.rs",
-          replace_once("if !matches!(frame, SurfaceFrame::Presented { .. }) {",
-                       "if !matches!(frame, SurfaceFrame::Presented { .. } | SurfaceFrame::Timeout) {"),
+          replace_once("        self.draw_tab_strip();\n        Ok(())\n",
+                       "        self.draw_tab_strip();\n        self.show_scroll();\n        Ok(())\n"),
           "test app::tabs::tests::pointer_hits_use_the_old_scroll_offset_until_presented ... FAILED")
-    probe("the active tab suppresses notifications from hidden panes", "test", "src/app/tabs.rs",
-          replace_once("visible_tab && (tab.layout.hidden.is_empty() || pane.id == focused)",
-                       "visible_tab"),
+    probe("an unzoomed but unpresented pane suppresses notifications", "test", "src/app/tabs.rs",
+          replace_once("window_visible && self.visible_panes.contains(&pane.id)",
+                       "window_visible && index == active_index "
+                       "&& (tab.layout.hidden.is_empty() || pane.id == focused)"),
           "test app::tabs::tests::zoomed_out_pane_can_notify_from_the_active_tab ... FAILED")
     probe("terminal preedit ignores mode 2027", "test", "src/view/paint.rs",
           replace_once("let (len, width) = if codepoints.is_empty() {",

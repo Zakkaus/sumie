@@ -436,10 +436,10 @@ def linux_clipboard_controls():
 
 def pane_controls():
     probe("150 ms busy wait in Session::draw", "panes", "src/app.rs",
-          replace_once("    ) -> Result<bool> {\n        self.frame_retry = None;\n",
+          replace_once("    ) -> Result<bool> {\n        let final_frame = options\n",
                        "    ) -> Result<bool> {\n        let busy = Instant::now();\n"
                        "        while busy.elapsed() < Duration::from_millis(150) {}\n"
-                       "        self.frame_retry = None;\n"),
+                       "        let final_frame = options\n"),
           "(stall gap over 100 ms)")
     probe("one writer never prints", "panes", "scripts/perf/stall.py",
           replace_once("        if os.path.exists(stop):\n", "        if os.path.exists(stop) or index == 7:\n"),
@@ -450,8 +450,8 @@ def pane_controls():
                        "                pane.rebuild_snapshot()?;\n            }\n"),
           "starved: a line waited")
     probe("frame log hook removed", "panes", "src/app.rs",
-          replace_once("                self.frame_log\n"
-                       "                    .presented(self.view.repainted_panes().filter(|_| dirty));\n", ""),
+          replace_once("        self.frame_log\n"
+                       "            .presented(self.view.repainted_panes().filter(|_| dirty));\n", ""),
           "FAIL: no frame log")
 
 

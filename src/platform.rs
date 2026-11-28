@@ -47,11 +47,8 @@ pub(crate) trait WindowOps: PaneWatches + crate::frame_window::FrameWindow {
     fn logical_rect(bounds: CaretBounds) -> Option<LogicalRect>;
     /// Release a frame slot stalled by a hidden or inactive window.
     fn recover_frame_slot(&mut self);
-    /// Place the input method at the caret of the frame just drawn.
+    /// Place the input method at the caret of the frame just presented.
     fn set_cursor_rectangle(&mut self, rect: LogicalRect);
-    /// The frame that last placed the caret reached the screen. A platform that waits for it
-    /// keeps the caret where the screen shows it until then; Wayland places it at once.
-    fn cursor_rectangle_presented(&mut self) {}
     fn set_pointer_icon(&mut self, icon: CursorIcon);
     /// Preedit follows focus; committed text keeps its recipient while that input field lives.
     fn set_input_generation(&mut self, generation: u64, recipient: u64);

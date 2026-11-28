@@ -4,6 +4,7 @@ use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use sumie_core::notify::Notification;
 use sumie_core::{KeyAction, KeyCode, KeyModifiers, PhysicalKey};
 use sumie_pty::{Command, Size, SpawnOptions};
+use sumie_render::SurfaceFrame;
 
 use super::*;
 use crate::{
@@ -43,6 +44,7 @@ struct TestWindow {
     clipboard: Vec<Option<Vec<u8>>>,
     paste_request: Option<u64>,
     notifications: Vec<Notification>,
+    ime_rects: Vec<LogicalRect>,
 }
 
 impl FrameWindow for TestWindow {
@@ -87,11 +89,13 @@ impl WindowOps for TestWindow {
     fn hostname() -> Result<String> {
         Ok(String::new())
     }
-    fn logical_rect(_: CaretBounds) -> Option<LogicalRect> {
-        None
+    fn logical_rect(bounds: CaretBounds) -> Option<LogicalRect> {
+        crate::view::surface_logical_rect(bounds)
     }
     fn recover_frame_slot(&mut self) {}
-    fn set_cursor_rectangle(&mut self, _: LogicalRect) {}
+    fn set_cursor_rectangle(&mut self, rect: LogicalRect) {
+        self.ime_rects.push(rect);
+    }
     fn set_pointer_icon(&mut self, _: CursorIcon) {}
     fn set_input_generation(&mut self, _: u64, _: u64) {}
     fn read_clipboard(&mut self, recipient: u64) {
@@ -203,12 +207,22 @@ fn queued_ime_commit_reaches_the_original_pane() {
     crate::tests::wait_for_line(pane, "original");
 }
 
+fn draw_surface(session: &mut Session, window: &mut TestWindow, frame: SurfaceFrame) {
+    session.step_scroll(Instant::now()).unwrap();
+    session.refresh_visible(None, window).unwrap();
+    session
+        .draw_frame(window, None, true, |_, _, _, _| Ok(frame))
+        .unwrap();
+}
+
+const PRESENTED: SurfaceFrame = SurfaceFrame::Presented { suboptimal: false };
+
 #[test]
 fn pointer_hits_use_the_old_scroll_offset_until_presented() {
     use sumie_core::mouse::MousePhase;
-    use sumie_render::SurfaceFrame;
 
-    let mut session = session(&mut TestWindow::default(), &sumie_config::Config::default());
+    let mut window = TestWindow::default();
+    let mut session = session(&mut window, &sumie_config::Config::default());
     let rect = session.active().rect;
     let row_height = session.view.cell[1];
     let [pad_x, pad_y] = session.view.pane_padding();
@@ -217,23 +231,59 @@ fn pointer_hits_use_the_old_scroll_offset_until_presented() {
         f64::from(rect.y + pad_y + row_height - 1),
     );
     let terminal = &mut session.active_mut().pane.terminal;
-    terminal.write(b"one\r\n".repeat(40).as_slice());
-    terminal.scroll_rows(-2).unwrap();
-    session
-        .active_mut()
-        .smooth_wheel(MousePhase::Touch(24.0), 120, Duration::ZERO);
-    session.step_scroll(Instant::now()).unwrap();
-    for (frame, row) in [
-        (SurfaceFrame::Timeout, 0),
-        (SurfaceFrame::Presented { suboptimal: false }, 1),
+    for i in 0..40 {
+        terminal.write(format!("https://ex.test/{i}\r\n").as_bytes());
+    }
+    terminal.restore_viewport(10).unwrap();
+    draw_surface(&mut session, &mut window, PRESENTED);
+    session.active_mut().smooth_wheel(
+        MousePhase::Touch(12.0 * f64::from(row_height + 2)),
+        120,
+        Duration::ZERO,
+    );
+    for (frame, uri) in [
+        (SurfaceFrame::Timeout, "https://ex.test/10"),
+        (PRESENTED, "https://ex.test/12"),
     ] {
-        session.present_pointer_hits(frame);
-        let (cell, _, _) =
+        draw_surface(&mut session, &mut window, frame);
+        let hit =
             session
                 .view
-                .pointer_position(near_row_end, rect, session.active().scroll.shown());
-        assert_eq!(cell.row, row);
+                .link_cell(near_row_end, rect, false, session.active().scroll.shown());
+        let pane = session.active_mut();
+        pane.probe_link(hit, "").unwrap();
+        assert_eq!(pane.hover.uri().unwrap().as_str(), uri);
     }
+}
+
+#[test]
+fn ime_rectangle_waits_for_presentation() {
+    let mut window = TestWindow::default();
+    let mut session = session(&mut window, &sumie_config::Config::default());
+    for (offset, frame, updates) in [
+        (0, PRESENTED, 1),
+        (3, SurfaceFrame::Timeout, 1),
+        (3, PRESENTED, 2),
+    ] {
+        session
+            .input(
+                Event::ImePreedit {
+                    text: "中文".into(),
+                    cursor: Some((offset, offset)),
+                    generation: 0,
+                },
+                &mut window,
+                false,
+                false,
+            )
+            .unwrap();
+        draw_surface(&mut session, &mut window, frame);
+        assert_eq!(window.ime_rects.len(), updates);
+    }
+    assert_eq!(
+        window.ime_rects[1].x - window.ime_rects[0].x,
+        2 * session.view.cell[0].cast_signed()
+    );
 }
 
 #[test]
@@ -252,12 +302,21 @@ fn zoomed_out_pane_can_notify_from_the_active_tab() {
     let focused = session.active().id;
     assert_ne!(first, focused);
     let now = Instant::now();
-    for zoomed in [false, true] {
-        if zoomed {
+    for (i, (frame, count)) in [
+        (PRESENTED, 0),
+        (PRESENTED, 1),
+        (SurfaceFrame::Timeout, 2),
+        (PRESENTED, 2),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if matches!(i, 1 | 2) {
             session
                 .pane_action(PaneAction::Zoom, focused, &mut window, &config)
                 .unwrap();
         }
+        draw_surface(&mut session, &mut window, frame);
         session
             .tabs
             .active_mut()
@@ -267,8 +326,10 @@ fn zoomed_out_pane_can_notify_from_the_active_tab() {
             .terminal
             .write(b"\x1b]9;hidden pane\x07");
         window.ready.output = true;
-        session.service_pty(now, true, &mut window).unwrap();
-        assert_eq!(window.notifications.len(), usize::from(zoomed));
+        session
+            .service_pty(now + Duration::from_secs(6 * i as u64), true, &mut window)
+            .unwrap();
+        assert_eq!(window.notifications.len(), count);
     }
 }
 
