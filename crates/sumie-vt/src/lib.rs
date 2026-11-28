@@ -308,7 +308,7 @@ impl Terminal {
         unsafe {
             check(ffi::ghostty_terminal_get(
                 self.raw,
-                ffi::TERMINAL_DATA_COLOR_PALETTE,
+                ffi::TERMINAL_DATA_COLOR_PALETTE_DEFAULT,
                 from_mut(&mut colors).cast(),
             ))?;
             colors[..16].copy_from_slice(palette);

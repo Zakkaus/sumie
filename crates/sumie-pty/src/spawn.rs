@@ -25,6 +25,14 @@ pub(crate) fn creating() -> RwLockReadGuard<'static, ()> {
 
 /// Hold while a child process is created.
 pub(crate) fn spawning() -> RwLockWriteGuard<'static, ()> {
+    #[cfg(test)]
+    tests::CONTENDED.with_borrow(|signal| {
+        if let Some(signal) = signal
+            && matches!(FORK.try_write(), Err(std::sync::TryLockError::WouldBlock))
+        {
+            signal.send(()).unwrap();
+        }
+    });
     FORK.write().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -49,31 +57,40 @@ pub fn socket_pair() -> io::Result<(UnixStream, UnixStream)> {
 
 #[cfg(test)]
 mod tests {
-    use std::os::fd::AsFd;
+    use std::cell::RefCell;
+    use std::fs::File;
+    use std::os::fd::{AsFd, AsRawFd};
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
 
-    use rustix::io::{FdFlags, fcntl_getfd};
+    use rustix::io::{FdFlags, fcntl_dupfd_cloexec, fcntl_getfd, fcntl_setfd};
 
     use super::*;
+
+    thread_local! {
+        pub(super) static CONTENDED: RefCell<Option<mpsc::Sender<()>>> = const { RefCell::new(None) };
+    }
 
     #[test]
     fn a_spawn_waits_for_a_descriptor_being_created() {
         let creating = creating();
-        let (sender, started) = mpsc::channel();
-        let thread = thread::spawn(move || {
-            let mut child = spawn(&mut Command::new("/usr/bin/true")).unwrap();
-            sender.send(()).unwrap();
-            child.wait().unwrap();
+        let fd = fcntl_dupfd_cloexec(File::open("/dev/null").unwrap(), 64).unwrap();
+        fcntl_setfd(&fd, FdFlags::empty()).unwrap();
+        let path = format!("/dev/fd/{}", fd.as_raw_fd());
+        assert!(std::path::Path::new(&path).exists());
+        let (signal, contended) = mpsc::channel();
+        let child = thread::spawn(move || {
+            CONTENDED.set(Some(signal));
+            spawn(Command::new("/bin/test").args(["!", "-e", &path]))
+                .unwrap()
+                .wait()
+                .unwrap()
         });
-        assert!(
-            started.recv_timeout(Duration::from_millis(200)).is_err(),
-            "a child started while a descriptor was not yet close-on-exec"
-        );
+        // Without the lock, the sender drops on thread exit, after the child checked the fd.
+        let _ = contended.recv();
+        fcntl_setfd(&fd, FdFlags::CLOEXEC).unwrap();
         drop(creating);
-        started.recv_timeout(Duration::from_secs(5)).unwrap();
-        thread.join().unwrap();
+        assert!(child.join().unwrap().success(), "child inherited {fd:?}");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Read live viewport contents and captured colors without consuming renderer dirty bits.
+//! VT title stack and viewport reads that preserve renderer dirty bits.
 const std = @import("std");
 const options = @import("terminal_options");
 const terminal = @import("terminal/c/terminal.zig");
@@ -12,6 +12,48 @@ pub fn install() void {
     @export(&paletteColor, .{ .name = "sumie_palette_color" });
     @export(&semanticPromptSeen, .{ .name = "sumie_semantic_prompt_seen" });
 }
+
+pub const TitleStack = struct {
+    // Match xterm's ten slots. An explicit index addresses a slot without moving the stack.
+    slots: [10]?std.ArrayList(u8) = @splat(null),
+    next: usize = 0,
+    depth: usize = 0,
+
+    pub fn save(t: *terminal.ZigTerminal, index: u16) !void {
+        const stack = &t.sumie_titles;
+        const slot = if (index == 0) stack.next else (index - 1) % stack.slots.len;
+        var saved = stack.slots[slot] orelse std.ArrayList(u8).empty;
+        try saved.resize(t.gpa(), t.title.items.len);
+        @memcpy(saved.items, t.title.items);
+        stack.slots[slot] = saved;
+        if (index == 0) {
+            stack.next = (slot + 1) % stack.slots.len;
+            stack.depth = @min(stack.depth + 1, stack.slots.len);
+        }
+    }
+
+    pub fn restore(t: *terminal.ZigTerminal, index: u16) !bool {
+        const stack = &t.sumie_titles;
+        if (index != 0) {
+            const saved = stack.slots[(index - 1) % stack.slots.len] orelse return false;
+            const bytes = saved.items;
+            try t.setTitle(if (bytes.len == 0) "" else bytes[0 .. bytes.len - 1]);
+        } else {
+            if (stack.depth == 0) return false;
+            stack.next = (stack.next + stack.slots.len - 1) % stack.slots.len;
+            stack.depth -= 1;
+            t.title.deinit(t.gpa());
+            t.title = stack.slots[stack.next].?;
+            stack.slots[stack.next] = null;
+        }
+        return true;
+    }
+
+    pub fn clear(self: *TitleStack, alloc: std.mem.Allocator) void {
+        for (&self.slots) |*slot| if (slot.*) |*saved| saved.deinit(alloc);
+        self.* = .{};
+    }
+};
 
 fn paletteColor(raw: render.RenderState, index: u8, out: *[3]u8) callconv(.c) Result {
     const snapshot = raw orelse return .invalid_value;
