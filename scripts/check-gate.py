@@ -16,7 +16,7 @@ sys.dont_write_bytecode = True
 from gates.build import ROOT, CannotCheck, cargo_record, run  # noqa: E402
 from gates.macos import (FRAME_GATES, LIFETIME_GATES, check_macos_frames,  # noqa: E402
                          check_macos_ime, check_macos_keys, check_macos_lifetime,
-                         check_macos_pasteboard, check_macos_wake)
+                         check_macos_pasteboard, check_macos_shell, check_macos_wake)
 from gates.panes import check_linux_panes, check_panes  # noqa: E402
 
 BASE = frozenset({"sumie-core", "sumie-config"})
@@ -410,7 +410,8 @@ def main():
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("gate", choices=("structure", "terminfo", "shell", "macos-quit", "macos-wake",
-                                         "macos-keys", "macos-pasteboard", "macos-ime", "linux-panes", "panes", *FRAME_GATES,
+                                         "macos-keys", "macos-shell", "macos-pasteboard", "macos-ime", "linux-panes",
+                                         "panes", *FRAME_GATES,
                                          *LIFETIME_GATES, *commands))
     gate = parser.parse_args().gate
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
@@ -433,6 +434,8 @@ def main():
             return check_macos_wake()
         if gate == "macos-keys":
             return check_macos_keys()
+        if gate == "macos-shell":
+            return check_macos_shell()
         if gate == "macos-pasteboard":
             return check_macos_pasteboard()
         if gate == "macos-ime":

@@ -236,6 +236,25 @@ impl App {
         ])
     }
 
+    /// One character per cell of a row of the focused pane's last snapshot: its width (`1`,
+    /// `2`, `0` for a wide cell's tail), `s` for a wide-wrap spacer and `f` for U+FFFD.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) fn snapshot_cells(&self, row: usize) -> Option<String> {
+        let snapshot = self.session.as_ref()?.active().snapshot.as_ref()?;
+        let class = |cell: &sumie_vt::Cell| match cell {
+            cell if cell.wide_wrap_spacer => 's',
+            cell if cell.text.contains('\u{fffd}') => 'f',
+            cell => char::from(b'0' + cell.width),
+        };
+        Some(snapshot.rows.get(row)?.iter().map(class).collect())
+    }
+
+    /// Read back every presentation into `DIR/N.png` from the next one, or stop.
+    #[cfg(feature = "macos-ci")]
+    pub(crate) fn capture_frames(&mut self, dir: Option<std::path::PathBuf>) {
+        self.capture.every = dir;
+    }
+
     /// Whether the focused pane's cursor is at an OSC 133 prompt, and its last OSC 7 URI.
     #[cfg(feature = "macos-ci")]
     pub(crate) fn shell_state(&self) -> Result<Option<(bool, String)>> {
