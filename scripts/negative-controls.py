@@ -178,7 +178,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "        self.ready.retain(|ready| *ready != key);\n"),
               "test readiness::tests::removing_a_fired_timer_drops_its_untaken_report ... FAILED")
     probe("Super matches a shortcut", "test", "crates/sumie-core/src/shortcuts.rs",
-          replace_once("            Platform::Linux if modifiers.super_key => return Ok(None),\n", ""),
+          replace_once("        Platform::Linux if modifiers.super_key => None,\n", ""),
           "test shortcuts::tests::super_never_matches_a_shortcut ... FAILED")
     probe("Cmd+Z zooms the pane on macOS", "test", "crates/sumie-core/src/shortcuts.rs",
           replace_once("        'w' => Shortcut::Tab(TabAction::Close),\n",
@@ -242,8 +242,8 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
                            "let _ = block;")(source)),
           "test grid_tests::grid_on_selected_backend ... FAILED")
     probe("skip painting the diagnostic banner", "test", "src/view/paint.rs",
-          replace_once("        if let Some(message) = banner {\n            self.draw_banner(snapshot, message);\n",
-                       "        if banner.is_some() {\n"
+          replace_once("            self.draw_banner(snapshot, &shown);\n",
+                       "            let _ = &shown;\n"
                        "            self.pane.backgrounds\n"
                        "                .resize(self.pane.grid[0] as usize, self.pane.default_background);\n"),
           "missing diagnostic background")
