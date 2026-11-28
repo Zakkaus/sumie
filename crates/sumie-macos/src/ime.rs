@@ -7,8 +7,9 @@
 //! in whatever order they arrive. It ends at its commit, when winit reports it disabled, at
 //! focus loss, or at its first event under another input source. A new generation does not
 //! end it: the window cancels it natively, and winit's `Disabled` for that cancel follows
-//! every event of it that winit delivered. A commit without an owner answers a composition
-//! that was cancelled, so it is stale and dropped. The window converts events in the order it
+//! every event of it that winit delivered. A commit without an owner belongs to no running
+//! composition: it answers a cancelled one or repeats one that already committed, so it is
+//! stale and dropped. The window converts events in the order it
 //! delivers them, so a new generation applies from the event that caused it, and a
 //! composition the next key starts belongs to the new recipient.
 //!
@@ -136,10 +137,11 @@ impl Composition {
                 if let Some((generation, _)) = self.owner.take() {
                     out.push(Input::Commit { text, generation });
                 } else {
-                    // Its composition was cancelled: natively at a recipient change or focus
-                    // loss, or by another input source. A cancelled composition commits
-                    // nothing, so this is stale; Ghostty and iTerm2 likewise never commit
-                    // marked text on focus loss.
+                    // No composition is running: it was cancelled (natively at a recipient
+                    // change or focus loss, or by another input source), or this repeats the
+                    // commit that ended it. Either way it is stale. A cancelled composition
+                    // commits nothing; Ghostty and iTerm2 likewise never commit marked text
+                    // on focus loss.
                     tracing::debug!("dropped an input-method commit without an owner");
                 }
             }
