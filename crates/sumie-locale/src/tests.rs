@@ -1,48 +1,50 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::{EN, Language, Locale, choice_key, help_key, label_key};
+use super::{EN, Language, Locale, ZH_TW, choice_key, help_key, label_key};
 use sumie_config::{Kind, settings};
 
 #[test]
-fn zh_tw_translates_every_message_and_setting_without_unknown_keys() {
-    let mut keys: BTreeSet<_> = EN.keys().cloned().collect();
+fn translations_match_source_keys_and_placeholders() {
+    let mut english: BTreeMap<String, String> = EN.clone();
     for info in settings() {
-        keys.extend([label_key(&info), help_key(&info)]);
+        english.insert(label_key(&info), info.label.clone());
+        english.insert(help_key(&info), info.description.clone());
         if let Kind::Choice(choices) = &info.kind {
-            keys.extend(choices.iter().map(|choice| choice_key(&info, choice)));
+            for choice in choices {
+                english.insert(choice_key(&info, choice), choice.label.clone());
+            }
         }
     }
-    for (tag, locale) in [
-        ("en", Locale::En),
-        ("zh-TW", Locale::ZhTw),
-        ("zh-CN", Locale::ZhCn),
-        ("ja", Locale::Ja),
-    ] {
+    let expected: BTreeSet<_> = ZH_TW.keys().collect();
+    assert_eq!(english.keys().collect::<BTreeSet<_>>(), expected);
+    for locale in [Locale::ZhTw, Locale::ZhCn, Locale::Ja] {
         let catalog = locale.catalog();
-        let missing: Vec<_> = keys
-            .iter()
-            .filter(|key| !catalog.is_some_and(|catalog| catalog.contains_key(*key)))
-            .collect();
-        println!("{tag}: missing {}: {missing:?}", missing.len());
-        assert!(
-            locale != Locale::ZhTw || missing.is_empty(),
-            "{tag}: missing {missing:?}"
+        assert_eq!(
+            catalog.keys().collect::<BTreeSet<_>>(),
+            expected,
+            "{locale:?}"
         );
-        if let Some(catalog) = catalog {
-            let unknown: Vec<_> = catalog.keys().filter(|key| !keys.contains(*key)).collect();
-            assert!(unknown.is_empty(), "{tag}: unknown keys: {unknown:?}");
-            assert!(
-                catalog.values().all(|text| !text.is_empty()),
-                "{tag}: empty message"
-            );
+        for (key, source) in &english {
+            let text = &catalog[key];
+            assert!(!text.is_empty(), "{locale:?}: {key} is empty");
+            for placeholder in source
+                .split('{')
+                .skip(1)
+                .filter_map(|part| part.split_once('}').map(|(name, _)| name))
+            {
+                assert!(
+                    text.contains(&format!("{{{placeholder}}}")),
+                    "{locale:?}: {key} missing {{{placeholder}}}"
+                );
+            }
         }
     }
 }
 
 #[test]
-fn missing_translation_uses_english() {
-    assert_eq!(Locale::ZhCn.get("ui.default"), Some("Default"));
-    assert_eq!(Locale::Ja.get("ui.default"), Some("Default"));
+fn localized_messages_are_selected() {
+    assert_eq!(Locale::ZhCn.get("ui.default"), Some("默认值"));
+    assert_eq!(Locale::Ja.get("ui.default"), Some("デフォルト"));
     assert_eq!(Locale::ZhTw.get("ui.default"), Some("預設值"));
     assert_eq!(Locale::ZhTw.get("undefined"), None);
 }

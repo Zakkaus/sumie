@@ -9,12 +9,14 @@ use sumie_config::{Choice, Kind, Language, SettingInfo};
 type Catalog = BTreeMap<String, String>;
 static EN: LazyLock<Catalog> = LazyLock::new(|| catalog(include_str!("../locales/en.toml")));
 static ZH_TW: LazyLock<Catalog> = LazyLock::new(|| catalog(include_str!("../locales/zh-TW.toml")));
+static ZH_CN: LazyLock<Catalog> = LazyLock::new(|| catalog(include_str!("../locales/zh-CN.toml")));
+static JA: LazyLock<Catalog> = LazyLock::new(|| catalog(include_str!("../locales/ja.toml")));
 
 fn catalog(source: &str) -> Catalog {
     toml::from_str(source).expect("embedded locale catalog must be valid TOML")
 }
 
-/// Locales supported by the interface, including those still using English text.
+/// Locales supported by the interface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Locale {
     En,
@@ -70,11 +72,12 @@ impl Locale {
         }
     }
 
-    fn catalog(self) -> Option<&'static Catalog> {
+    fn catalog(self) -> &'static Catalog {
         match self {
-            Self::En => Some(&EN),
-            Self::ZhTw => Some(&ZH_TW),
-            Self::ZhCn | Self::Ja => None,
+            Self::En => &EN,
+            Self::ZhTw => &ZH_TW,
+            Self::ZhCn => &ZH_CN,
+            Self::Ja => &JA,
         }
     }
 
@@ -83,7 +86,7 @@ impl Locale {
     #[must_use]
     pub fn get(self, key: &str) -> Option<&'static str> {
         self.catalog()
-            .and_then(|catalog| catalog.get(key))
+            .get(key)
             .or_else(|| EN.get(key))
             .map(String::as_str)
     }
