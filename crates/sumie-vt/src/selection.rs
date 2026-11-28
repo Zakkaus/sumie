@@ -6,6 +6,24 @@ use sumie_core::{CellPosition, CellRange, LinkUri, SelectionPoint, mouse::Select
 
 use crate::{Error, Terminal, check, ffi};
 
+/// Width of a Unicode codepoint, before any grapheme clustering.
+#[must_use]
+pub fn codepoint_width(ch: char) -> u8 {
+    // SAFETY: Any Rust char is a valid Unicode scalar value.
+    unsafe { ffi::ghostty_unicode_codepoint_width(u32::from(ch)) }
+}
+
+/// Number of codepoints and cell width of the first grapheme, as in mode 2027.
+#[must_use]
+pub fn grapheme_width(codepoints: &[u32]) -> (usize, u8) {
+    let mut width = 0;
+    // SAFETY: The slice provides len readable codepoints and width is a writable byte.
+    let count = unsafe {
+        ffi::ghostty_unicode_grapheme_width(codepoints.as_ptr(), codepoints.len(), &raw mut width)
+    };
+    (count, width)
+}
+
 static LINKS_READY: LazyLock<bool> = LazyLock::new(|| {
     // SAFETY: LazyLock initializes the process-wide native matcher once.
     unsafe { ffi::sumie_selection_init_links() }

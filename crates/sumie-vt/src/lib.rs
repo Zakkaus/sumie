@@ -20,6 +20,7 @@ pub use effects::Event;
 pub use key::{KeyAction, KeyEncoder, KeyEvent};
 pub use mouse::{MouseAction, MouseButton, MouseEncoder, MouseReport};
 pub use search::{Search, SearchMatch};
+pub use selection::{codepoint_width, grapheme_width};
 pub use style::{CellStyle, Underline};
 
 use effects::Effects;
@@ -76,13 +77,6 @@ struct Colors {
     background: Rgb,
     cursor: Rgb,
     palette: Option<[Rgb; 256]>,
-}
-
-/// Width of a Unicode codepoint, before any grapheme clustering.
-#[must_use]
-pub fn codepoint_width(ch: char) -> u8 {
-    // SAFETY: Any Rust char is a valid Unicode scalar value.
-    unsafe { ffi::ghostty_unicode_codepoint_width(u32::from(ch)) }
 }
 
 /// An error reported by libghostty-vt.
@@ -218,6 +212,14 @@ impl Terminal {
     /// Returns an error if Ghostty cannot query the mode.
     pub fn bracketed_paste(&self) -> Result<bool, Error> {
         self.mode(ffi::MODE_BRACKETED_PASTE)
+    }
+
+    /// Whether the terminal lays out grapheme clusters (mode 2027).
+    ///
+    /// # Errors
+    /// Returns an error if Ghostty cannot query the mode.
+    pub fn grapheme_clustering(&self) -> Result<bool, Error> {
+        self.mode(ffi::MODE_GRAPHEME_CLUSTERING)
     }
 
     /// Encode a single paste for atomic admission to the PTY queue.

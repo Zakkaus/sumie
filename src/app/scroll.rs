@@ -21,7 +21,7 @@ pub(super) struct PaneScroll {
     motion: Motion,
     /// Pixels the content is scrolled up from its row boundary.
     sub: f64,
-    /// The offset of the frame last built, which is what the pointer sees.
+    /// The offset of the frame last presented, which is what the pointer sees.
     shown: u32,
 }
 

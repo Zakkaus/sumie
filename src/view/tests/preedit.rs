@@ -46,6 +46,72 @@ fn the_preedit_underline_spans_the_selected_clause() {
 }
 
 #[test]
+fn terminal_ime_rectangle_follows_preedit_offsets() {
+    let mut view = view();
+    let rect = view.content_rect();
+    let snapshot = super::snapshot(&view, rect);
+    let grid = view.pane_grid(rect);
+    view.preedit = "中文".into();
+    for (cursor, columns) in [
+        (None, 0),
+        (Some((3, 3)), 2),
+        (Some((3, 6)), 2),
+        (Some((6, 3)), 4),
+    ] {
+        view.preedit_cursor = cursor;
+        view.begin_frame([], snapshot.background);
+        view.build_pane(
+            rect,
+            &snapshot,
+            None,
+            LinkHighlight::default(),
+            None,
+            focus(1, true),
+        );
+        view.end_frame();
+        let mut x = None;
+        view.ime_rectangle(snapshot.cursor, rect, |bounds| {
+            x = Some(bounds.start[0]);
+            None
+        });
+        assert_eq!(x, Some((grid.x + columns * view.cell[0]).cast_signed()));
+    }
+}
+
+#[test]
+fn terminal_preedit_fits_the_whole_emoji_in_grapheme_mode() {
+    let mut view = view();
+    let rect = view.content_rect();
+    let size = view.pane_size(rect);
+    let mut vt = Terminal::new(size.cols, size.rows).unwrap();
+    vt.write(format!("\x1b[1;{}H", size.cols - 2).as_bytes());
+    view.preedit = "👩‍💻a".into();
+    view.preedit_cursor = Some((11, 12));
+    let first = view.pane_grid(rect).x + u32::from(size.cols - 3) * view.cell[0];
+    for (mode, start, width) in [(b"\x1b[?2027l", 0, 2), (b"\x1b[?2027h", 2, 1)] {
+        vt.write(mode);
+        let snapshot = vt.render_snapshot().unwrap();
+        view.preedit_graphemes = vt.grapheme_clustering().unwrap();
+        view.begin_frame([], snapshot.background);
+        view.build_pane(
+            rect,
+            &snapshot,
+            None,
+            LinkHighlight::default(),
+            None,
+            focus(1, true),
+        );
+        view.end_frame();
+        let underline = view.draw_list(false).cursor.unwrap().rect;
+        assert_eq!(
+            underline.origin[0],
+            (first + start * view.cell[0]).cast_signed()
+        );
+        assert_eq!(underline.size, [width * view.cell[0], 2]);
+    }
+}
+
+#[test]
 fn the_search_caret_follows_a_collapsed_input_method_caret() {
     let mut view = view();
     let rect = view.content_rect();

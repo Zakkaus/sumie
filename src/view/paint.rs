@@ -8,7 +8,7 @@ use sumie_core::graphics::Placement;
 use sumie_core::splits::Rect;
 use sumie_font::{FontStyle, FontSystem};
 use sumie_render::{Cursor, CursorShape, DrawList, PixelRect, Rgba, Scroll};
-use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width};
+use sumie_vt::{CursorStyle, Rgb, Snapshot, codepoint_width, grapheme_width};
 
 use super::attributes::{Decorations, Ink, LinkHighlight};
 use super::overlays::{Glyphs, SearchBox, link_banner_host};
@@ -43,6 +43,7 @@ pub(super) struct PanePaint {
     pub(super) scroll: Scroll,
     pub(super) cursor: Option<Cursor>,
     pub(super) search_box: Option<SearchBox>,
+    pub(super) preedit_column: Option<u32>,
 }
 
 impl View {
@@ -74,6 +75,7 @@ impl PanePaint {
             scroll: Scroll::default(),
             cursor: None,
             search_box: None,
+            preedit_column: None,
         }
     }
 
@@ -111,6 +113,8 @@ pub(super) struct PanePainter<'a> {
     pub(super) search_selection: std::ops::Range<usize>,
     pub(super) search_highlights: &'a [(u16, u16, u16, bool)],
     pub(super) preedit: &'a str,
+    pub(super) preedit_codepoints: &'a mut Vec<u32>,
+    pub(super) preedit_graphemes: bool,
     pub(super) preedit_cursor: Option<(usize, usize)>,
 }
 
@@ -122,6 +126,7 @@ struct Composed {
     column: u32,
     cells: u32,
     underline: [u32; 2],
+    caret: Option<u32>,
 }
 
 impl PanePainter<'_> {
@@ -144,6 +149,7 @@ impl PanePainter<'_> {
             .then(|| self.composition(snapshot))
             .flatten()
             .filter(|composed| composed.row != 0 || banner.is_none());
+        self.pane.preedit_column = composed.and_then(|c| c.caret);
         let overlay = composed.map(|c| (c.row, c.column, c.cells));
         if let Some(message) = banner {
             let columns = self.pane.grid[0];
@@ -317,34 +323,52 @@ impl PanePainter<'_> {
         let column = u32::from(cursor.column);
         let available = self.pane.grid[0].saturating_sub(column);
         // The selected clause's cell span; without one, the whole preedit is underlined.
-        let selected = self.preedit_cursor.filter(|(start, end)| start < end);
-        let mut underline = [None, None];
+        let selected = self
+            .preedit_cursor
+            .filter(|(begin, end)| begin != end)
+            .map_or((0, self.preedit.len()), |(begin, end)| {
+                (begin.min(end), begin.max(end))
+            });
+        let mut underline = [0, 0];
+        let mut caret = 0;
         let mut cells = 0;
-        for (offset, ch) in self
+        let chars = self
             .preedit
             .char_indices()
-            .filter(|(_, ch)| !ch.is_control())
-        {
-            let width = codepoint_width(ch);
-            if cells + u32::from(width) > available {
+            .filter(|(_, ch)| !ch.is_control());
+        let mut remaining = chars.clone().peekable();
+        self.preedit_codepoints.clear();
+        if self.preedit_graphemes {
+            self.preedit_codepoints
+                .extend(chars.map(|(_, ch)| u32::from(ch)));
+        }
+        let mut codepoints = self.preedit_codepoints.as_slice();
+        while let Some(&(offset, ch)) = remaining.peek() {
+            let (len, width) = if codepoints.is_empty() {
+                (1, codepoint_width(ch))
+            } else {
+                let measure = grapheme_width(codepoints);
+                codepoints = &codepoints[measure.0..];
+                measure
+            };
+            let span = u32::from(width);
+            if cells + span > available {
                 break;
             }
-            if let Some((start, end)) = selected {
-                if offset >= start && underline[0].is_none() {
-                    underline[0] = Some(cells);
-                }
-                if offset >= end && underline[1].is_none() {
-                    underline[1] = Some(cells);
+            underline[0] += span * u32::from(offset < selected.0);
+            underline[1] += span * u32::from(offset < selected.1);
+            if self.preedit_cursor.is_some_and(|(begin, _)| offset < begin) {
+                caret += span;
+            }
+            for (i, (_, ch)) in remaining.by_ref().take(len).enumerate() {
+                if width != 0 || cells != 0 {
+                    self.composition.text.push(ch);
+                    self.composition.widths.push(if i == 0 { width } else { 0 });
                 }
             }
-            if width != 0 || cells != 0 {
-                self.composition.text.push(ch);
-                self.composition.widths.push(width);
-            }
-            cells += u32::from(width);
+            cells += span;
         }
-        let start = underline[0].unwrap_or(0).min(cells);
-        let end = underline[1].unwrap_or(cells).max(start);
+        let [start, end] = underline;
         let underline = if end > start {
             [start, end - start]
         } else {
@@ -355,6 +379,9 @@ impl PanePainter<'_> {
             column,
             cells,
             underline,
+            caret: self
+                .preedit_cursor
+                .map(|_| (column + caret).min(self.pane.grid[0].saturating_sub(1))),
         })
     }
 

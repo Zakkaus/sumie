@@ -257,6 +257,7 @@ pub const CLIPBOARD_READ_DENIED: c_int = 1;
 pub const MODE_FOCUS_EVENT: u16 = 1004;
 pub const MODE_BRACKETED_PASTE: u16 = 2004;
 pub const MODE_SYNCHRONIZED_OUTPUT: u16 = 2026;
+pub const MODE_GRAPHEME_CLUSTERING: u16 = 2027;
 pub const FOCUS_GAINED: c_int = 0;
 pub const FOCUS_LOST: c_int = 1;
 pub const STYLE_COLOR_NONE: u8 = 0;
@@ -395,6 +396,11 @@ unsafe extern "C" {
         written: *mut usize,
     ) -> c_int;
     pub fn ghostty_unicode_codepoint_width(value: u32) -> u8;
+    pub fn ghostty_unicode_grapheme_width(
+        codepoints: *const u32,
+        len: usize,
+        width: *mut u8,
+    ) -> usize;
     pub fn ghostty_key_encoder_new(allocator: *const Allocator, out: *mut KeyEncoder) -> c_int;
     pub fn ghostty_key_encoder_free(encoder: KeyEncoder);
     pub fn ghostty_key_encoder_set_from_terminal(encoder: KeyEncoder, terminal: Terminal) -> c_int;

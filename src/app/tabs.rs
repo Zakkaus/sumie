@@ -516,9 +516,11 @@ impl Session {
         };
         for (index, tab) in self.tabs.as_mut_slice().iter_mut().enumerate() {
             let focused = tab.tree.focused();
-            alerts.visible = window_visible && index == active_index;
+            let visible_tab = window_visible && index == active_index;
             alerts.background = index != active_index;
             for pane in &mut tab.panes {
+                alerts.visible =
+                    visible_tab && (tab.layout.hidden.is_empty() || pane.id == focused);
                 let mut changed = false;
                 let watch_at = (index != active_index && !tab.activity).then_some(now);
                 let mut serviced = pane.service(
