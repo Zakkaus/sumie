@@ -114,10 +114,6 @@ pub(crate) enum Event {
     ModifiersChanged(Modifiers),
     /// The window gained or lost the keyboard; reported on a change only, never for a
     /// modifier change. Losing it ends every held key.
-    #[cfg_attr(
-        target_os = "linux",
-        expect(dead_code, reason = "Wayland's keyboard leave is not routed here yet")
-    )]
     KeyboardFocus(bool),
     PointerEntered {
         position: Position,

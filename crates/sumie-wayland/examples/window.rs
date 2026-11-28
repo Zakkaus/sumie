@@ -100,6 +100,7 @@ impl fmt::Debug for EventMetadata<'_> {
             Event::ModifiersChanged(modifiers) => {
                 f.debug_tuple("ModifiersChanged").field(modifiers).finish()
             }
+            Event::KeyboardFocus(focused) => f.debug_tuple("KeyboardFocus").field(focused).finish(),
             Event::PointerEntered { position, .. } => {
                 f.debug_tuple("PointerEntered").field(position).finish()
             }
