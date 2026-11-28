@@ -347,6 +347,18 @@ def macos_controls():
                            "    pub(crate) fn into_session(self) -> Option<Session> {\n"
                            "        std::mem::forget(self.gpu);\n        self.session\n"),
               "cycles: io")
+        # macos-routes needs Accessibility; hosted runners skip it.
+        if os.environ.get("SUMIE_QUIT_ROUTES") != "skip":
+            probe("keep the window visible until the reap (close button)", "macos-routes", "src/macos/driver.rs",
+                  replace_once("        open.window\n            .platform()\n            .order_out(context, move || done.set(true));\n",
+                               "        std::mem::forget(open.window.platform().window_owner());\n"
+                               "        let _ = context;\n"
+                               "        done.set(true);\n"),
+                  "close-button: the window was still on screen when the child was reaped")
+            probe("no SIGKILL at the grace period (Cmd+Q)", "macos-routes", "src/app/lifetime.rs",
+                  replace_once("if watches.take_exit_ready(*id) || pty.close_deadline().is_some_and(|at| at <= now) {",
+                               "if watches.take_exit_ready(*id) {"),
+                  "cmd-q: no SIGKILL at the 3 s grace period")
         probe("answer Cancel to a system quit", "macos-system", "crates/sumie-macos/src/lib.rs",
               replace_once("                context.finish_quit();\n",
                            "                context.run_after_handler(|| {\n"
