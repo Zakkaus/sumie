@@ -181,11 +181,14 @@ enforced. The constants are `FONT_VERSION`, `FONT_URL` and `FONT_SHA256` at the 
 
 Both release packagers take a `LICENSES` path and copy it next to `LICENSE` in the artifact.
 Install `cargo-about` 0.9.3 (`cargo install --locked --version 0.9.3 --features cli cargo-about`).
-From the repository root, generate the report for the locked Cargo dependencies:
+From the repository root, build the binary and generate the report. The report includes the
+locked Cargo dependencies, the Ghostty license from the build output, and the bindings license.
 
 ```sh
-cargo about generate --locked --fail -c third_party/about.toml third_party/licenses.hbs \
-  -o /path/to/THIRD-PARTY-LICENSES
+cargo build --release --locked --message-format=json-render-diagnostics > /path/to/build.jsonl
+cargo about generate --locked --fail -c third_party/about.toml --format json -o /path/to/licenses.json
+python3 scripts/release-licenses.py /path/to/build.jsonl /path/to/licenses.json \
+  > /path/to/THIRD-PARTY-LICENSES
 ```
 
 Pass that file to `scripts/linux/package.sh BINARY OUTPUT_DIR VERSION ARCH LICENSES` or
@@ -200,9 +203,8 @@ Pass that file to `scripts/linux/package.sh BINARY OUTPUT_DIR VERSION ARCH LICEN
    release whose notes come from [release-notes.md](release-notes.md). Review the draft and
    publish it by hand.
 
-Before publishing, follow the draft's Gatekeeper instructions on a clean macOS 26 or 27
-session with a freshly downloaded copy. The initial launch should show the warning; the
-Privacy & Security override should then open the app without disabling Gatekeeper.
+Before publishing, test both Gatekeeper routes in the draft on macOS 26 or 27, starting with a
+freshly downloaded copy for each route. Both should open the app without disabling Gatekeeper.
 
 The notes mark the release as a preview and state the macOS limits: arm64 only, ad-hoc signed,
 not notarized, declared minimum macOS 13 with only macOS 26 and 27 tested. Linux is Wayland only.

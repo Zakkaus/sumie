@@ -150,8 +150,6 @@ if [ "$make_dmg" = true ]; then
     ln -s /Applications "$stage/Applications"
     hdiutil create -volname sumie -srcfolder "$stage" -ov -format UDZO "$dmg" >&2
     rm -rf "$stage"
-    codesign --force --sign - "$dmg" >&2
-    codesign --verify "$dmg" >&2
     printf '%s\n' "$dmg"
 else
     printf '%s\n' "$app"

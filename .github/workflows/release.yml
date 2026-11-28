@@ -118,15 +118,17 @@ jobs:
       - if: runner.os == 'macOS'
         run: echo 'MACOSX_DEPLOYMENT_TARGET=13.0' >> "$GITHUB_ENV"
       - name: Build the release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --message-format=json-render-diagnostics > "$RUNNER_TEMP/build.jsonl"
       - name: Binary reads its configuration without a window
         run: '"$CARGO_TARGET_DIR/release/sumie" config show --defaults > /dev/null'
 
-      - name: Generate notices for the locked Cargo dependencies
+      - name: Generate third-party license notices
         run: |
           cargo install --locked --version 0.9.3 --features cli --root "$RUNNER_TEMP/license-tool" cargo-about
           PATH="$RUNNER_TEMP/license-tool/bin:$PATH" cargo about generate --locked --fail \
-            -c third_party/about.toml third_party/licenses.hbs -o "$RUNNER_TEMP/THIRD-PARTY-LICENSES"
+            -c third_party/about.toml --format json -o "$RUNNER_TEMP/licenses.json"
+          python3 scripts/release-licenses.py "$RUNNER_TEMP/build.jsonl" "$RUNNER_TEMP/licenses.json" \
+            > "$RUNNER_TEMP/THIRD-PARTY-LICENSES"
 
       - name: Package the Linux tarball
         if: runner.os == 'Linux'
@@ -153,11 +155,15 @@ jobs:
               (
                 cd "$install_root/sumie-$VERSION-$TARGET"
                 export HOME="$install_root/$readme"
-                export XDG_DATA_HOME="$HOME/data" XDG_CONFIG_HOME="$HOME/.config" PATH="$HOME/.local/bin:$PATH"
+                export XDG_DATA_HOME="$HOME/data" XDG_CONFIG_HOME="$HOME/.config" PATH=/usr/bin:/bin
+                mkdir -p "$HOME"
+                cp /etc/skel/.profile "$HOME/.profile"
                 sh -e
-                launcher=$(sed -n 's/^Exec=//p' "$XDG_DATA_HOME/applications/sumie.desktop")
-                test "$(command -v "$launcher")" = "$HOME/.local/bin/sumie"
-                "$launcher" config show --defaults >/dev/null
+                bash -lec '
+                  launcher=$(sed -n "s/^Exec=//p" "$XDG_DATA_HOME/applications/sumie.desktop")
+                  test "$(command -v "$launcher")" = "$HOME/.local/bin/sumie"
+                  "$launcher" config show --defaults >/dev/null
+                '
               )
           done
       # rsvg-convert renders the icon master; scripts/macos/bundle.sh fails without it.
@@ -170,8 +176,6 @@ jobs:
           brew install librsvg
           dmg=$(scripts/macos/bundle.sh --dmg "$CARGO_TARGET_DIR/release/sumie" \
             "$RUNNER_TEMP/stage" "$RUNNER_TEMP/THIRD-PARTY-LICENSES" "$VERSION")
-          codesign --verify --verbose=2 "$dmg"
-          codesign --display --verbose=2 "$dmg"
           mount=$(mktemp -d "$RUNNER_TEMP/sumie-dmg.XXXXXX")
           hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
           trap 'hdiutil detach "$mount"' EXIT

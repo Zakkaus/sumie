@@ -86,14 +86,16 @@ binary, the terminfo source, the shell-integration scripts, a desktop entry and 
 Unpack the tarball and run `./sumie` from the extracted directory. It needs a Wayland
 compositor; there is no X11 backend.
 
-To add sumie to the application menu, make sure `~/.local/bin` is on your desktop session's
-`PATH`, then run these commands from the extracted directory:
+To add sumie to the application menu, run these commands from the extracted directory:
 
 ```sh
 install -Dm755 sumie "$HOME/.local/bin/sumie"
 mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}"
 cp -R share/. "${XDG_DATA_HOME:-$HOME/.local/share}/"
 ```
+
+The desktop session must have `~/.local/bin` on `PATH`. If your distribution adds that
+directory at login, sign out and back in after creating it; otherwise add it to your session's `PATH`.
 
 **macOS.** `sumie-VERSION-aarch64-macos.dmg` is for Apple silicon only. Open it and drag
 `sumie.app` to Applications. The app is signed ad hoc, not with a Developer ID, and is not

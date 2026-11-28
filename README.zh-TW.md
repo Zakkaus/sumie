@@ -76,13 +76,15 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 **Linux。** `sumie-VERSION-x86_64-linux.tar.gz` 與 `sumie-VERSION-aarch64-linux.tar.gz` 內含執行檔、terminfo 原始碼、shell 整合指令稿、桌面項目與圖示。解壓縮後可在該目錄執行 `./sumie`。執行檔需要 Wayland 合成器，沒有 X11 後端。
 
-若要在應用程式選單啟動 sumie，請確認桌面工作階段的 `PATH` 包含 `~/.local/bin`，再於解壓縮後的目錄執行：
+若要在應用程式選單啟動 sumie，請於解壓縮後的目錄執行：
 
 ```sh
 install -Dm755 sumie "$HOME/.local/bin/sumie"
 mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}"
 cp -R share/. "${XDG_DATA_HOME:-$HOME/.local/share}/"
 ```
+
+桌面工作階段的 `PATH` 必須包含 `~/.local/bin`。若發行版會在登入時加入該目錄，建立目錄後請登出再登入；否則請自行將它加入工作階段的 `PATH`。
 
 **macOS。** `sumie-VERSION-aarch64-macos.dmg` 僅適用於 Apple 晶片。開啟後將 `sumie.app` 拖曳到「應用程式」。此 App 使用臨時簽章（ad-hoc），並非 Developer ID 簽章，也未經公證，因此下載後會被 macOS 隔離。請擇一處理：
 

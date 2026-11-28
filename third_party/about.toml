@@ -2,3 +2,28 @@ accepted = ["MIT", "Apache-2.0", "AGPL-3.0-or-later", "ISC", "Unicode-3.0", "Zli
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
+
+# Resolve the git crates' licenses from the checkout root, not the crate directory.
+[naga.clarify]
+license = "MIT"
+git = [{ path = "LICENSE.MIT", checksum = "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21" }]
+
+[naga-types.clarify]
+license = "MIT"
+git = [{ path = "LICENSE.MIT", checksum = "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21" }]
+
+[wgpu-hal.clarify]
+license = "MIT"
+git = [{ path = "LICENSE.MIT", checksum = "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21" }]
+
+[wgpu-naga-bridge.clarify]
+license = "MIT"
+git = [{ path = "LICENSE.MIT", checksum = "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21" }]
+
+[wgpu-types.clarify]
+license = "MIT"
+git = [{ path = "LICENSE.MIT", checksum = "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21" }]
+
+[winit.clarify]
+license = "Apache-2.0"
+git = [{ path = "LICENSE", checksum = "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a" }]

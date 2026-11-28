@@ -41,6 +41,8 @@ fn main() {
     let zig = zig();
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     let source = source(&out);
+    fs::copy(source.join("LICENSE"), out.join("LICENSE.ghostty"))
+        .expect("copy Ghostty license for release packaging");
     resolve_cursor_default_at_snapshot(&source);
     install_search_bridge(&source);
     install_selection_bridge(&source);
