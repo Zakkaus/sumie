@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const linux = std.os.linux;
 
-pub fn read(io: Io, alloc: std.mem.Allocator, path: []const u8, temporary: bool, offset: u64, size: u64) !std.ArrayList(u8) {
+pub fn read(io: Io, alloc: std.mem.Allocator, path: []const u8, offset: u64, size: u64) !std.ArrayList(u8) {
     if (comptime builtin.os.tag != .linux) return error.UnsupportedMedium;
     const root = for ([_][:0]const u8{ "/tmp", "/dev/shm" }) |dir| {
         if (path.len > dir.len and std.mem.startsWith(u8, path, dir) and path[dir.len] == '/') break dir;
@@ -33,25 +33,15 @@ pub fn read(io: Io, alloc: std.mem.Allocator, path: []const u8, temporary: bool,
     defer _ = linux.close(entry);
     if (!memoryFilesystem(entry)) return error.InvalidData;
     var stat: linux.Statx = undefined;
-    const mask: linux.STATX = .{ .TYPE = true, .NLINK = true, .INO = true, .SIZE = true };
+    const mask: linux.STATX = .{ .TYPE = true, .NLINK = true, .SIZE = true };
     if (linux.errno(linux.statx(entry, "", linux.AT.EMPTY_PATH, mask, &stat)) != .SUCCESS or
-        !stat.mask.TYPE or !stat.mask.NLINK or !stat.mask.INO or !stat.mask.SIZE or
+        !stat.mask.TYPE or !stat.mask.NLINK or !stat.mask.SIZE or
         !linux.S.ISREG(stat.mode) or stat.nlink != 1 or stat.size > 320 * 1024 * 1024 or
         offset > stat.size or size > stat.size - offset) return error.InvalidData;
     var buf: [64]u8 = undefined;
     const proc_path = std.fmt.bufPrint(&buf, "/proc/self/fd/{d}", .{entry}) catch unreachable;
     const file = Io.Dir.openFileAbsolute(io, proc_path, .{}) catch return error.InvalidData;
     defer file.close(io);
-    if (temporary and std.mem.indexOf(u8, path, "tty-graphics-protocol") != null) {
-        var current: linux.Statx = undefined;
-        if (linux.errno(linux.statx(parent, entry_name, linux.AT.SYMLINK_NOFOLLOW, .{ .INO = true }, &current)) == .SUCCESS and
-            current.mask.INO and current.ino == stat.ino and
-            current.dev_major == stat.dev_major and current.dev_minor == stat.dev_minor)
-        {
-            // Linux cannot unlink by inode. A rename can still race this last check.
-            if (linux.errno(linux.unlinkat(parent, entry_name, 0)) != .SUCCESS) return error.InvalidData;
-        }
-    }
 
     // An explicit S is exact; S=0 reads up to the validated end, not a growing EOF.
     const limit: usize = @intCast(if (size == 0) stat.size - offset else size);

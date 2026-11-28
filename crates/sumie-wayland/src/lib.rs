@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+#![deny(unsafe_code)]
 
 //! Linux Wayland adapter. The caller owns the event loop, input policy, and renderer.
 
