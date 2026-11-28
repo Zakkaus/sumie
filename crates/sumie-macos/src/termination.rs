@@ -62,7 +62,7 @@ impl From<QuitReason> for Quit {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     /// Panes and the configuration child got their signals; `orderOut:` is queued.
-    Hiding = 1,
+    Hiding,
     /// The window is off screen; the GPU queue drains before the surface drops.
     Releasing,
     /// Closing children keep their exit watches until reaped.
