@@ -50,7 +50,7 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 按 Ctrl+= 或 Ctrl++ 可放大終端機字型，按 Ctrl+- 可縮小，每次調整 1 pt，範圍為 4 至 200 pt。同一視窗的所有分頁共用字型大小；字元網格會重新排列，視窗尺寸不變。按 Ctrl+0 或修改設定檔中的 `[font].size` 可還原為設定值。
 
-在 macOS 13 以上版本，sumie 會開啟 Metal 測試頁，不啟動 shell。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
+在 macOS 上，sumie 會開啟 Metal 測試頁，不啟動 shell。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
 
 在 Linux 上首次啟動時，sumie 使用 ncurses 的 `tic` 將 `xterm-sumie` 安裝到 `$XDG_DATA_HOME/sumie/terminfo`（預設為 `~/.local/share/sumie/terminfo`）。內附的原始碼有變更時才重新編譯；若無法安裝，sumie 會改用 `TERM=xterm-256color` 啟動 shell。
 
@@ -91,7 +91,7 @@ cp -R share/. "${XDG_DATA_HOME:-$HOME/.local/share}/"
 - 先開啟 App 一次並關閉警告，再到「系統設定」的「隱私權與安全性」，在 sumie 旁選擇「仍要打開」。
 - 或移除隔離屬性：`xattr -dr com.apple.quarantine /Applications/sumie.app`。
 
-宣告的最低版本為 macOS 13，但只在 macOS 26 與 27 上測試過。如開頭所述，macOS 版目前只顯示 GPU 測試頁。
+此版本以 macOS 26 與 27 為支援對象。部署目標為 macOS 13.0，但未測試 macOS 26 以前的版本。如開頭所述，macOS 版目前只顯示 GPU 測試頁。
 
 ### 發行版套件
 

@@ -56,7 +56,7 @@ The bar appears when a second tab opens. Click a numbered tab or scroll over the
 
 Press Ctrl+= or Ctrl++ to increase the terminal font size by 1 pt, or Ctrl+- to decrease it. The shortcuts clamp zoom to 4–200 pt. All tabs in the window share the size, and the grid reflows without resizing the window. Ctrl+0 restores the configured size, as does changing `[font].size` in the config file.
 
-On macOS 13 or later, sumie opens a Metal test page, not a shell. Run `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` to save the third presented frame and close the window.
+On macOS, sumie opens a Metal test page, not a shell. Run `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` to save the third presented frame and close the window.
 
 On first launch on Linux, sumie uses ncurses `tic` to install `xterm-sumie` under `$XDG_DATA_HOME/sumie/terminfo` (default: `~/.local/share/sumie/terminfo`). It reuses the entry until the bundled source changes. If it cannot install the entry, it starts the shell with `TERM=xterm-256color` instead.
 
@@ -105,8 +105,8 @@ notarized, so macOS quarantines it after a download. Do one of the following:
   choose "Open Anyway" next to sumie.
 - Or remove the quarantine flag: `xattr -dr com.apple.quarantine /Applications/sumie.app`.
 
-macOS 13 is the declared minimum. Only macOS 26 and 27 are tested. As
-noted at the top, the macOS build shows a GPU test page for now.
+This release targets macOS 26 and 27. The deployment target is macOS 13.0, but versions before
+macOS 26 are untested. As noted at the top, the macOS build shows a GPU test page for now.
 
 ### Distribution packages
 
