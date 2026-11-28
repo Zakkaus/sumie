@@ -94,6 +94,7 @@ pub(super) struct Driver {
     /// Taken when the session starts.
     start: Option<Start>,
     pub(super) state: State,
+    presented: u64,
     /// Entered at the first Close, Quit or fatal error.
     pub(super) termination: Termination,
     /// The fatal error the loop ends with once draining is done.
@@ -108,6 +109,7 @@ pub(super) struct Start {
 
 /// Run the terminal driver until its window closes and its children are reaped.
 pub(super) fn run(capture: capture::Options) -> Result<()> {
+    let frames = capture.frames;
     let mut driver = Driver::new(capture)?;
     sumie_macos::run(|context, readiness, event| {
         if let (State::Starting, Event::Resumed) = (&driver.state, &event) {
@@ -118,7 +120,14 @@ pub(super) fn run(capture: capture::Options) -> Result<()> {
             return Ok(ControlFlow::Continue(()));
         }
         driver.handle(context, readiness, event)
-    })
+    })?;
+    if let Some(count) = frames {
+        let presented = driver.presented;
+        if presented != count {
+            return Err(format!("window closed after {presented} of {count} presentations").into());
+        }
+    }
+    Ok(())
 }
 
 impl Driver {
@@ -131,6 +140,7 @@ impl Driver {
                 environment,
             }),
             state: State::Starting,
+            presented: 0,
             termination: Termination::default(),
             failure: None,
         })
@@ -292,10 +302,11 @@ impl Driver {
             ..
         } = *open;
         self.termination.stage(Stage::Releasing, 1);
-        if let Some(app) = &app
-            && !app.gpu().wait_idle(DRAIN)
-        {
-            tracing::warn!("GPU work was still pending when the surface dropped");
+        if let Some(app) = &app {
+            self.presented = app.gpu().present_count();
+            if !app.gpu().wait_idle(DRAIN) {
+                tracing::warn!("GPU work was still pending when the surface dropped");
+            }
         }
         let (watches, pasteboard) = window.into_parts();
         self.state = State::Reaping(Box::new(Reaping {

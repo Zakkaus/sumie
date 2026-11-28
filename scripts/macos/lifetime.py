@@ -22,10 +22,10 @@ Each case starts a fresh `SUMIE_MACOS_CI_RUNNER=terminal` process with a throwaw
                 10 s of the Quit and logs the open stage; no reap is reported.
   stuck-system  The same after a system quit: exit 0 within 6 s.
   exit          The last shell runs `exit`: the window closes and the process exits 0.
-  cycles        200 window open/close cycles in one process: each drains within 6 s of its
-                close, and after each reap, with no window open, descriptors, threads,
-                children, zombies and IOSurface and IOAccelerator regions are back at their
-                counts after the first reap within 6 s. Recorded only under SUMIE_TIMING=record.
+  cycle-quit    Quit while a cycle reaps: AppKit grants Quit and the runner exits 0.
+  cycles        200 window open/close cycles in one process. Within 6 s of each close the
+                window drains, then each resource count settles at or below its first-cycle
+                baseline. Resource checks are recorded only under SUMIE_TIMING=record.
 SUMIE_LIFETIME_TRIGGER picks how Close or Quit enters AppKit: `runner` (the default:
 performClose:, terminate:), or, on the owner's Mac with Accessibility, `red` (a CG click on
 the close button), `cmdq` (Cmd+Q through the HID tap), `ax` (AX press on the Quit item) and
@@ -55,6 +55,8 @@ CLEANUP = 6.0
 CYCLES = int(os.environ.get("SUMIE_LIFETIME_CYCLES", "200"))
 RECORD = os.environ.get("SUMIE_TIMING") == "record"
 TRIGGER = os.environ.get("SUMIE_LIFETIME_TRIGGER", "runner")
+REGIONS = {"iosurface_regions": "IOSurface", "ioaccelerator_regions": "IOAccelerator (graphics)"}
+COUNTS = ("fds", "threads", "children", "zombies", *REGIONS)
 MARKS = {
     "hup": "sent SIGHUP",
     "kill": "sending SIGKILL",
@@ -464,44 +466,82 @@ def case_exit(runner, tool, result):
     return errors
 
 
-def resources(pid):
-    """Descriptors, threads, zombie children and IOSurface regions of `pid`."""
-    fds = len(subprocess.run(["lsof", "-n", "-P", "-p", str(pid)], capture_output=True, text=True).stdout
-              .splitlines()) - 1
-    threads = len(subprocess.run(["ps", "-M", "-p", str(pid)], capture_output=True, text=True).stdout.splitlines()) - 1
-    rows = [line.split() for line in subprocess.run(["ps", "-A", "-o", "ppid=,stat="], capture_output=True,
-                                                    text=True).stdout.splitlines()]
-    children = [stat for ppid, stat in rows if int(ppid) == pid]
-    vmmap = subprocess.run(["vmmap", "-summary", str(pid)], capture_output=True, text=True)
-    # Region rows end in their count; a type with no regions has no row.
-    regions = {"IOSurface": None, "IOAccelerator (graphics)": None}
-    if vmmap.returncode == 0:
-        regions = dict.fromkeys(regions, 0)
-        for line in vmmap.stdout.splitlines():
-            for name in regions:
-                if re.match(rf"{re.escape(name)}\s+\d", line):
-                    regions[name] = int(line.split()[-1])
-    return {"fds": fds, "threads": threads, "children": len(children),
-            "zombies": sum(stat.startswith("Z") for stat in children),
-            "iosurface_regions": regions["IOSurface"],
-            "ioaccelerator_regions": regions["IOAccelerator (graphics)"]}
+def resources(pid, pending, deadline):
+    """Sample only the counts that have not settled; a failed probe yields None."""
+    def read(*command):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=remaining)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return result.stdout.splitlines() if result.returncode == 0 else None
+
+    if "fds" in pending:
+        rows = read("lsof", "-n", "-P", "-p", str(pid), "-Ff")
+        yield "fds", None if rows is None else {int(row[1:]) for row in rows if re.fullmatch(r"f[0-9]+", row)}
+    if "threads" in pending:
+        rows = read("ps", "-M", "-p", str(pid))
+        yield "threads", len(rows) - 1 if rows and len(rows) > 1 else None
+    if pending & {"children", "zombies"}:
+        rows = read("ps", "-A", "-o", "ppid=,stat=")
+        children = None if not rows else [stat for ppid, stat in map(str.split, rows) if int(ppid) == pid]
+        if "children" in pending:
+            yield "children", None if children is None else len(children)
+        if "zombies" in pending:
+            yield "zombies", None if children is None else sum(stat.startswith("Z") for stat in children)
+    if pending & REGIONS.keys():
+        rows = read("vmmap", "-summary", str(pid))
+        for key, name in REGIONS.items():
+            if key in pending:
+                # A type with no regions has no row.
+                yield key, None if not rows else next((int(row.split()[-1]) for row in rows
+                                                       if re.match(rf"{re.escape(name)}\s+\d", row)), 0)
 
 
-def settled(pid, baseline, since):
-    """A sample, retaken while any count is above the baseline, until CLEANUP after `since`."""
-    while True:
-        sample = resources(pid)
-        over = [key for key in sample if baseline and None not in (sample[key], baseline[key])
-                and sample[key] > baseline[key]]
-        if not over or time.monotonic() - since > CLEANUP:
-            return sample, over
-        time.sleep(0.25)
+def settled(pid, baseline, closed):
+    """Freeze each count after two valid samples agree, or both meet its baseline."""
+    deadline = closed + CLEANUP
+    pending = set(COUNTS)
+    previous, sample, regions, fds = {}, {}, [], None
+    while pending and time.monotonic() < deadline:
+        for key, value in resources(pid, pending, deadline):
+            at = time.monotonic()
+            if key in REGIONS:
+                regions.append((round(at - closed, 3), key, value))
+            if value is None or at > deadline:
+                previous.pop(key, None)
+                continue
+            if key == "fds":
+                fds, value = value, len(value)
+            sample[key] = value
+            prior = previous.get(key)
+            if prior is not None and (value == prior if baseline is None else max(prior, value) <= baseline[key]):
+                pending.remove(key)
+            previous[key] = value
+        if pending:
+            time.sleep(max(0, min(0.25, deadline - time.monotonic())))
+    return sample, pending, fds, regions
+
+
+def case_cycle_quit(runner, _tool, result):
+    start_child(runner)
+    closed = time.monotonic()
+    runner.send("cycle")
+    if runner.wait_for("err", 'stage="reaping"', 2, closed) is None:
+        return ["cycle-quit: the cycle did not start reaping"]
+    runner.send("quit")
+    code, marks = drained(runner, result, closed, HARD["ordinary"])
+    if code != 0 or "grant" not in result["phases"] or runner.first("out", "runner cycled ", closed):
+        return ["cycle-quit: Quit did not finish the drain through AppKit"]
+    print("cycle-quit: AppKit granted Quit during the drain; exit 0")
+    return reap_errors("cycle-quit", marks)
 
 
 def case_cycles(runner, _tool, result):
-    """Each cycle closes the window and drains it; once it is reaped and no window is open, the
-    counts must be back at those after the first cycle's reap."""
-    baseline, worst, seconds = None, {}, []
+    """Compare each drained cycle with the first using one deadline from its close."""
+    baseline, baseline_fds, worst, seconds, errors = None, None, {}, [], []
     for number in range(1, CYCLES + 1):
         if number > 1:
             asked = time.monotonic()
@@ -510,36 +550,35 @@ def case_cycles(runner, _tool, result):
                 return [f"cycles: cycle {number} did not open and present"]
         closed = time.monotonic()
         runner.send("cycle")
-        reaped = runner.wait_for("out", f"runner cycled {number}", CLEANUP, closed)
+        reaped = runner.wait_for("out", f"runner cycled {number}", closed + CLEANUP - time.monotonic(), closed)
         if reaped is None:
             return [f"cycles: cycle {number} was not drained within {CLEANUP:.0f} s of its close"]
         seconds.append(reaped - closed)
-        if baseline is None:
-            # Worker threads come and go: the baseline is each count's lowest over 2 s.
-            samples = []
-            for _ in range(4):
-                time.sleep(0.5)
-                samples.append(resources(runner.process.pid))
-            baseline = {key: None if None in (values := [taken[key] for taken in samples]) else min(values)
-                        for key in samples[0]}
-            continue
-        sample, over = settled(runner.process.pid, baseline, reaped)
-        for key, value in sample.items():
-            if value is not None:
-                worst[key] = max(worst.get(key, value), value)
-        missing = [key for key in sample if sample[key] is None]
-        errors = [f"cycles: {key} {baseline[key]} -> {sample[key]} after cycle {number}" for key in over]
-        errors += [f"cycles: could not measure {key} after cycle {number}" for key in missing]
-        if errors:
-            result.update(baseline=baseline, failed=sample, cycle=number)
+        sample, pending, fds, regions = settled(runner.process.pid, baseline, closed)
+        if pending:
+            for key in sorted(pending):
+                value = sample.get(key)
+                if baseline is not None and value is not None and value > baseline[key]:
+                    errors.append(f"cycles: {key} {baseline[key]} -> {value} after cycle {number}")
+                else:
+                    errors.append(f"cycles: could not settle {key} after cycle {number}")
+            added = removed = None
+            if baseline_fds is not None and fds is not None:
+                added, removed = sorted(fds - baseline_fds), sorted(baseline_fds - fds)
+            print(f"cycles: cycle {number} timeout: FD difference added={added}, removed={removed}; "
+                  f"regions (seconds since close, metric, count)={regions}", file=sys.stderr)
+            result.update(failed=sample, cycle=number, fd_added=added, fd_removed=removed, regions=regions)
             break
-    else:
-        errors = []
+        if baseline is None:
+            baseline, baseline_fds = sample, fds
+        else:
+            for key, value in sample.items():
+                worst[key] = max(worst.get(key, value), value)
     result.update(baseline=baseline, worst=worst, drain_max=max(seconds), drain_median=statistics.median(seconds))
     print(f"cycles: {len(seconds)} of {CYCLES} drained, longest {max(seconds):.3f} s, "
           f"median {statistics.median(seconds):.3f} s from close to reaped")
     print(f"{'':24}{'after cycle 1':>14}{'worst later':>14}")
-    for key in baseline:
+    for key in baseline or {}:
         print(f"{key:24}{baseline[key]!s:>14}{worst.get(key, '-')!s:>14}")
     if RECORD:
         for error in errors:
@@ -550,7 +589,7 @@ def case_cycles(runner, _tool, result):
 
 CASES = {"close": case_close, "repeat": case_repeat, "fatal": case_fatal, "fatal-quit": case_fatal_quit,
          "system": case_system, "system-fatal": case_system_fatal, "stuck": case_stuck,
-         "stuck-system": case_stuck_system, "exit": case_exit, "cycles": case_cycles}
+         "stuck-system": case_stuck_system, "exit": case_exit, "cycle-quit": case_cycle_quit, "cycles": case_cycles}
 
 
 def main():

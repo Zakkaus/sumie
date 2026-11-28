@@ -1,6 +1,7 @@
 """The negative controls that need macOS: the window gates and the macos-ci build."""
 import os
 import sys
+from unittest.mock import patch
 
 from negative.probe import append, probe, replace_once
 
@@ -192,14 +193,10 @@ def macos_controls():
               replace_once("            Native::Key(key) => self.batch.push_back(Queued::Key(key)),\n",
                            "            Native::Key(_) => (),\n"),
               "keys: plain: recorded nothing instead of")
-        probe("stop forwarding typed keys", "macos-shell", "src/macos/window.rs",
-              replace_once("            Native::Key(key) => self.batch.push_back(Queued::Key(key)),\n",
-                           "            Native::Key(_) => (),\n"),
-              "size 1: the typed command did not run")
         probe("skip TIOCSWINSZ on resize", "macos-shell", "crates/sumie-pty/src/lib.rs",
               replace_once("        Ok(tcsetwinsize(self.master()?, size.into())?)\n",
                            "        let _ = (self.master()?, size);\n        Ok(())\n"),
-              "size 2: stty size says 52x16")
+              "size 2: stty size says ")
         probe("no fallback for CJK, kana and Hangul", "macos-shell", "crates/sumie-font/src/discovery/core_text.rs",
               replace_once("        let mut rejected = Vec::new();\n        if let Some(matched) = self\n",
                            "        let mut rejected = Vec::new();\n"
@@ -317,11 +314,23 @@ def macos_controls():
         probe("wait for the first settings without a deadline", "macos-loading", "src/macos/driver.rs",
               replace_once("None if Instant::now() >= *first_by =>", "None if false && Instant::now() >= *first_by =>"),
               "loading: no present within")
+        probe("disable readback when reopening", "macos-shell", "src/macos/runner/terminal.rs",
+              replace_once("                readback,\n", "                readback: false,\n"),
+              "cycle capture: the reopened window did not present a PNG")
+        probe("swallow Quit while cycling", "macos-exit", "src/macos/runner/terminal.rs",
+              replace_once("                if matches!(event, Event::Quit(_)) {\n"
+                           "                    control.cycle = false;\n                }\n", ""),
+              "cycle-quit: Quit did not finish the drain through AppKit")
+        probe("accept an early exit from a screenshot run", "macos-shell", "src/macos/driver.rs",
+              replace_once("    if let Some(count) = frames {", "    if let Some(count) = frames.filter(|_| false) {"),
+              "exit: early screenshot: expected exit 1 and no PNG")
+        # Keep an owner alive so dropping the driver does not hide the window anyway.
+        keep_visible = replace_once(
+            "        open.window\n            .platform()\n            .order_out(context, move || done.set(true));\n",
+            "        std::mem::forget(open.window.platform().window_owner());\n        done.set(true);\n",
+        )
         probe("keep the window visible until the reap", "macos-close", "src/macos/driver.rs",
-              replace_once("        open.window\n            .platform()\n            .order_out(context, move || done.set(true));\n",
-                           "        std::mem::forget(open.window.platform().window_owner());\n"
-                           "        let _ = context;\n"
-                           "        done.set(true);\n"),
+              keep_visible,
               "close: the window was still on screen when the child was reaped")
         probe("no SIGKILL at the grace period", "macos-close", "src/app/lifetime.rs",
               replace_once("if watches.take_exit_ready(*id) || pty.close_deadline().is_some_and(|at| at <= now) {",
@@ -335,29 +344,28 @@ def macos_controls():
               replace_once("Event::Quit(Quit::Ordinary)) if open.app.is_some()",
                            "Event::Quit(_)) if open.app.is_some()"),
               "system: no reply within 4 s of the system quit")
-        releasing = "        self.termination.stage(Stage::Releasing, 1);\n"
-        for name, leak, marker in (
-            ("leak a descriptor at each close", 'std::mem::forget(std::fs::File::open("/dev/null")?);',
-             "cycles: fds "),
-            ("leak a thread at each close", "std::thread::spawn(|| loop { std::thread::park(); });",
-             "cycles: threads "),
-            ("leave a zombie at each close", 'std::mem::forget(std::process::Command::new("/usr/bin/true").spawn()?);',
-             "cycles: zombies "),
-        ):
-            probe(name, "macos-cycles", "src/macos/driver.rs",
-                  replace_once(releasing, f"{releasing}        {leak}\n"), marker)
-        probe("keep the GPU after each close", "macos-cycles", "src/app/frame_steps.rs",
-              replace_once("    pub(crate) fn into_session(self) -> Option<Session> {\n        self.session\n",
-                           "    pub(crate) fn into_session(self) -> Option<Session> {\n"
-                           "        std::mem::forget(self.gpu);\n        self.session\n"),
-              "cycles: io")
+        # Hosted CI records the clean run, but every planted leak must fail the gate.
+        with patch.dict(os.environ, SUMIE_TIMING="enforce"):
+            releasing = "        self.termination.stage(Stage::Releasing, 1);\n"
+            for name, leak, marker in (
+                ("leak a descriptor at each close", 'std::mem::forget(std::fs::File::open("/dev/null")?);',
+                 "cycles: fds "),
+                ("leak a thread at each close", "std::thread::spawn(|| loop { std::thread::park(); });",
+                 "cycles: threads "),
+                ("leave a zombie at each close", 'std::mem::forget(std::process::Command::new("/usr/bin/true").spawn()?);',
+                 "cycles: zombies "),
+            ):
+                probe(name, "macos-cycles", "src/macos/driver.rs",
+                      replace_once(releasing, f"{releasing}        {leak}\n"), marker)
+            probe("keep the GPU after each close", "macos-cycles", "src/app/frame_steps.rs",
+                  replace_once("    pub(crate) fn into_session(self) -> Option<Session> {\n        self.session\n",
+                               "    pub(crate) fn into_session(self) -> Option<Session> {\n"
+                               "        std::mem::forget(self.gpu);\n        self.session\n"),
+                  "cycles: io")
         # macos-routes needs Accessibility; hosted runners skip it.
         if os.environ.get("SUMIE_QUIT_ROUTES") != "skip":
             probe("keep the window visible until the reap (close button)", "macos-routes", "src/macos/driver.rs",
-                  replace_once("        open.window\n            .platform()\n            .order_out(context, move || done.set(true));\n",
-                               "        std::mem::forget(open.window.platform().window_owner());\n"
-                               "        let _ = context;\n"
-                               "        done.set(true);\n"),
+                  keep_visible,
                   "close-button: the window was still on screen when the child was reaped")
             probe("no SIGKILL at the grace period (Cmd+Q)", "macos-routes", "src/app/lifetime.rs",
                   replace_once("if watches.take_exit_ready(*id) || pty.close_deadline().is_some_and(|at| at <= now) {",
