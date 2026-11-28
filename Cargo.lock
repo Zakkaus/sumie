@@ -1857,6 +1857,7 @@ dependencies = [
  "sumie-macos",
  "sumie-pty",
  "sumie-render",
+ "sumie-settings",
  "sumie-ui",
  "sumie-vt",
  "sumie-wayland",
@@ -1902,6 +1903,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sumie-locale"
+version = "0.0.0"
+dependencies = [
+ "sumie-config",
+ "toml",
+]
+
+[[package]]
 name = "sumie-macos"
 version = "0.0.0"
 dependencies = [
@@ -1938,6 +1947,18 @@ dependencies = [
  "sumie-core",
  "thiserror 2.0.21",
  "wgpu",
+]
+
+[[package]]
+name = "sumie-settings"
+version = "0.0.0"
+dependencies = [
+ "rustix 1.1.6",
+ "signal-hook",
+ "sumie-config",
+ "sumie-locale",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

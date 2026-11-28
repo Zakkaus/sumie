@@ -88,6 +88,8 @@ blink = true
 
 `cursor.style` 可設為 `block`、`bar` 或 `underline`。終端機內的程式可用 DECSCUSR 覆寫形狀與閃爍設定，直到重設為止。視窗失焦時，可見的游標改為不閃爍的空心方框。
 
+在終端機執行 `sumie config` 可編輯設定。按 Tab 或 1–4 切換分類，按 ↑／↓ 選取項目，按 ←／→ 或 Enter 修改，按 `/` 搜尋，按 `r` 還原所選項目。修改後立即存檔。按 Esc 或 `q` 離開。
+
 `size` 以 96 DPI 下的點數為單位。執行 `sumie config show --defaults` 可查看所有選項與預設值。
 要啟用編輯器自動補全，請在設定目錄執行 `sumie config schema > sumie.schema.json`。
 比對字型時，`SUMIE_FONT`、`SUMIE_FONT_PX`（邏輯像素）、`SUMIE_FONT_WEIGHT` 和 `SUMIE_FONT_HINTING` 優先於設定檔。

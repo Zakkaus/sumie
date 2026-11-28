@@ -14,6 +14,21 @@ use crate::{
     write::{self, Refusal, Replaced, Snapshot},
 };
 
+mod values;
+pub use values::EditValues;
+
+/// Parse an array typed in the settings editor. The loader validates its elements when saved.
+#[must_use]
+pub fn parse_list(input: &str) -> Option<Value> {
+    input.parse().ok().filter(Value::is_array)
+}
+
+/// Encode an array for editing with quoted paths or colors.
+#[must_use]
+pub fn format_list(value: &Value) -> String {
+    to_edit(value).to_string()
+}
+
 /// Attempts after the first when the file changes between staging and the rename.
 const RESTARTS: usize = 3;
 
@@ -57,16 +72,20 @@ fn defining(path: &Path, key: &str, active: &mut Vec<PathBuf>) -> Option<PathBuf
         return None;
     }
     active.push(identity);
-    let found = table
+    let found = includes(&table)
+        .rev()
+        .find_map(|entry| defining(&path.with_file_name(entry), key, active));
+    active.pop();
+    found
+}
+
+fn includes(table: &Table) -> impl DoubleEndedIterator<Item = &str> {
+    table
         .get("include")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .rev()
         .filter_map(Value::as_str)
-        .find_map(|entry| defining(&path.with_file_name(entry), key, active));
-    active.pop();
-    found
 }
 
 fn parse(bytes: &[u8]) -> Option<Table> {

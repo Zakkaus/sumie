@@ -82,17 +82,26 @@ fn run() -> Result<()> {
     }
 
     if args.next_if(|arg| arg == "config").is_some() {
-        let mut stdout = std::io::stdout().lock();
-        return match args.next().as_deref().and_then(std::ffi::OsStr::to_str) {
-            Some("schema") if args.next().is_none() => {
-                Ok(writeln!(stdout, "{}", sumie_config::schema_json()?)?)
-            }
-            Some("show")
-                if args.next().is_some_and(|arg| arg == "--defaults") && args.next().is_none() =>
+        return match args.next() {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            None => sumie_settings::run().map_err(Into::into),
+            Some(command) if command == "schema" && args.next().is_none() => Ok(writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                sumie_config::schema_json()?
+            )?),
+            Some(command)
+                if command == "show"
+                    && args.next().is_some_and(|arg| arg == "--defaults")
+                    && args.next().is_none() =>
             {
-                Ok(write!(stdout, "{}", sumie_config::defaults_toml())?)
+                Ok(write!(
+                    std::io::stdout().lock(),
+                    "{}",
+                    sumie_config::defaults_toml()
+                )?)
             }
-            _ => Err("usage: sumie config {schema | show --defaults}".into()),
+            _ => Err("usage: sumie config [schema | show --defaults]".into()),
         };
     }
 

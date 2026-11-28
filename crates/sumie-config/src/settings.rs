@@ -66,10 +66,11 @@ pub enum Kind {
         min: Option<i64>,
         max: Option<i64>,
     },
-    /// A number; `min` may be an exclusive bound, which the loader enforces.
+    /// A floating-point setting. Bounds come from the schema; the loader validates writes.
     Number {
         min: Option<f64>,
         max: Option<f64>,
+        exclusive_min: bool,
     },
     Text,
     /// A `#rrggbb` color.
@@ -89,6 +90,8 @@ pub struct SettingInfo {
     pub kind: Kind,
     /// Effective value when no file sets the key; `None` when unset means platform behavior.
     pub default: Option<Value>,
+    /// Another key supplies the runtime default when this setting is unset.
+    pub default_from: Option<String>,
     /// English label.
     pub label: String,
     /// English description.
@@ -174,6 +177,7 @@ fn info(path: String, leaf: &Value, table: &Value) -> SettingInfo {
             .get("default")
             .filter(|value| !value.is_null())
             .cloned(),
+        default_from: leaf["x-sumie-default-from"].as_str().map(str::to_owned),
         label: text("title"),
         description: text("description"),
         category,
@@ -209,6 +213,7 @@ fn kind(path: &str, leaf: &Value) -> Kind {
         Some("number") => Kind::Number {
             min: bound("minimum").or_else(|| bound("exclusiveMinimum")),
             max: bound("maximum"),
+            exclusive_min: leaf.get("exclusiveMinimum").is_some(),
         },
         Some("string") if leaf.get("pattern").is_some() => Kind::Color,
         Some("string") => Kind::Text,
