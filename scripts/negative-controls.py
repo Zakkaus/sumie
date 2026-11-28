@@ -160,10 +160,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           "test test_probe ... FAILED")
     probe("OSC 8 target does not reach the banner", "test", "src/view/paint.rs",
           replace_once("        let banner = hovered_link.target.or(banner);\n", ""),
-          "test view::tests::osc8_target_is_drawn_in_the_banner_row ... FAILED")
+          "test view::tests::banner::osc8_target_is_drawn_in_the_banner_row ... FAILED")
     probe("OSC 8 banner truncates before the host", "test", "src/view/overlays.rs",
           replace_once("width_needed > columns", "width_needed > columns && false"),
-          "test view::tests::osc8_target_is_drawn_in_the_banner_row ... FAILED")
+          "test view::tests::banner::osc8_target_is_drawn_in_the_banner_row ... FAILED")
     probe("OSC title skips text cleaning", "test", "crates/sumie-vt/src/effects.rs",
           replace_once("Some(clean_title(bytes))", "Some(String::from_utf8_lossy(bytes).into_owned())"),
           "test effects::tests::osc2_strips_control_and_format_characters_from_titles ... FAILED")
