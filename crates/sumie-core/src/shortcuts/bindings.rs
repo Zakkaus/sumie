@@ -213,7 +213,7 @@ pub const BINDINGS: &[Binding] = {
             "Zoom pane",
             Pane(PaneAction::Zoom),
             "Ctrl+Shift+Z",
-            "Super+Z"
+            "Super+Shift+Enter"
         ),
         (
             "font-increase",
