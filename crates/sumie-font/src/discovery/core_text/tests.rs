@@ -168,3 +168,20 @@ fn installed_and_generic_families_are_not_substituted() {
         assert_eq!(primary_advances(&fonts).len() == 1, monospaced, "{family}");
     }
 }
+
+#[test]
+fn apple_color_emoji_draws_visible_color() {
+    let mut fonts = FontSystem::new("Menlo", 20.0, 1.0, FontOptions::default()).unwrap();
+    let key = fonts.shape("\u{1f600}", &[2]).unwrap().glyphs[0].key;
+    assert_eq!(fonts.family(key.face()), Some("Apple Color Emoji"));
+    fonts.rasterize(key).unwrap();
+    assert!(
+        fonts
+            .color_atlas()
+            .pixels()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|&[r, g, b, a]| a != 0 && (r != g || g != b))
+    );
+}

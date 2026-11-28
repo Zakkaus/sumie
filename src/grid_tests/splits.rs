@@ -137,6 +137,7 @@ fn check(backend: wgpu::Backends) {
             image_exclusions: [None, Some(rect([22, 10], [2, 3]))],
             glyphs: &[GlyphQuad {
                 atlas: FULL,
+                color_glyph: false,
                 dest: rect([28, 26], FULL.size),
                 color: CYAN,
                 cell: [0, 0],
@@ -157,6 +158,7 @@ fn check(backend: wgpu::Backends) {
             image_exclusions: [Some(rect([5, 10], [2, 3])), None],
             glyphs: &[GlyphQuad {
                 atlas: FULL,
+                color_glyph: false,
                 dest: rect([12, 26], FULL.size),
                 color: YELLOW,
                 cell: [0, 0],
@@ -188,12 +190,15 @@ const TEST_STRIP: ChromeLayer<'static> = ChromeLayer {
     fills: &[fill([0, 0], [WIDTH, 4], WHITE)],
     glyphs: &[],
     text_background: BLACK,
-    atlas: AtlasUpload {
-        width: 1,
-        height: 1,
-        bytes: &[0],
-        dirty: &[],
-    },
+    atlas: [
+        AtlasUpload {
+            width: 1,
+            height: 1,
+            bytes: &[0],
+            dirty: &[],
+        },
+        super::EMPTY_COLOR,
+    ],
 };
 
 fn assert_viewer(

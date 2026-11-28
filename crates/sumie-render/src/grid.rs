@@ -17,6 +17,7 @@ pub struct PixelRect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlyphQuad {
     pub atlas: AtlasRect,
+    pub color_glyph: bool,
     /// Must have the same size as `atlas` for 1:1 sampling.
     pub dest: PixelRect,
     pub color: Rgba,
@@ -95,7 +96,7 @@ pub struct ChromeLayer<'a> {
     /// Cell ownership does not apply to chrome; all masks use `text_background` for contrast.
     pub glyphs: &'a [GlyphQuad],
     pub text_background: Rgba,
-    pub atlas: AtlasUpload<'a>,
+    pub atlas: [AtlasUpload<'a>; 2],
 }
 
 impl ChromeLayer<'_> {
@@ -214,7 +215,10 @@ impl Instance {
         Self {
             origin: glyph.dest.origin,
             size: glyph.dest.size,
-            atlas_origin: glyph.atlas.origin,
+            atlas_origin: [
+                glyph.atlas.origin[0],
+                glyph.atlas.origin[1] | (u32::from(glyph.color_glyph) << 31),
+            ],
             color: glyph.color,
             background,
         }

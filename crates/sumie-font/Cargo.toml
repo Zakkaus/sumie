@@ -13,10 +13,12 @@ zeno.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 fontconfig.workspace = true
+png.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCharacterSet", "CFSet", "CFURL"] }
-objc2-core-text = { version = "0.3.2", default-features = false, features = ["CTFont", "CTFontCollection", "CTFontDescriptor", "CTFontTraits"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["CTFont", "CTFontCollection", "CTFontDescriptor", "CTFontTraits", "objc2-core-graphics"] }
 
 [dev-dependencies]
 png.workspace = true

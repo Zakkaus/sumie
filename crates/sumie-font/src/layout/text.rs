@@ -150,10 +150,19 @@ impl Layout {
                     .zip(self.buffer.glyph_positions())
                 {
                     let x = output.advance + f64::from(pos.x_offset) * scale;
+                    let id = GlyphId::new(info.glyph_id);
+                    let mut key = GlyphKey::new(first.face, id, ppem);
+                    if faces[first.face.0].has_color(id) {
+                        key.color_width = ceil_width(f64::from(pos.x_advance) * scale).max(1);
+                    }
                     output.glyphs.push(TextGlyph {
-                        key: GlyphKey::new(first.face, GlyphId::new(info.glyph_id), ppem),
+                        key,
                         x: x.round() as i32,
-                        y: metrics.baseline - (f64::from(pos.y_offset) * scale).round() as i32,
+                        y: if key.is_color() {
+                            0
+                        } else {
+                            metrics.baseline - (f64::from(pos.y_offset) * scale).round() as i32
+                        },
                     });
                     output.advance += f64::from(pos.x_advance) * scale;
                     output.record_cluster(&mut last, input[info.cluster as usize].byte);

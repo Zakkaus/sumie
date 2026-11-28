@@ -96,7 +96,7 @@ impl Gpu {
         Ok((result, readback))
     }
 
-    pub(crate) fn upload_atlas(&mut self, atlas: &AtlasUpload<'_>) {
+    pub(crate) fn upload_atlas(&mut self, atlas: &[AtlasUpload<'_>; 2]) {
         self.target.upload_atlas(atlas);
     }
 

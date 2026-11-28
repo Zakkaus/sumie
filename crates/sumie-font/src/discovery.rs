@@ -40,6 +40,8 @@ pub(crate) struct Match {
     request: Request,
     #[cfg(target_os = "macos")]
     bytes: skrifa::font::Blob,
+    #[cfg(target_os = "macos")]
+    color_name: Option<String>,
 }
 
 impl Match {
@@ -147,6 +149,20 @@ pub(crate) struct Face {
 }
 
 impl Face {
+    pub fn has_color(&self, glyph: skrifa::GlyphId) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            crate::raster::png_strike(&self.font, glyph, 0).is_some()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.matched.color_name.is_some()
+                && self
+                    .sfnt()
+                    .is_some_and(|face| core_text::has_sbix(&face, glyph))
+        }
+    }
+
     pub fn matches(&self, matched: &Match, regular_weight: Option<Weight>) -> bool {
         self.matched.path == matched.path
             && self.matched.index == matched.index

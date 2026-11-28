@@ -188,6 +188,9 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           replace_once("ffi::CURSOR_STYLE_UNDERLINE => CursorStyle::Underline,",
                        "ffi::CURSOR_STYLE_UNDERLINE => CursorStyle::Bar,"),
           "test cursor::tests::decscusr_controls_shape_and_blink_until_reset ... FAILED")
+    probe("emoji loses its palette", "test", "crates/sumie-render/src/grid.wgsl",
+          replace_once("vec4<f32>(rgb * pixel.a, pixel.a)", "vec4<f32>(rgb.rrr * pixel.a, pixel.a)"),
+          "test grid_tests::attributes::color_emoji_keeps_its_palette ... FAILED")
     probe("hollow cursor border widened", "test", "crates/sumie-render/src/grid.rs",
           replace_once("solid([x, y + 1], [1, h - 2]);", "solid([x, y + 1], [2, h - 2]);"),
           "test grid_tests::grid_on_selected_backend ... FAILED")

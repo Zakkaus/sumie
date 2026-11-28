@@ -22,9 +22,10 @@ pub struct AtlasGlyph {
     pub top: i32,
 }
 
-/// CPU-side, tightly packed 8-bit coverage atlas. Pixel rectangles remain valid after growth.
+/// Tightly packed R8 coverage or premultiplied sRGB RGBA8. Rectangles survive growth.
 pub struct Atlas {
     side: u32,
+    channels: usize,
     pixels: Vec<u8>,
     entries: HashMap<GlyphKey, AtlasGlyph>,
     dirty: Vec<Rect>,
@@ -35,10 +36,11 @@ pub struct Atlas {
 }
 
 impl Atlas {
-    pub(crate) fn new(side: u32) -> Self {
+    pub(crate) fn new(side: u32, channels: usize) -> Self {
         Self {
             side,
-            pixels: vec![0; (side as usize).pow(2)],
+            channels,
+            pixels: vec![0; (side as usize).pow(2) * channels],
             entries: HashMap::new(),
             // A replacement atlas can reuse a GPU texture with the same dimensions.
             dirty: vec![Rect {
@@ -59,7 +61,7 @@ impl Atlas {
         [self.side, self.side]
     }
 
-    /// Row-major coverage bytes, with one byte per pixel and stride equal to the atlas width.
+    /// Row-major pixels with no row padding.
     #[must_use]
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
@@ -87,6 +89,23 @@ impl Atlas {
         entry
     }
 
+    pub(crate) fn insert_color(
+        &mut self,
+        key: GlyphKey,
+        height: u32,
+        draw: impl FnOnce(&mut [u8], usize),
+    ) -> Result<AtlasGlyph, FontError> {
+        self.insert(
+            key,
+            Placement {
+                width: key.color_width,
+                height,
+                ..Default::default()
+            },
+            draw,
+        )
+    }
+
     pub(crate) fn insert(
         &mut self,
         key: GlyphKey,
@@ -111,8 +130,8 @@ impl Atlas {
         self.x = x + width;
         self.y = y;
         self.shelf_height = shelf_height.max(height);
-        let stride = self.side as usize;
-        let offset = y as usize * stride + x as usize;
+        let stride = self.side as usize * self.channels;
+        let offset = y as usize * stride + x as usize * self.channels;
         draw(&mut self.pixels[offset..], stride);
 
         let rect = Rect {
@@ -133,14 +152,18 @@ impl Atlas {
         let side = required
             .checked_next_power_of_two()
             .ok_or(FontError::AtlasFull)?;
-        let stride = side as usize;
-        let len = stride.checked_mul(stride).ok_or(FontError::AtlasFull)?;
+        let stride = (side as usize)
+            .checked_mul(self.channels)
+            .ok_or(FontError::AtlasFull)?;
+        let len = stride
+            .checked_mul(side as usize)
+            .ok_or(FontError::AtlasFull)?;
         let mut pixels = Vec::new();
         pixels
             .try_reserve_exact(len)
             .map_err(|_| FontError::AtlasFull)?;
         pixels.resize(len, 0);
-        let old_stride = self.side as usize;
+        let old_stride = self.side as usize * self.channels;
         for (src, dst) in self
             .pixels
             .chunks_exact(old_stride)

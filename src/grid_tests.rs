@@ -7,7 +7,6 @@ use sumie_render::{
     Renderer, Rgba, Scroll, backends, instance_descriptor, wgpu,
 };
 
-#[cfg(target_os = "linux")]
 mod attributes;
 #[cfg(target_os = "linux")]
 mod images;
@@ -146,7 +145,6 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
             writer.finish().unwrap();
         }
     }
-    #[cfg(target_os = "linux")]
     attributes::assert_decorations(&mut renderer, &device, &queue);
     #[cfg(target_os = "linux")]
     assert_padded_grid(&mut renderer, &device, &queue);
@@ -302,42 +300,59 @@ impl sumie_core::graphics::ImageSource for TestImages<'_> {
     }
 }
 
+const EMPTY_COLOR: AtlasUpload<'static> = AtlasUpload {
+    width: 1,
+    height: 1,
+    bytes: &[0; 4],
+    dirty: &[],
+};
+
 fn upload_atlas(renderer: &mut Renderer) {
     const STRIDE: usize = 19;
     const HEIGHT: u32 = 18;
-    renderer.upload_atlas(&AtlasUpload {
-        width: 8,
-        height: 16,
-        bytes: &[0; 128],
-        dirty: &[],
-    });
+    renderer.upload_atlas(&[
+        AtlasUpload {
+            width: 8,
+            height: 16,
+            bytes: &[0; 128],
+            dirty: &[],
+        },
+        EMPTY_COLOR,
+    ]);
     let mut bytes = [0; STRIDE * HEIGHT as usize];
     for row in &mut bytes.as_chunks_mut::<STRIDE>().0[1..17] {
         row[1..9].fill(255);
     }
     // The full glyph must arrive on growth despite an empty dirty list.
-    renderer.upload_atlas(&AtlasUpload {
-        width: 19,
-        height: HEIGHT,
-        bytes: &bytes,
-        dirty: &[],
-    });
+    renderer.upload_atlas(&[
+        AtlasUpload {
+            width: 19,
+            height: HEIGHT,
+            bytes: &bytes,
+            dirty: &[],
+        },
+        EMPTY_COLOR,
+    ]);
     for row in &mut bytes.as_chunks_mut::<STRIDE>().0[1..17] {
         row[1..9].fill(0);
         row[10..18].fill(128);
     }
     // Poison the full glyph's source bytes to catch an unexpected whole-atlas upload.
-    renderer.upload_atlas(&AtlasUpload {
-        width: 19,
-        height: HEIGHT,
-        bytes: &bytes,
-        dirty: &[HALF],
-    });
+    renderer.upload_atlas(&[
+        AtlasUpload {
+            width: 19,
+            height: HEIGHT,
+            bytes: &bytes,
+            dirty: &[HALF],
+        },
+        EMPTY_COLOR,
+    ]);
 }
 
 const fn glyph(col: u32, x: i32, atlas: AtlasRect, color: Rgba) -> GlyphQuad {
     GlyphQuad {
         atlas,
+        color_glyph: false,
         dest: PixelRect {
             origin: [x, 1],
             size: CELL,

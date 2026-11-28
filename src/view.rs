@@ -81,7 +81,7 @@ pub(crate) struct View {
     palette: Palette,
     selection_foreground: Option<Rgb>,
     selection_background: Option<Rgb>,
-    atlas_dirty: Vec<AtlasRect>,
+    atlas_dirty: [Vec<AtlasRect>; 2],
     line: Line,
     composition: Line,
 }
@@ -158,7 +158,7 @@ impl View {
             palette: Palette::for_luminance(0.0),
             selection_foreground: colors.selection_foreground(),
             selection_background: colors.selection_background(),
-            atlas_dirty: Vec::new(),
+            atlas_dirty: Default::default(),
             line: Line::default(),
             composition: Line::default(),
         })
@@ -443,7 +443,7 @@ impl View {
         draw
     }
 
-    pub(crate) fn atlas(&self) -> AtlasUpload<'_> {
+    pub(crate) fn atlas(&self) -> [AtlasUpload<'_>; 2] {
         upload(&self.font, &self.atlas_dirty)
     }
 
@@ -517,6 +517,7 @@ impl Line {
             if image.rect.width != 0 && image.rect.height != 0 {
                 glyphs.push(attributes::glyph_quad(
                     image,
+                    glyph.key.is_color(),
                     [x + glyph.x, y + glyph.y],
                     [col + glyph.column, row],
                     foreground,

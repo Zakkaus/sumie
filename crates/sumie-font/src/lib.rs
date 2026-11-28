@@ -71,6 +71,8 @@ pub struct GlyphKey {
     face: FaceId,
     glyph: GlyphId,
     ppem_bits: u32,
+    // Color ink covers this many device pixels; outlines use their own bearings.
+    color_width: u32,
 }
 
 impl GlyphKey {
@@ -79,6 +81,7 @@ impl GlyphKey {
             face,
             glyph,
             ppem_bits: ppem.to_bits(),
+            color_width: 0,
         }
     }
 
@@ -96,6 +99,11 @@ impl GlyphKey {
     #[must_use]
     pub const fn ppem(self) -> f32 {
         f32::from_bits(self.ppem_bits)
+    }
+
+    #[must_use]
+    pub const fn is_color(self) -> bool {
+        self.color_width != 0
     }
 }
 
@@ -146,8 +154,8 @@ pub enum FontError {
     Shape(harfrust::ShapeError),
     #[error("glyph key refers to an unknown face")]
     UnknownFace,
-    #[error("color and bitmap glyphs are not supported")]
-    UnsupportedGlyph,
+    #[error("could not rasterize the color glyph")]
+    ColorGlyph,
     #[error("Skrifa: {0}")]
     Outline(skrifa::ScaleError),
     #[error("Skrifa hinted outline: {0}")]
@@ -201,6 +209,7 @@ pub struct FontSystem {
     layout: layout::Layout,
     rasterizer: raster::Rasterizer,
     atlas: Atlas,
+    color_atlas: Atlas,
 }
 
 impl FontSystem {
@@ -246,7 +255,8 @@ impl FontSystem {
             metrics,
             layout: layout::Layout::default(),
             rasterizer: raster::Rasterizer::new(options.hinting),
-            atlas: Atlas::new(128),
+            atlas: Atlas::new(128, 1),
+            color_atlas: Atlas::new(1, 4),
         })
     }
 
@@ -431,14 +441,18 @@ impl FontSystem {
     /// Rasterizes a shaped glyph from this font system, or returns its cached atlas entry.
     ///
     /// # Errors
-    /// Returns an error if the face, outline or atlas allocation is unavailable, or the glyph
-    /// uses an unsupported color or bitmap format.
+    /// Returns an error if the face, outline or atlas allocation is unavailable,
+    /// or the platform cannot draw the color bitmap.
     pub fn rasterize(&mut self, key: GlyphKey) -> Result<AtlasGlyph, FontError> {
-        if let Some(entry) = self.atlas.get(key) {
+        let atlas = if key.is_color() {
+            &mut self.color_atlas
+        } else {
+            &mut self.atlas
+        };
+        if let Some(entry) = atlas.get(key) {
             return Ok(entry);
         }
-        self.rasterizer
-            .draw(&self.faces, self.metrics, key, &mut self.atlas)
+        self.rasterizer.draw(&self.faces, self.metrics, key, atlas)
     }
 
     #[must_use]
@@ -446,8 +460,14 @@ impl FontSystem {
         &self.atlas
     }
 
+    #[must_use]
+    pub const fn color_atlas(&self) -> &Atlas {
+        &self.color_atlas
+    }
+
     /// Acknowledge all dirty regions after their bytes have been consumed.
     pub fn clear_dirty_regions(&mut self) {
         self.atlas.clear_dirty_regions();
+        self.color_atlas.clear_dirty_regions();
     }
 }

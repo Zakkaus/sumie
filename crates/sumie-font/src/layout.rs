@@ -332,13 +332,26 @@ impl Segment<'_> {
             }
             let mut relative = pen;
             for (info, pos) in infos[start..end].iter().zip(&positions[start..end]) {
+                let id = GlyphId::new(info.glyph_id);
+                let mut key = GlyphKey::new(cell.face, id, ppem);
+                if self.face.has_color(id) {
+                    key.color_width = cells.max(1) * self.metrics.width;
+                }
+                let (x, y) = if key.is_color() {
+                    (anchor, 0)
+                } else {
+                    (
+                        anchor + dx + px(relative + pos.x_offset, scale).round() as i32,
+                        self.face.baseline - px(pos.y_offset, scale).round() as i32,
+                    )
+                };
                 glyphs.push(ShapedGlyph {
-                    key: GlyphKey::new(cell.face, GlyphId::new(info.glyph_id), ppem),
+                    key,
                     cluster: cell.byte,
                     column: cell.column,
                     cells,
-                    x: anchor + dx + px(relative + pos.x_offset, scale).round() as i32,
-                    y: self.face.baseline - px(pos.y_offset, scale).round() as i32,
+                    x,
+                    y,
                 });
                 relative += pos.x_advance;
             }
@@ -410,6 +423,8 @@ impl Segment<'_> {
             let key = GlyphKey::new(face, GlyphId::new(info.glyph_id), ppem);
             let (left, top, width, height) = if let Some(mask) = self.atlas.get(key) {
                 (mask.left, mask.top, mask.rect.width, mask.rect.height)
+            } else if self.face.has_color(key.glyph) {
+                continue;
             } else {
                 let (_, mask) = self.rasterizer.prepare(self.face, key)?;
                 (mask.left, mask.top, mask.width, mask.height)
