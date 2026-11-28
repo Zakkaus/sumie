@@ -1,6 +1,8 @@
 //! Read the lines of a Ghostty config. A line becomes a sumie setting or nothing; the value is
 //! checked again when it is written.
 
+use std::collections::BTreeSet;
+
 use sumie_config::Value;
 
 use super::keybinds;
@@ -19,7 +21,8 @@ pub(super) struct Setting {
 }
 
 pub(super) fn parse(text: &str) -> Vec<Setting> {
-    text.lines()
+    let mut settings: Vec<_> = text
+        .lines()
         .enumerate()
         .filter_map(|(index, raw)| {
             let raw = raw.trim();
@@ -38,7 +41,15 @@ pub(super) fn parse(text: &str) -> Vec<Setting> {
                 value: translate(key, value),
             })
         })
-        .collect()
+        .collect();
+    let mut scalars = BTreeSet::new();
+    for setting in settings.iter_mut().rev() {
+        let key = setting.key.as_str();
+        if !matches!(key, "font-family" | "palette" | "keybind") && !scalars.insert(key) {
+            setting.value = None;
+        }
+    }
+    settings
 }
 
 fn translate(key: &str, value: &str) -> Option<(Target, Value)> {
