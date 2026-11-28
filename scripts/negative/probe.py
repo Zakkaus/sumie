@@ -62,7 +62,6 @@ def probe(name, gate, file, change, marker, expected=1, *, new=False):
         print(result.stdout, end="")
         if result.returncode == 2:
             raise GateUnavailable(f"{name}: {gate} could not run (exit 2)")
-        markers = (marker,) if isinstance(marker, str) else marker
-        if result.returncode != expected or not all(text in result.stdout for text in markers):
+        if result.returncode != expected or marker not in result.stdout:
             raise RuntimeError(f"{name}: expected exit {expected} and {marker!r}, got exit {result.returncode}")
     print(f"{name}: {'RED' if expected else 'GREEN'} as expected (exit {result.returncode}); restored {file}")

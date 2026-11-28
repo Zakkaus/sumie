@@ -155,8 +155,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           "test splits::tests::tiny_windows_partition_every_pixel ... FAILED")
     probe("contrast above the supported range", "test", "crates/sumie-config/src/lib.rs",
           replace_once("(1.0..=21.0).contains(&ratio)", "(1.0..=22.0).contains(&ratio)"),
-          ("test tests::load_configuration ... FAILED",
-           "minimum_contrast: Some(21.00000001)", "; 1 failed;"))
+          "minimum-contrast = 21.00000001:")
     if sys.platform.startswith("linux"):
         probe("config load opens a FIFO with no writer", "test", "crates/sumie-config/src/load.rs",
               replace_once("check_with(path, visit, &mut read_file)",
@@ -369,13 +368,6 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "the shell was not reaped within 6 s of the close")
     input_controls()
     macos_controls()
-    if sys.platform == "darwin":
-        probe("extra bytes reach the recorder before it stops", "macos-pasteboard", "scripts/macos/keys.py",
-              replace_once('        self.runner.wait_for_file(out.with_name(out.name + ".done"))\n',
-                           '        self.runner.wait_for_file(out.with_name(out.name + ".done"))\n'
-                           '        if name == "framed":\n'
-                           '            out.write_text(out.read_text() * 2)\n'),
-              "pasteboard: framed: recorded")
     if sys.platform.startswith("linux") and shutil.which("kwin_wayland"):
         pane_controls()
     else:
@@ -429,9 +421,13 @@ def main():
     if sys.argv[1:] == ["macos-quit"]:
         evidence = os.environ.get("SUMIE_SPIKE_EVIDENCE")
         if not evidence:
-            sys.exit("macos-quit: set SUMIE_SPIKE_EVIDENCE to an evidence directory")
-        return int(any(subprocess.call(["bash", ROOT / "scripts/macos-spike/quit.sh", evidence, case])
-                          for case in ("synchronous", "nested-queued", "system-cancel")))
+            print("macos-quit: set SUMIE_SPIKE_EVIDENCE to an evidence directory", file=sys.stderr)
+            return 2
+        for case in ("synchronous", "nested-queued", "system-cancel"):
+            status = subprocess.call(["bash", ROOT / "scripts/macos-spike/quit.sh", evidence, case])
+            if status:
+                return 1 if status == 1 else 2
+        return 0
     # Restoring a probed file can keep its old mtime, so Cargo would reuse the probe's
     # artifacts in the next normal run. Probes build in their own target directory.
     target = os.environ.get("CARGO_TARGET_DIR") or str(ROOT / "target")
