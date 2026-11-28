@@ -134,7 +134,7 @@ pub struct Pty {
     pending: VecDeque<u8>,
     reader: Reader,
     child: Option<Child>,
-    shell: Option<OsString>,
+    is_shell: bool,
     close_grace: Duration,
 }
 
@@ -149,13 +149,13 @@ impl Pty {
             return Err(SpawnError::CloseGrace);
         }
         let command = options.command()?;
-        let shell = options
-            .env
-            .get(OsStr::new("SHELL"))
-            .filter(|shell| match options.command {
-                Command::LoginShell => true,
-                Command::Argv { program, .. } => program == shell.as_os_str(),
-            });
+        let is_shell = match options.command {
+            Command::LoginShell => true,
+            Command::Argv { program, .. } => options
+                .env
+                .get(OsStr::new("SHELL"))
+                .is_some_and(|shell| shell.as_os_str() == program),
+        };
         let (master, slave) = {
             let _creating = spawn::creating();
             pty_process::blocking::open()?
@@ -168,7 +168,7 @@ impl Pty {
             pending: VecDeque::new(),
             reader,
             child: None,
-            shell: shell.cloned(),
+            is_shell,
             close_grace: options.close_grace,
         };
 
@@ -269,19 +269,17 @@ impl Pty {
         self.child.as_ref().map(Child::pid)
     }
 
-    /// Whether a program other than the original shell owns the terminal, or its owner is unknown.
+    /// Whether a live child started as a non-shell or its shell group may not own the foreground.
     #[must_use]
     pub fn has_foreground_job(&self) -> bool {
         self.child_pid().is_some_and(|child| {
             // The PTY child calls setsid before exec, so its original group ID is its PID.
-            self.master
-                .as_ref()
-                .and_then(|master| tcgetpgrp(master).ok())
-                .is_none_or(|group| group != child)
+            !self.is_shell
                 || self
-                    .shell
-                    .as_deref()
-                    .is_none_or(|shell| !is_shell(child, shell))
+                    .master
+                    .as_ref()
+                    .and_then(|master| tcgetpgrp(master).ok())
+                    .is_none_or(|group| group != child)
         })
     }
 
@@ -353,41 +351,6 @@ impl Drop for Pty {
             self.reader.handoff(Cleanup::Watched(child));
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn is_shell(pid: Pid, shell: &OsStr) -> bool {
-    use std::fs::metadata;
-    use std::os::unix::fs::MetadataExt as _;
-
-    metadata(format!("/proc/{}/exe", pid.as_raw_nonzero()))
-        .and_then(|running| {
-            let shell = metadata(shell)?;
-            Ok((running.dev(), running.ino()) == (shell.dev(), shell.ino()))
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(target_os = "macos")]
-fn is_shell(pid: Pid, shell: &OsStr) -> bool {
-    use std::os::unix::ffi::OsStrExt as _;
-    use std::process::{Command, Stdio};
-
-    let Ok(shell) = std::fs::canonicalize(shell) else {
-        return false;
-    };
-    // Darwin has no procfs. Query the kernel's executable name, not the mutable argv[0].
-    let mut ps = Command::new("/bin/ps");
-    ps.args(["-p", &pid.as_raw_nonzero().to_string(), "-o", "ucomm="])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    spawn(&mut ps)
-        .and_then(std::process::Child::wait_with_output)
-        .is_ok_and(|out| {
-            out.status.success()
-                && shell.file_name() == Some(OsStr::from_bytes(out.stdout.trim_ascii()))
-        })
 }
 
 fn setup_master(master: &OwnedFd, size: Size) -> io::Result<()> {

@@ -56,7 +56,7 @@ impl Session {
         if self
             .confirmation
             .as_ref()
-            .is_some_and(|confirmation| confirmation.targets(&pane))
+            .is_some_and(|(confirmation, _)| confirmation.targets(&pane))
         {
             self.dismiss_confirmation();
         }

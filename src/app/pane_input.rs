@@ -1,5 +1,6 @@
 use std::ops::ControlFlow;
 
+use sumie_config::Language;
 use sumie_core::{KeyAction, KeyModifiers, splits::Layout};
 
 use super::window_events::Confirmation;
@@ -163,7 +164,7 @@ impl Session {
         event: Event,
         window: &mut impl WindowOps,
         banner: bool,
-        confirm_paste: bool,
+        confirm_paste: Option<Language>,
     ) -> Result<Option<tabs::Action>> {
         self.link_pointer.record(&event);
         if let ControlFlow::Break(action) = self.bar_input(&event) {
@@ -204,18 +205,17 @@ impl Session {
             window.reset_blink(id);
         }
         let searching = pane.search.is_some();
-        let event = match event {
-            Event::ClipboardText { text, generation }
-                if confirm_paste
-                    && !searching
+        let event = match (event, confirm_paste) {
+            (Event::ClipboardText { text, generation }, Some(language))
+                if !searching
                     && !pane.exited
                     && text.contains(['\n', '\r'])
                     && !pane.pane.terminal.bracketed_paste()? =>
             {
-                self.ask(Confirmation::Paste { text, generation });
+                self.ask(Confirmation::Paste { text, generation }, language);
                 return Ok(None);
             }
-            event => event,
+            (event, _) => event,
         };
         match input::route(
             (id, recipient),

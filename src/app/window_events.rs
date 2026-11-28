@@ -1,6 +1,6 @@
 //! Apply window events and reloaded settings to the session, GPU and window.
 
-use sumie_config::Config;
+use sumie_config::{Config, Language};
 use sumie_core::KeyAction;
 use sumie_locale::Locale;
 
@@ -76,9 +76,6 @@ impl App {
                 }
             }
             session.set_smooth_scroll(next.scroll.smooth());
-            let locale = (next.language() != self.config.language())
-                .then(|| Locale::from_language(next.language()));
-            session.locale = locale.unwrap_or(session.locale);
             if changes.selection_colors {
                 session.view.set_selection_colors(&next.colors);
             }
@@ -87,10 +84,8 @@ impl App {
                 let opacity_changed = session.view.set_background_alpha(alpha);
                 session.active_mut().frame_dirty |= opacity_changed || effects_changed;
             }
-            session.active_mut().frame_dirty |= changes.selection_colors
-                || changes.minimum_contrast
-                || self.banner.is_some()
-                || (locale.is_some() && session.confirmation.is_some());
+            session.active_mut().frame_dirty |=
+                changes.selection_colors || changes.minimum_contrast || self.banner.is_some();
         }
         if changes.minimum_contrast {
             self.gpu.set_minimum_contrast(next.minimum_contrast());
@@ -268,8 +263,8 @@ impl Session {
         if config.window.confirm_close() {
             for tab in self.tabs.as_slice() {
                 if running(&tab.panes)? {
-                    if !matches!(self.confirmation, Some(Confirmation::Window)) {
-                        self.ask(Confirmation::Window);
+                    if !matches!(self.confirmation, Some((Confirmation::Window, _))) {
+                        self.ask(Confirmation::Window, config.language());
                     }
                     return Ok(false);
                 }
@@ -279,13 +274,12 @@ impl Session {
     }
 
     pub(super) fn confirmation_text(&self) -> Option<&'static str> {
-        self.confirmation
-            .as_ref()
-            .map(|prompt| prompt.text(self.locale))
+        self.confirmation.as_ref().map(|&(_, text)| text)
     }
 
-    pub(super) fn ask(&mut self, confirmation: Confirmation) {
-        self.confirmation = Some(confirmation);
+    pub(super) fn ask(&mut self, confirmation: Confirmation, language: Language) {
+        let text = confirmation.text(Locale::from_language(language));
+        self.confirmation = Some((confirmation, text));
         self.confirmation_presented = false;
         self.active_mut().frame_dirty = true;
     }
@@ -295,7 +289,9 @@ impl Session {
             tab.focused_mut().frame_dirty = true;
         }
         self.confirmation_presented = false;
-        self.confirmation.take()
+        self.confirmation
+            .take()
+            .map(|(confirmation, _)| confirmation)
     }
 
     pub(super) fn dispatch_input(
@@ -308,7 +304,7 @@ impl Session {
         if self.confirmation.is_some() {
             return self.answer_confirmation(event, window);
         }
-        if let Some(action) = self.input(event, window, banner, true)? {
+        if let Some(action) = self.input(event, window, banner, Some(config.language()))? {
             self.apply(action, window, config)?;
         }
         Ok(self.tabs.active().is_none())
@@ -316,7 +312,7 @@ impl Session {
 
     fn answer_confirmation(&mut self, event: Event, window: &mut impl WindowOps) -> Result<bool> {
         if self.routing.release_owner(&event).is_some() {
-            self.input(event, window, true, false)?;
+            self.input(event, window, true, None)?;
             return Ok(false);
         }
         let Event::Key {
@@ -332,7 +328,7 @@ impl Session {
             return Ok(false);
         }
         let enter = matches!(logical, LogicalKey::Enter | LogicalKey::NumpadEnter);
-        let paste = matches!(self.confirmation, Some(Confirmation::Paste { .. }));
+        let paste = matches!(self.confirmation, Some((Confirmation::Paste { .. }, _)));
         if matches!(
             logical,
             LogicalKey::Escape | LogicalKey::Character('n' | 'N')
@@ -353,7 +349,7 @@ impl Session {
                     Event::ClipboardText { text, generation },
                     window,
                     false,
-                    false,
+                    None,
                 )?;
             }
             close @ (Confirmation::Tab(id) | Confirmation::Pane(id)) => {
