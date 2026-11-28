@@ -109,6 +109,23 @@ fn open(
     Ok(())
 }
 
+/// The key a person presses to answer the close confirmation: `y` confirms, Return cancels.
+fn close_answer(yes: bool) -> Event {
+    use sumie_core::{KeyAction, KeyCode, PhysicalKey};
+    let (code, symbol) = if yes {
+        (KeyCode::KeyY, sumie_macos::Symbol::Character('y'))
+    } else {
+        (KeyCode::Enter, sumie_macos::Symbol::Enter)
+    };
+    Event::Key(sumie_macos::Key {
+        physical: PhysicalKey::Code(code),
+        symbol,
+        text: None,
+        modifiers: sumie_core::KeyModifiers::default(),
+        action: KeyAction::Press,
+    })
+}
+
 fn command(
     driver: &mut Driver,
     context: &WindowContext,
@@ -135,21 +152,7 @@ fn command(
             };
             match command {
                 Command::Type(text) => open.window.commit_text(text),
-                Command::CloseAnswer(yes) => {
-                    use sumie_core::{KeyAction, KeyCode, PhysicalKey};
-                    let (code, symbol) = if yes {
-                        (KeyCode::KeyY, sumie_macos::Symbol::Character('y'))
-                    } else {
-                        (KeyCode::Enter, sumie_macos::Symbol::Enter)
-                    };
-                    open.window.queue(Event::Key(sumie_macos::Key {
-                        physical: PhysicalKey::Code(code),
-                        symbol,
-                        text: None,
-                        modifiers: sumie_core::KeyModifiers::default(),
-                        action: KeyAction::Press,
-                    }));
-                }
+                Command::CloseAnswer(yes) => open.window.queue(close_answer(yes)),
                 Command::Report => {
                     if !print_report(open)? {
                         control
