@@ -106,6 +106,8 @@ blink = true
 
 按 ←／→ 或 Enter 修改其他項目，按 `/` 搜尋。按 `r` 移除目前生效的設定值，改用優先順序較低的引入檔設定或內建預設值。變更會立即儲存。按 Esc 或 `q` 離開。
 
+執行 `sumie config import ghostty [PATH]`，可把 Ghostty 設定檔（預設為 `~/.config/ghostty/config`）中的字型、配色和快捷鍵匯入 sumie。只會寫入 sumie 尚未設定的項目，並列出略過的行。不讀取引入檔、主題和連續按鍵的快捷鍵。
+
 `size` 以 96 DPI 下的點數為單位。執行 `sumie config show --defaults` 可查看所有選項與預設值。
 要啟用編輯器自動補全，請在設定目錄執行 `sumie config schema > sumie.schema.json`。
 比對字型時，`SUMIE_FONT`、`SUMIE_FONT_PX`（邏輯像素）、`SUMIE_FONT_WEIGHT` 和 `SUMIE_FONT_HINTING` 優先於設定檔。

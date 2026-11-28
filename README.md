@@ -120,6 +120,11 @@ Use ←/→ or Enter to edit other options, `/` to search, and `r` to remove
 the selected override and reveal the value from a lower-priority include or
 the built-in default. sumie saves each change immediately. Press Esc or `q` to quit.
 
+Run `sumie config import ghostty [PATH]` to copy the font, colors and shortcuts
+from your Ghostty config (default `~/.config/ghostty/config`). It writes only
+what your sumie config does not set yet, and lists each line it skipped.
+Includes, themes and sequence shortcuts are not read.
+
 Run `sumie config show --defaults` for all options. To enable editor completion,
 run `sumie config schema > sumie.schema.json` from the config directory.
 For font comparisons, `SUMIE_FONT`, `SUMIE_FONT_PX` (logical pixels),
