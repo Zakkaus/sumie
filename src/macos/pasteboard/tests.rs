@@ -101,6 +101,29 @@ impl Fixture {
 }
 
 #[test]
+fn a_reply_written_during_reap_is_delivered() {
+    let mut fixture = Fixture::new(Box::new(|| Ok(Command::new("/bin/cat"))), WAIT);
+    fixture.request(Request::Read { recipient: 42 });
+    let running = fixture.pasteboard.running.as_mut().unwrap();
+    let (socket, mut peer) = sumie_pty::socket_pair().unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let _original = running.helper.socket.replace(socket);
+    let bytes = frame::encode(Kind::Text, b"late reply");
+    let (first, rest) = bytes.split_at(bytes.len() - 1);
+    peer.write_all(first).unwrap();
+
+    let outcome = running
+        .progress(&mut fixture.watches, |_, child| {
+            peer.write_all(rest)?;
+            child.kill()?;
+            child.wait().map(Some)
+        })
+        .unwrap();
+    let pasted = finish(running.recipient, outcome).unwrap();
+    assert_eq!((pasted.text.as_str(), pasted.recipient), ("late reply", 42));
+}
+
+#[test]
 fn requests_run_in_order_and_reads_keep_their_recipient() {
     let board = unique();
     let mut fixture = Fixture::new(child(&board), TIMEOUT);

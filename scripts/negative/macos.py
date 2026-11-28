@@ -288,6 +288,10 @@ def macos_controls():
               replace_once("const TIMEOUT: Duration = Duration::from_secs(5);",
                            "const TIMEOUT: Duration = Duration::from_secs(3600);"),
               "pasteboard: stalled: the helper outlived its 5 s timeout")
+        retry_reply = "                    // A helper can write its reply between WouldBlock and the reap.\n"
+        probe("discard a reply written during reap", "test", "src/macos/pasteboard.rs",
+              replace_once(retry_reply, "                    break;\n"),
+              "test macos::pasteboard::tests::a_reply_written_during_reap_is_delivered ... FAILED")
         probe("OSC 52 write without focus", "macos-pasteboard", "src/macos/window.rs",
               replace_once("        if !self.focused {\n", "        if false && !self.focused {\n"),
               "pasteboard: osc52: a write without focus changed the board")
@@ -370,9 +374,13 @@ def macos_controls():
                            "                    )\n"
                            "                    .replyToApplicationShouldTerminate(false);\n"
                            "                });\n"),
-              "system: the watchdog ended the process")
+              "system: no reply within 4 s of the system quit")
         probe("no watchdog", "macos-stuck", "crates/sumie-macos/src/termination.rs",
               replace_once(".spawn(move || watch(&watched))?", ".spawn(move || drop(watched))?"),
+              "stuck: still running 10.5 s after the quit")
+        exit_watchdog = "    signal_hook::low_level::exit(if system { 0 } else { STALLED });\n"
+        probe("watchdog logs before exiting", "macos-stuck", "crates/sumie-macos/src/termination.rs",
+              replace_once(exit_watchdog, '    tracing::error!("draining missed its deadline");\n' + exit_watchdog),
               "stuck: still running 10.5 s after the quit")
         # Its marker is a rate, which hosted runners only record.
         if os.environ.get("SUMIE_TIMING") != "record":
