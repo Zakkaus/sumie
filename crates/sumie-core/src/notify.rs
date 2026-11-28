@@ -43,7 +43,8 @@ fn clean(bytes: &[u8], limit: usize) -> String {
 /// isolates, zero-width spaces, the byte order mark). The zero-width joiner and non-joiner
 /// (U+200C, U+200D) and tag characters stay, because emoji sequences, flags and several
 /// scripts need them to render.
-fn is_format(c: char) -> bool {
+#[must_use]
+pub fn is_format(c: char) -> bool {
     matches!(u32::from(c),
         0xAD | 0x600..=0x605 | 0x61C | 0x6DD | 0x70F | 0x8E2 | 0x180E
         | 0x200B | 0x200E | 0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F

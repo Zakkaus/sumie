@@ -4,7 +4,7 @@ use std::ptr::{from_mut, null};
 use std::slice;
 use std::time::{Duration, Instant};
 
-use sumie_core::notify::{Notification, Progress, ProgressState};
+use sumie_core::notify::{Notification, Progress, ProgressState, is_format};
 
 use crate::{Error, Terminal, check, ffi};
 
@@ -296,9 +296,10 @@ pub(super) unsafe extern "C" fn queue_title(terminal: ffi::Terminal, data: *mut 
     }
     // SAFETY: Ghostty lends the title until the next terminal mutation.
     let bytes = unsafe { borrowed_bytes(&title) };
+    let mut title = String::from_utf8_lossy(bytes).into_owned();
+    title.retain(|c| !is_format(c));
     // SAFETY: Userdata is the boxed Effects, exclusively accessible in this callback.
-    unsafe { &mut *data.cast::<Effects>() }.title =
-        Some(String::from_utf8_lossy(bytes).into_owned());
+    unsafe { &mut *data.cast::<Effects>() }.title = Some(title);
 }
 
 #[cfg(test)]
@@ -379,5 +380,15 @@ mod tests {
         let mut events = terminal.drain_events();
         assert!(matches!(events.next(), Some(Event::Title(title)) if title == "title-ok"));
         assert!(events.next().is_none());
+    }
+
+    #[test]
+    fn osc2_title_drops_invisible_format_characters() {
+        let mut terminal = Terminal::new(5, 2).unwrap();
+        terminal.write("\x1b]2;中\u{202e}文\u{2069}\u{1f469}\u{200d}\u{1f4bb}\x07".as_bytes());
+        assert!(matches!(
+            terminal.drain_events().next(),
+            Some(Event::Title(title)) if title == "中文\u{1f469}\u{200d}\u{1f4bb}"
+        ));
     }
 }
