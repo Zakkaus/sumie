@@ -21,7 +21,7 @@ sumie 是以 Rust 編寫的 GPU 終端機模擬器，採用 libghostty-vt 與 wg
 
 按 Ctrl+= 或 Ctrl++ 可放大終端機字型，按 Ctrl+- 可縮小，每次調整 1 pt，範圍為 4 至 200 pt。同一視窗的所有分頁共用字型大小；字元網格會重新排列，視窗尺寸不變。按 Ctrl+0 或修改設定檔中的 `[font].size` 可還原為設定值。
 
-在 macOS 13 以上版本，sumie 會開啟 Metal 測試頁，不啟動 shell。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
+在 Apple silicon 的 macOS 26 以上版本，sumie 會開啟終端機視窗並執行你的登入 shell，設定檔路徑與 Linux 的 `sumie.toml` 相同。Command 取代 Ctrl+Shift：Cmd+C、Cmd+V 複製與貼上，Cmd+T 開分頁，Cmd+E、Cmd+O 分割窗格，Cmd+W 關閉窗格，Cmd+F 搜尋，Cmd+= 與 Cmd+- 縮放字型，Cmd+0 還原大小，Cmd+1 至 Cmd+9 選取分頁，Cmd+方向鍵在窗格間移動，Cmd+Shift+Return 讓目前窗格佔滿整個分頁。拖曳只選取、不複製；Cmd+點選開啟連結。左 Option 是 Meta，右 Option 輸入鍵盤配置的字元，包括 dead key。輸入法就地組字。執行 `cargo run --locked -- --exit-after-frames 3 --screenshot frame.png` 可將第三個畫格存為 PNG，隨後關閉視窗。
 
 在 Linux 上首次啟動時，sumie 使用 ncurses 的 `tic` 將 `xterm-sumie` 安裝到 `$XDG_DATA_HOME/sumie/terminfo`（預設為 `~/.local/share/sumie/terminfo`）。內附的原始碼有變更時才重新編譯；若無法安裝，sumie 會改用 `TERM=xterm-256color` 啟動 shell。子行程也會取得 `FORCE_HYPERLINK=1`（已自行設定時不覆寫），讓 Claude Code 這類依終端機名稱判斷是否支援超連結的工具送出 OSC 8 連結。
 

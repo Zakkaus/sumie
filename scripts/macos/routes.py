@@ -90,7 +90,7 @@ def case(name, runner, tool, result):
         sent = click_close(runner, tool)
     elif name == "minimized":
         asked = time.monotonic()
-        runner.send("minimize-after")
+        runner.send("minimize")
         if runner.wait_for("out", "runner occluded true", 5, asked) is None:
             raise CannotCheck("the window did not minimize")
         sent = press_quit(runner, tool, "menu")

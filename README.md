@@ -21,7 +21,7 @@ The bar appears when a second tab opens. Click a numbered tab or scroll over the
 
 Press Ctrl+= or Ctrl++ to increase the terminal font size by 1 pt, or Ctrl+- to decrease it. The shortcuts clamp zoom to 4–200 pt. All tabs in the window share the size, and the grid reflows without resizing the window. Ctrl+0 restores the configured size, as does changing `[font].size` in the config file.
 
-On macOS 13 or later, sumie opens a Metal test page, not a shell. Run `cargo run --locked -- --exit-after-frames 3 --screenshot smoke.png` to save the third presented frame and close the window.
+On macOS 26 or later on Apple silicon, sumie opens a terminal window running your login shell, with settings from the same `sumie.toml` path as on Linux. Command takes the place of Ctrl+Shift: Cmd+C and Cmd+V copy and paste, Cmd+T opens a tab, Cmd+E and Cmd+O split the pane, Cmd+W closes it, Cmd+F searches, Cmd+= and Cmd+- zoom, Cmd+0 restores the size, Cmd+1 through Cmd+9 select tabs, Cmd+Arrow moves between panes and Cmd+Shift+Return shows the focused pane at the full tab size. Dragging selects without copying, and Cmd+click opens a link. Left Option is Meta; right Option types the layout's characters, including dead keys. Input methods compose in place. Run `cargo run --locked -- --exit-after-frames 3 --screenshot frame.png` to save the third presented frame and close the window.
 
 On first launch on Linux, sumie uses ncurses `tic` to install `xterm-sumie` under `$XDG_DATA_HOME/sumie/terminfo` (default: `~/.local/share/sumie/terminfo`). It reuses the entry until the bundled source changes. If it cannot install the entry, it starts the shell with `TERM=xterm-256color` instead.
 

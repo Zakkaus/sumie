@@ -107,26 +107,26 @@ jobs:
           cargo clippy --locked --release --workspace --all-targets --features macos-ci -- -D warnings
           cargo build --release --locked --features macos-ci
       # The build can relink libghostty-vt, so only the run itself is bounded.
-      - name: Build the debug binary for the Metal smoke run
+      - name: Build the debug binary for the screenshot run
         if: runner.os == 'macOS'
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
         run: cargo build --locked --bin sumie
-      - name: Present three Metal frames and capture the third
+      - name: Open the terminal, present three frames and capture the third
         if: runner.os == 'macOS'
         timeout-minutes: 3
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target
           ZIG_GLOBAL_CACHE_DIR: ${{ runner.temp }}/zig-cache
         run: |
-          cargo run --locked --bin sumie -- --exit-after-frames 3 --screenshot smoke.png
-          test -s smoke.png
+          cargo run --locked --bin sumie -- --exit-after-frames 3 --screenshot frame.png
+          test -s frame.png
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: runner.os == 'macOS'
         with:
-          name: macos-metal-smoke
-          path: smoke.png
+          name: macos-screenshot
+          path: frame.png
           if-no-files-found: error
 
   # Native Quit through the pinned winit fork: nine cases, then the three controls.
