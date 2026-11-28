@@ -372,6 +372,13 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               "the shell was not reaped within 6 s of the close")
     input_controls()
     macos_controls()
+    if sys.platform == "darwin":
+        probe("private-use glyphs enter the general font query", "font-test",
+              "crates/sumie-font/src/discovery/core_text.rs",
+              replace_once("            let matched = self.matcher.installed(ch, request, &mut rejected);\n"
+                           "            return matched.ok_or_else(|| missing_glyph(ch, rejected, false));",
+                           "            return self.system_wide(ch, request, rejected);"),
+              "test discovery::core_text::tests::undrawable_misses_skip_the_system_wide_step ... FAILED")
     if sys.platform.startswith("linux") and shutil.which("kwin_wayland"):
         pane_controls()
     else:

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::{Discovery, drawable};
+use super::{Discovery, Request, covers, drawable, installed_character_sets, is_nerd_family};
 use crate::{FontError, FontOptions, FontStyle, FontSystem};
 
 impl Discovery {
@@ -47,10 +47,46 @@ fn undrawable_misses_skip_the_system_wide_step() {
     let mut fonts = FontSystem::new("Menlo", 20.0, 1.0, FontOptions::default()).unwrap();
     // Counted only: the step never reaches Core Text, so the count alone shows whether it ran.
     fonts.discovery.system_wide_counted_only = true;
-    for ch in ['\u{fdd0}', '\u{10ffff}', '\u{378}', '\u{e000}'] {
+    for ch in ['\u{fdd0}', '\u{10ffff}', '\u{378}'] {
         let _ = fonts.face_for(ch, FontStyle::default());
     }
+    let _ = fonts.discovery.find(Some('\u{e000}'), FontStyle::default());
     assert_eq!(fonts.discovery.system_wide_lookups, 0);
+}
+
+#[test]
+fn installed_font_supplies_private_use_icons() {
+    let mut discovery = Discovery::new("Menlo", None).unwrap();
+    let fonts = installed_character_sets();
+    let style = FontStyle::default();
+    let request = Request::new(None, style);
+    let mut checked = false;
+    for ch in ['\u{f015}', '\u{f017}', '\u{f179}'] {
+        let mut rejected = Vec::new();
+        let covering: Vec<_> = fonts
+            .iter()
+            .filter(|(_, set)| set.is_long_character_member(ch.into()))
+            .filter_map(|(font, _)| {
+                discovery
+                    .matcher
+                    .candidate(font, ch, request, &mut rejected)
+            })
+            .collect();
+        if covering.is_empty() {
+            continue;
+        }
+        let matched = discovery
+            .find(Some(ch), style)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(covers(&matched, ch));
+        if covering.iter().any(|font| is_nerd_family(&font.family)) {
+            assert!(is_nerd_family(&matched.family), "{}", matched.family);
+        }
+        checked = true;
+    }
+    if !checked {
+        eprintln!("skipped: no installed font draws U+F015, U+F017 or U+F179");
+    }
 }
 
 #[test]
