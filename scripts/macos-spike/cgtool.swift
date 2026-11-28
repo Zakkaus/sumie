@@ -2,13 +2,8 @@
 // Usage:
 //   cgtool front PID            activate PID, print the frontmost PID
 //   cgtool bounds PID           print x y w h onscreen(0/1) of PID's layer-0 window
-//   cgtool cmdm                 post Cmd+M to the HID tap
 //   cgtool drag X0 Y0 X1 Y1 MS  press, drag over MS milliseconds, release
-//   cgtool menuitem PID         print x y w h of the application menu's title
-//   cgtool minbutton PID        print the centre of the window's minimize button
-//   cgtool click X Y            press and release at X Y
 //   cgtool clickown PID X Y     the same, only if PID is frontmost and owns the topmost window there
-//   cgtool hold X Y MS RX RY    press at X Y, hold MS, move to RX RY, release
 //   cgtool cmdq PID             post Cmd+Q to the HID tap if PID is frontmost
 //   cgtool axquit PID           press the application menu's Quit item through AX
 //   cgtool closebutton PID      print the centre of the window's close button
@@ -75,13 +70,6 @@ case "bounds":
     }
     let onscreen = (info[kCGWindowIsOnscreen as String] as? Bool) ?? false
     print(Int(b["X"]!), Int(b["Y"]!), Int(b["Width"]!), Int(b["Height"]!), onscreen ? 1 : 0)
-case "cmdm":
-    for down in [true, false] {
-        let event = CGEvent(keyboardEventSource: nil, virtualKey: 46, keyDown: down)!
-        event.flags = .maskCommand
-        event.post(tap: .cghidEventTap)
-        usleep(20_000)
-    }
 case "drag":
     let (x0, y0, x1, y1, ms) = (Double(args[2])!, Double(args[3])!, Double(args[4])!, Double(args[5])!, Double(args[6])!)
     post(.mouseMoved, CGPoint(x: x0, y: y0))
@@ -94,43 +82,6 @@ case "drag":
         usleep(useconds_t(ms * 1000 / Double(steps)))
     }
     post(.leftMouseUp, CGPoint(x: x1, y: y1))
-case "menuitem":
-    let app = AXUIElementCreateApplication(Int32(args[2])!)
-    var bar: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &bar) == .success else {
-        print("no menu bar (trusted: \(AXIsProcessTrusted()))"); exit(1)
-    }
-    var children: CFTypeRef?
-    AXUIElementCopyAttributeValue(bar as! AXUIElement, kAXChildrenAttribute as CFString, &children)
-    let items = children as! [AXUIElement]
-    var position: CFTypeRef?, size: CFTypeRef?
-    AXUIElementCopyAttributeValue(items[1], kAXPositionAttribute as CFString, &position)
-    AXUIElementCopyAttributeValue(items[1], kAXSizeAttribute as CFString, &size)
-    var p = CGPoint.zero, s = CGSize.zero
-    AXValueGetValue(position as! AXValue, .cgPoint, &p)
-    AXValueGetValue(size as! AXValue, .cgSize, &s)
-    print(Int(p.x), Int(p.y), Int(s.width), Int(s.height))
-case "minbutton":
-    let app = AXUIElementCreateApplication(Int32(args[2])!)
-    var windows: CFTypeRef?
-    AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windows)
-    guard let window = (windows as? [AXUIElement])?.first else { print("none"); exit(1) }
-    var button: CFTypeRef?
-    AXUIElementCopyAttributeValue(window, kAXMinimizeButtonAttribute as CFString, &button)
-    var position: CFTypeRef?, size: CFTypeRef?
-    AXUIElementCopyAttributeValue(button as! AXUIElement, kAXPositionAttribute as CFString, &position)
-    AXUIElementCopyAttributeValue(button as! AXUIElement, kAXSizeAttribute as CFString, &size)
-    var p = CGPoint.zero, s = CGSize.zero
-    AXValueGetValue(position as! AXValue, .cgPoint, &p)
-    AXValueGetValue(size as! AXValue, .cgSize, &s)
-    print(Int(p.x + s.width / 2), Int(p.y + s.height / 2))
-case "click":
-    let point = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
-    post(.mouseMoved, point)
-    usleep(100_000)
-    post(.leftMouseDown, point)
-    usleep(60_000)
-    post(.leftMouseUp, point)
 case "clickown":
     let (pid, point) = (Int32(args[2])!, CGPoint(x: Double(args[3])!, y: Double(args[4])!))
     let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
@@ -152,15 +103,6 @@ case "clickown":
     post(.leftMouseDown, point)
     usleep(60_000)
     post(.leftMouseUp, point)
-case "hold":
-    let (x, y, ms, rx, ry) = (Double(args[2])!, Double(args[3])!, Double(args[4])!, Double(args[5])!, Double(args[6])!)
-    post(.mouseMoved, CGPoint(x: x, y: y))
-    usleep(100_000)
-    post(.leftMouseDown, CGPoint(x: x, y: y))
-    usleep(useconds_t(ms * 1000))
-    post(.leftMouseDragged, CGPoint(x: rx, y: ry))
-    usleep(50_000)
-    post(.leftMouseUp, CGPoint(x: rx, y: ry))
 case "cmdq":
     // Only ever quit the probe: refuse unless it is the frontmost application.
     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == Int32(args[2])! else {
