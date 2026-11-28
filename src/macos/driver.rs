@@ -227,6 +227,10 @@ impl Driver {
         event: Event,
     ) -> Result<ControlFlow<()>> {
         match (&mut self.state, event) {
+            (State::Open(open), Event::Quit(Quit::Ordinary)) if open.app.is_some() => {
+                open.window.queue(Event::CloseRequested);
+            }
+            (State::Hiding(..) | State::Reaping(_), Event::Quit(Quit::Ordinary)) => (),
             (_, Event::Quit(quit)) => return self.drain(context, readiness, quit),
             (State::Open(open), Event::AboutToWait) => {
                 if open.turn(readiness, &mut self.start)? {

@@ -257,6 +257,7 @@ mod tests {
     fn every_leaf_has_title_and_category() {
         let settings = settings();
         let paths: Vec<_> = settings.iter().map(|info| info.path.as_str()).collect();
+        assert_eq!(paths.len(), 24, "{paths:?}");
         assert_eq!(
             paths[..8],
             [
@@ -282,6 +283,13 @@ mod tests {
                 );
             }
         }
+        let counts = Category::ALL.map(|category| {
+            settings
+                .iter()
+                .filter(|info| info.category == category)
+                .count()
+        });
+        assert_eq!(counts, [7, 4, 7, 6, 0, 0, 0]);
     }
 
     #[test]

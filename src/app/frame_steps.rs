@@ -198,7 +198,7 @@ impl App {
         } else {
             None
         };
-        let confirmation = session.confirmation.as_ref().map(|&(_, message)| message);
+        let confirmation = session.confirmation_text();
         self.hint_drawn =
             ready && confirmation.is_none() && self.banner.is_none() && self.hint.is_some();
         let banner = confirmation
@@ -272,10 +272,14 @@ impl App {
         Some((&view.preedit, view.preedit_cursor))
     }
 
-    /// The settings banner, if one shows.
+    /// The presented confirmation or settings banner.
     #[cfg(feature = "macos-ci")]
     pub(crate) fn banner(&self) -> Option<&str> {
-        self.banner.as_deref()
+        self.session
+            .as_ref()
+            .filter(|session| session.confirmation_presented)
+            .and_then(Session::confirmation_text)
+            .or(self.banner.as_deref())
     }
 
     /// Drop the GPU, so the window can drop next, and keep the session to reap children.

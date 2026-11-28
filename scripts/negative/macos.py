@@ -308,6 +308,14 @@ def macos_controls():
               replace_once("if watches.take_exit_ready(*id) || pty.close_deadline().is_some_and(|at| at <= now) {",
                            "if watches.take_exit_ready(*id) {"),
               "close: no SIGKILL at the 3 s grace period")
+        probe("ordinary Quit skips confirmation", "macos-repeat", "src/macos/driver.rs",
+              replace_once("            (State::Open(open), Event::Quit(Quit::Ordinary)) if open.app.is_some() => {\n"
+                           "                open.window.queue(Event::CloseRequested);\n            }\n", ""),
+              "repeat: Quit skipped confirmation")
+        probe("system quit waits for confirmation", "macos-system", "src/macos/driver.rs",
+              replace_once("Event::Quit(Quit::Ordinary)) if open.app.is_some()",
+                           "Event::Quit(_)) if open.app.is_some()"),
+              "system: no reply within 4 s of the system quit")
         probe("answer Cancel to a system quit", "macos-system", "crates/sumie-macos/src/lib.rs",
               replace_once("                context.finish_quit();\n",
                            "                context.run_after_handler(|| {\n"

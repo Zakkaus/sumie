@@ -135,6 +135,21 @@ fn command(
             };
             match command {
                 Command::Type(text) => open.window.commit_text(text),
+                Command::CloseAnswer(yes) => {
+                    use sumie_core::{KeyAction, KeyCode, PhysicalKey};
+                    let (code, symbol) = if yes {
+                        (KeyCode::KeyY, sumie_macos::Symbol::Character('y'))
+                    } else {
+                        (KeyCode::Enter, sumie_macos::Symbol::Enter)
+                    };
+                    open.window.queue(Event::Key(sumie_macos::Key {
+                        physical: PhysicalKey::Code(code),
+                        symbol,
+                        text: None,
+                        modifiers: sumie_core::KeyModifiers::default(),
+                        action: KeyAction::Press,
+                    }));
+                }
                 Command::Report => {
                     if !print_report(open)? {
                         control

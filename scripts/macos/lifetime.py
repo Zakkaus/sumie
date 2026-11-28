@@ -9,13 +9,14 @@ Each case starts a fresh `SUMIE_MACOS_CI_RUNNER=terminal` process with a throwaw
   close         The red button: the window leaves CGWindowList's on-screen set before the
                 reap; then SIGHUP, SIGKILL at the 3 s grace period, the reap with its exit
                 watch removed, exit 0.
-  repeat        Quit twice: one grant, one veto, SIGKILL 3 s after the first Quit.
+  repeat        Cancel the first Quit with Enter; confirm the next with y; veto repeats
+                during the drain.
   fatal         An injected error with the child alive: it is killed at the grace period and
                 reaped, the process exits 1 with the original diagnostic, and no Quit runs.
   fatal-quit    The same error while an ordinary Quit drains: exit 1 and no grant (no
                 second `terminate:`).
-  system        A quit Apple event with a log-out reason: NSTerminateLater, then the reply
-                within 4 s of the request, exit 0.
+  system        A quit Apple event with a log-out reason bypasses confirmation. AppKit gets
+                NSTerminateLater, then a reply within 4 s of the request, exit 0.
   system-fatal  The injected error while that reply is owed: logged, then the reply, exit 0.
   stuck         Quit, then a main thread blocked for a minute: the watchdog exits 70 within
                 10 s of the Quit and logs the open stage; no reap is reported.
@@ -41,7 +42,7 @@ import threading
 import time
 
 SCRIPTS = Path(__file__).resolve().parent
-CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n\n[window]\nconfirm-close = false\n'
+CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n\n[window]\nconfirm-close = {confirm}\n'
 GRACE = 3.0
 HARD = {"ordinary": 10.0, "system": 6.0}
 REPLY = 4.0
@@ -66,14 +67,14 @@ class CannotCheck(Exception):
 
 
 class Runner:
-    def __init__(self, binary, home):
+    def __init__(self, binary, home, confirm_close):
         self.home = Path(home)
         config = self.home / "config"
         (config / "sumie").mkdir(parents=True)
         state = Path(home) / "Library/Application Support/sumie"  # the first-run hint takes a key
         state.mkdir(parents=True)
         (state / "first-run").touch()
-        (config / "sumie/sumie.toml").write_text(CONFIG)
+        (config / "sumie/sumie.toml").write_text(CONFIG.format(confirm=str(confirm_close).lower()))
         env = {**os.environ, "SUMIE_MACOS_CI_RUNNER": "terminal", "HOME": home, "XDG_CONFIG_HOME": str(config),
                "SHELL": "/bin/sh", "RUST_LOG": "debug"}
         self.process = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -263,16 +264,43 @@ def case_close(runner, tool, result):
     return errors
 
 
+def wait_quit_prompt(runner, visible):
+    end = time.monotonic() + 5
+    while time.monotonic() < end:
+        asked = time.monotonic()
+        runner.send("report")
+        if runner.wait_for("out", "runner report", 1, asked) is not None:
+            report = runner.lines("out", "runner report", asked)[-1][1].split()
+            if (report[9] == "1") == visible:
+                return True
+        if runner.process.poll() is not None:
+            break
+        time.sleep(0.02)
+    return False
+
+
 def case_repeat(runner, tool, result):
     start_child(runner)
     screen = Screen(tool, runner.process.pid)
     first = trigger(runner, tool, "quit")
-    if runner.wait_for("err", "winit::quit: intercept", 5, first) is None:
-        return ["repeat: the first Quit was not intercepted"]
+    if not wait_quit_prompt(runner, True):
+        if runner.first("err", MARKS["draining"], first) is not None:
+            return ["repeat: Quit skipped confirmation"]
+        return ["repeat: Quit did not show a confirmation"]
+    runner.send("close-cancel")
+    if not wait_quit_prompt(runner, False):
+        return ["repeat: Enter did not cancel Quit"]
+    trigger(runner, tool, "quit")
+    if not wait_quit_prompt(runner, True):
+        return ["repeat: Quit was not offered again after cancellation"]
+    accepted = time.monotonic()
+    runner.send("close-yes")
+    if runner.wait_for("err", MARKS["draining"], 5, accepted) is None:
+        return ["repeat: y did not confirm Quit"]
     time.sleep(1.5)
     if runner.process.poll() is None:
         trigger(runner, tool, "quit")
-    code, marks = drained(runner, result, first, HARD["ordinary"])
+    code, marks = drained(runner, result, accepted, HARD["ordinary"])
     screen.polling = False
     phases = result["phases"]
     errors = reap_errors("repeat", marks)
@@ -284,7 +312,7 @@ def case_repeat(runner, tool, result):
         errors.append(f"repeat: exited {code}")
     if not errors:
         print(f"repeat: phases {phases}; SIGKILL {marks['kill'] - marks['hup']:.3f} s after SIGHUP, "
-              f"exit {runner.exited - first:.3f} s after the first Quit")
+              f"exit {runner.exited - accepted:.3f} s after confirmation")
     return errors
 
 
@@ -495,7 +523,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="sumie-lifetime.") as scratch:
         try:
             tool = cgtool(scratch)
-            runner = Runner(binary, str(Path(scratch) / "home"))
+            runner = Runner(binary, str(Path(scratch) / "home"), name in ("repeat", "system"))
         except (OSError, subprocess.CalledProcessError) as error:
             print(f"lifetime: could not start: {error}", file=sys.stderr)
             return 2

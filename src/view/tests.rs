@@ -136,33 +136,29 @@ fn background_opacity_respects_vt_colors_and_opaque_overlays() {
 }
 
 #[test]
-fn confirmation_row_covers_terminal_with_opaque_ui_colors() {
+fn banner_row_covers_terminal_with_opaque_terminal_colors() {
     let mut view = view();
     let rect = view.content_rect();
     let mut snap = snapshot(&view, rect);
     snap.foreground = [255, 0, 0];
     view.set_background_alpha(96);
-    view.confirming = true;
     view.begin_frame([], snap.background);
     view.build_pane(
         rect,
         &snap,
         None,
         LinkHighlight::default(),
-        Some("Close? Enter/y · Esc/n"),
+        Some("Close? y · Enter/Esc/n"),
         focus(0, true),
     );
     view.end_frame();
     let draw = view.frame(false, |_| None).panes.next().unwrap().draw;
     let row = &draw.backgrounds[..usize::from(view.pane_size(rect).cols)];
-    assert!(
-        row.iter()
-            .all(|&bg| bg == view.palette.surface && bg[3] == 255)
-    );
+    assert!(row.iter().all(|&bg| bg == [255, 0, 0, 255]));
     assert!(
         draw.glyphs
             .iter()
-            .any(|glyph| glyph.color == view.palette.selected)
+            .any(|glyph| glyph.color == super::rgba(snap.background))
     );
 }
 

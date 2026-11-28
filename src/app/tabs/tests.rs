@@ -156,7 +156,7 @@ fn paste_shortcut_restores_a_missing_recipient() {
         },
         action: KeyAction::Press,
     };
-    session.input(event, &mut window, false, None).unwrap();
+    session.input(event, &mut window, false, false).unwrap();
     session
         .input(
             Event::ClipboardText {
@@ -165,7 +165,7 @@ fn paste_shortcut_restores_a_missing_recipient() {
             },
             &mut window,
             false,
-            None,
+            false,
         )
         .unwrap();
     let pane = &mut session.active_mut().pane;
@@ -189,7 +189,7 @@ fn queued_ime_commit_reaches_the_original_pane() {
         .apply(Action::Key(TabAction::Open), &mut window, &config)
         .unwrap();
     assert_ne!(session.active().id, original);
-    session.input(commit, &mut window, false, None).unwrap();
+    session.input(commit, &mut window, false, false).unwrap();
     assert!(session.active().pane.pty.input_fd().is_none());
 
     let pane = &mut session.tabs.as_mut_slice()[0].get_mut(original).pane;
@@ -266,18 +266,16 @@ fn window_close_uses_osc133_before_foreground_group() {
         &BTreeMap::new(),
     );
     assert!(!session.request_window_close(&config).unwrap());
-    assert!(matches!(
-        session.confirmation,
-        Some((Confirmation::Window, _))
-    ));
+    assert!(matches!(session.confirmation, Some(Confirmation::Window)));
 
-    let confirm = || confirmation_key(KeyCode::Enter, LogicalKey::Enter);
+    let confirm = || confirmation_key(KeyCode::KeyY, LogicalKey::Character('y'));
     assert!(
         !session
             .dispatch_input(confirm(), &mut window, true, &config)
             .unwrap()
     );
-    let cancel = confirmation_key(KeyCode::Escape, LogicalKey::Escape);
+    session.confirmation_presented = true;
+    let cancel = confirmation_key(KeyCode::Enter, LogicalKey::Enter);
     assert!(
         !session
             .dispatch_input(cancel, &mut window, true, &config)
@@ -333,16 +331,28 @@ fn tab_and_pane_close_wait_for_confirmation() {
         .apply(Action::Close(index), &mut window, &config)
         .unwrap();
     assert_eq!(session.tabs.as_slice().len(), 2);
-    let cancel = confirmation_key(KeyCode::KeyN, LogicalKey::Character('n'));
+    session.confirmation_presented = true;
+    let cancel = || confirmation_key(KeyCode::Enter, LogicalKey::Enter);
     assert!(
         !session
-            .dispatch_input(cancel, &mut window, true, &config)
+            .dispatch_input(cancel(), &mut window, true, &config)
             .unwrap()
     );
+    assert_eq!(session.tabs.as_slice().len(), 2);
     session
         .apply(Action::Key(TabAction::Close), &mut window, &config)
         .unwrap();
     assert_eq!(session.active().id, running);
+    session.confirmation_presented = true;
+    assert!(
+        !session
+            .dispatch_input(cancel(), &mut window, true, &config)
+            .unwrap()
+    );
+    assert_eq!(session.active().id, running);
+    session
+        .apply(Action::Key(TabAction::Close), &mut window, &config)
+        .unwrap();
     session.confirmation_presented = true;
     let confirm = confirmation_key(KeyCode::KeyY, LogicalKey::Character('y'));
     assert!(

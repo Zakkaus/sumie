@@ -50,6 +50,51 @@ fn child_sees_new_terminal_size() {
 }
 
 #[test]
+fn detects_commands_and_shells_replaced_by_exec() {
+    let mut env = session_env();
+    #[cfg(target_os = "linux")]
+    let shell = OsStr::new("/bin/sh");
+    #[cfg(target_os = "macos")]
+    let shell = OsStr::new("/bin/bash");
+    env.insert("SHELL".into(), shell.to_owned());
+    let args = [
+        "-c".into(),
+        "printf 'shell-ready\\n'; read -r line; \
+         exec /usr/bin/awk 'BEGIN { print \"exec-ready\"; fflush(); getline }'"
+            .into(),
+    ];
+    let mut login = Pty::spawn(SpawnOptions::new(
+        Command::Argv {
+            program: shell,
+            args: &args,
+        },
+        &env,
+        SIZE,
+    ))
+    .unwrap();
+    assert_eq!(
+        read_output(&login, |output| output.ends_with(b"\r\n")),
+        b"shell-ready\r\n"
+    );
+    assert!(!login.has_foreground_job());
+    send(&mut login, b"\n");
+    let ready = b"\r\nexec-ready\r\n";
+    assert!(read_output(&login, |output| output.ends_with(ready)).ends_with(ready));
+    assert!(login.has_foreground_job());
+
+    let command = Pty::spawn(SpawnOptions::new(
+        Command::Argv {
+            program: OsStr::new("/bin/cat"),
+            args: &[],
+        },
+        &env,
+        SIZE,
+    ))
+    .unwrap();
+    assert!(command.has_foreground_job());
+}
+
+#[test]
 fn close_reaps_a_child_that_ignores_hangup() {
     let grace = Duration::from_millis(250);
     let mut pty = shell(
