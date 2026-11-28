@@ -256,7 +256,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
               replace_once("top: 0,", "top: 1,"),
               "test tests::linux::sprites_fill_their_grid_cells ... FAILED")
         probe("preedit written to PTY", "test", "src/input.rs",
-              replace_once("Event::ImePreedit { text, .. } => return Ok(Effect::Preedit(text)),",
+              replace_once("Event::ImePreedit { text, cursor, .. } => return Ok(Effect::Preedit(text, cursor)),",
                            "Event::ImePreedit { ref text, .. } => PaneCommand::Text(text.as_bytes()),"),
               "test tests::local_pane_executes_committed_input_without_preedit ... FAILED")
         probe("paste queued without framing", "test", "src/pane.rs",

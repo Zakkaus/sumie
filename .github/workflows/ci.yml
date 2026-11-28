@@ -83,6 +83,8 @@ jobs:
           echo 'MACOSX_DEPLOYMENT_TARGET=13.0' >> "$GITHUB_ENV"
           echo 'SUMIE_REQUIRE_GPU=1' >> "$GITHUB_ENV"
           echo 'SUMIE_TIMING=record' >> "$GITHUB_ENV"
+          # Hosted runners have no Pinyin input source; macos-ime runs its protocol cases only.
+          echo 'SUMIE_IME_NATIVE=skip' >> "$GITHUB_ENV"
       - run: scripts/check-all.sh
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sumie-target

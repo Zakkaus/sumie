@@ -410,6 +410,10 @@ def protocol_cases(ime):
 
 def native_cases(ime):
     source = ime.source()
+    if source not in PINYIN and os.environ.get("SUMIE_IME_NATIVE") == "skip":
+        print(f"ime: native: NOT CHECKED (SUMIE_IME_NATIVE=skip, input source {source}); "
+              "only the protocol cases ran")
+        return
     if source not in PINYIN:
         raise CannotCheck(f"native cases: the selected input source {source} is not Chinese Pinyin; "
                           "the protocol cases passed")

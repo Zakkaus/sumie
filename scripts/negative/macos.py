@@ -98,6 +98,9 @@ def ime_controls():
     probe("search caret pinned to the preedit's end", "test", "src/view/overlays.rs",
           replace_once("if start == end && start < self.preedit.len() =>", "if false =>"),
           "test view::tests::preedit::the_search_caret_follows_a_collapsed_input_method_caret ... FAILED")
+    if os.environ.get("SUMIE_IME_NATIVE") == "skip":
+        print("negative controls: no native cancel on a recipient change: NOT CHECKED (SUMIE_IME_NATIVE=skip)")
+        return
     probe("no native cancel on a recipient change", "macos-ime", "src/macos/window.rs",
           replace_once("            self.platform.cancel_composition();\n", ""),
           "ime: cancel: a pane split: a continued the old composition")
