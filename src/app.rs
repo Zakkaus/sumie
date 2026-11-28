@@ -60,8 +60,7 @@ pub(crate) struct Session {
     smooth_scroll: bool,
     notices: Gate,
     frame_log: frame_log::FrameLog,
-    locale: sumie_locale::Locale,
-    confirmation: Option<window_events::Confirmation>,
+    confirmation: Option<(window_events::Confirmation, &'static str)>,
     confirmation_presented: bool,
 }
 
@@ -139,7 +138,6 @@ impl Session {
             smooth_scroll: config.scroll.smooth(),
             notices: Gate::default(),
             frame_log: frame_log::FrameLog::from_env(),
-            locale: sumie_locale::Locale::from_language(config.language()),
             confirmation: None,
             confirmation_presented: false,
         })

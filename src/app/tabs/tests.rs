@@ -156,7 +156,7 @@ fn paste_shortcut_restores_a_missing_recipient() {
         },
         action: KeyAction::Press,
     };
-    session.input(event, &mut window, false, false).unwrap();
+    session.input(event, &mut window, false, None).unwrap();
     session
         .input(
             Event::ClipboardText {
@@ -165,7 +165,7 @@ fn paste_shortcut_restores_a_missing_recipient() {
             },
             &mut window,
             false,
-            false,
+            None,
         )
         .unwrap();
     let pane = &mut session.active_mut().pane;
@@ -189,7 +189,7 @@ fn queued_ime_commit_reaches_the_original_pane() {
         .apply(Action::Key(TabAction::Open), &mut window, &config)
         .unwrap();
     assert_ne!(session.active().id, original);
-    session.input(commit, &mut window, false, false).unwrap();
+    session.input(commit, &mut window, false, None).unwrap();
     assert!(session.active().pane.pty.input_fd().is_none());
 
     let pane = &mut session.tabs.as_mut_slice()[0].get_mut(original).pane;
@@ -263,10 +263,13 @@ fn window_close_uses_osc133_before_foreground_group() {
     let mut session = session(&mut window, &config);
     session.active_mut().pane = crate::tests::ready_pane(
         "set -m; /bin/sh -c 'printf \"READY\\n\"; read -r line'; :",
-        &BTreeMap::new(),
+        &BTreeMap::from([("SHELL".into(), "/bin/sh".into())]),
     );
     assert!(!session.request_window_close(&config).unwrap());
-    assert!(matches!(session.confirmation, Some(Confirmation::Window)));
+    assert!(matches!(
+        session.confirmation,
+        Some((Confirmation::Window, _))
+    ));
 
     let confirm = || confirmation_key(KeyCode::KeyY, LogicalKey::Character('y'));
     assert!(

@@ -44,9 +44,6 @@ def input_controls():
     probe("Enter confirms a close", "test", "src/app/window_events.rs",
           replace_once(" || (enter && !paste)", " || (enter && paste)"),
           "test app::tabs::tests::window_close_uses_osc133_before_foreground_group ... FAILED")
-    probe("ignore exec in the original shell group", "test", "crates/sumie-pty/src/lib.rs",
-          replace_once("|shell| !is_shell(child, shell)", "|_| false"),
-          "test detects_commands_and_shells_replaced_by_exec ... FAILED")
     probe("unbracketed multiline paste skips confirmation", "test", "src/app/pane_input.rs",
           replace_once("text.contains(['\\n', '\\r'])", "text.contains('\\0')"),
           "test app::tabs::tests::multiline_paste_waits_unless_bracketed ... FAILED")

@@ -412,14 +412,14 @@ impl Session {
                 if config.window.confirm_close() && running(&self.tabs.as_slice()[i].panes)? =>
             {
                 let id = self.tabs.as_slice()[i].panes[0].id;
-                self.ask(Confirmation::Tab(id));
+                self.ask(Confirmation::Tab(id), config.language());
             }
             Action::Close(i) => self.close_tab(i, window)?,
             Action::Key(TabAction::Close)
                 if config.window.confirm_close()
                     && running(std::slice::from_ref(self.active()))? =>
             {
-                self.ask(Confirmation::Pane(old));
+                self.ask(Confirmation::Pane(old), config.language());
             }
             Action::Key(TabAction::Close) => self.close_pane(index, old, window)?,
             Action::Pane(command) => self.pane_action(command, old, window, config)?,
