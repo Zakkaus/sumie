@@ -28,7 +28,7 @@ EDGES.update({
     "sumie-ui": BASE | {"sumie-font", "sumie-render"},
     "sumie-locale": {"sumie-config"},
     "sumie-settings": {"sumie-config", "sumie-core", "sumie-locale"},
-    "sumie": BASE | ADAPTERS | {"sumie-ui", "sumie-settings"},
+    "sumie": BASE | ADAPTERS | {"sumie-ui", "sumie-settings", "sumie-locale"},
 })
 UNSAFE_CRATES = {"sumie-vt", "sumie-font", "sumie-render", "sumie-wayland"}
 FORBIDDEN_NAMES = {"util", "common", "helper", "misc"}

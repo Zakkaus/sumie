@@ -43,6 +43,9 @@ UNSAFE_READ = ("#[must_use]\npub fn read_probe() -> u8 {\n"
 
 def controls():
     settings_controls()
+    probe("Ghostty copy mapping removed", "test", "src/config_import/keybinds.rs",
+          replace_once('("copy_to_clipboard", "copy"),', '("", "copy"),'),
+          "test translates_ghostty_config_and_keybinds ... FAILED")
     probe("shell drops command status", "shell", "shell-integration/bash/sumie.bash",
           replace_once("133;D;%d", "133;D"), "bash/sumie.bash: missing 133;D;%d")
     probe("spawn ignores descriptor creation", "test", "crates/sumie-pty/src/spawn.rs",

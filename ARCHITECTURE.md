@@ -37,6 +37,14 @@ The in-memory screen uses `unicode-width` and `unicode-segmentation` for cell wi
 
 The core shortcut catalog supplies the editable actions and platform defaults. Configuration carries explicit overrides only. The TUI records a single chord and checks it against the other actions' overrides and defaults. While recording in a settings tab, Kitty keyboard event reporting lets the app route shortcut presses to the child instead of dispatching them. The terminal guard restores keyboard reporting and SGR mouse modes before leaving the alternate screen.
 
+## Ghostty import
+
+`src/config_import.rs` is a headless command that runs before any window, like the settings UI.
+`config_import/ghostty.rs` turns each line of one Ghostty file into a sumie key and value, and
+`config_import/keybinds.rs` maps a Ghostty action to a core binding id and spells its trigger as a
+`Chord`. The command writes through `sumie_config::save`, so comments stay, and skips any key the
+sumie config already sets. A negative control checks the action mapping.
+
 ## Tabbed Linux window
 
 `main` handles the schema and defaults commands without opening a window. The Linux app loads TOML before connecting to Wayland. It maps font settings and environment overrides into `FontSettings`. It configures terminal colors before spawning the PTY, passes selection overrides to the view, and sets the renderer's minimum contrast ratio.
