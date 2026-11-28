@@ -23,6 +23,7 @@
 "ui.save-conflict" = "The setting changed on disk. Review it and try again."
 "ui.config-blocked" = "Could not save. Fix the settings file first."
 "ui.rejected" = "The settings file does not accept this value."
+"ui.expected" = "Expected: {value}"
 "ui.unconfirmed" = "Could not confirm the save. Check the current value."
 "ui.no-terminal" = "Open settings from an interactive terminal."
 "ui.no-config-path" = "Could not find the settings directory."

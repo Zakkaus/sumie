@@ -368,6 +368,10 @@ def settings_controls():
     probe("locale skips the English fallback", "locale-test", "crates/sumie-locale/src/lib.rs",
           replace_once(".or_else(|| EN.get(key))", ""),
           "test tests::missing_translation_uses_english ... FAILED")
+    probe("settings skips termios restore", "settings-test", "crates/sumie-settings/src/terminal.rs",
+          replace_once("let _ = tcsetattr(io::stdin(), OptionalActions::Now, &original);",
+                       "let _ = original;"),
+          "test terminal::tests::restores_after_error ... FAILED")
 
 
 def interrupted(_signum, _frame):

@@ -10,7 +10,10 @@ mod screen;
 mod terminal;
 mod value;
 
-use std::io::{self, IsTerminal as _};
+use std::{
+    io::{self, IsTerminal as _},
+    process::ExitCode,
+};
 
 use sumie_config::{Language, user_config_path};
 use sumie_locale::Locale;
@@ -22,17 +25,19 @@ use crate::{log::Log, model::Model};
 ///
 /// # Errors
 /// Returns a localized error when the settings directory or terminal is unavailable.
-pub fn run() -> Result<(), &'static str> {
+pub fn run() -> Result<ExitCode, &'static str> {
     let auto = Locale::from_language(Language::Auto);
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(auto.text("ui.no-terminal"));
     }
     let main = user_config_path().ok_or_else(|| auto.text("ui.no-config-path"))?;
     let mut model = Model::new(main, Log::from_environment());
-    terminal::run(&mut model).map_err(|error| {
-        model.log.error(&error);
-        model.locale.text("ui.terminal-error")
-    })
+    terminal::run(&mut model)
+        .map(ExitCode::from)
+        .map_err(|error| {
+            model.log.error(&error);
+            model.locale.text("ui.terminal-error")
+        })
 }
 
 #[cfg(test)]

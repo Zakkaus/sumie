@@ -7,11 +7,15 @@ license.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 rustix.workspace = true
-signal-hook = { version = "0.4.6", default-features = false }
+signal-hook = { version = "0.4.6", default-features = false, features = ["iterator"] }
 sumie-config = { path = "../sumie-config" }
 sumie-locale = { path = "../sumie-locale" }
 unicode-segmentation = "1.13.3"
 unicode-width = { version = "0.2.3", default-features = false }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+nix = { workspace = true, features = ["term"] }
+rustix = { workspace = true, features = ["stdio"] }
 
 [lints]
 workspace = true

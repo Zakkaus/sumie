@@ -32,7 +32,7 @@ impl Layout {
             Some(row)
         };
         let prompt = model.mode.line().and_then(|_| footer());
-        let notice = model.notice().and_then(|_| footer());
+        let notice = if model.has_notice() { footer() } else { None };
         let keys = footer();
         let end = bottom + 1;
         let side_by_side = width >= SIDE_BY_SIDE;
@@ -81,7 +81,7 @@ impl Screen {
         self.options(model, width, layout);
         self.help(model, width, layout);
         if let (Some(row), Some(message)) = (layout.notice, model.notice()) {
-            slot(&mut self.rows[row], message, width, false);
+            slot(&mut self.rows[row], &message, width, false);
         }
         let (keys, prompt) = match &model.mode {
             Mode::Browse => ("ui.keys", ""),

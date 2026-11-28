@@ -112,12 +112,21 @@ impl OptionInfo {
 
     pub(crate) fn parse(&self, input: &str) -> Option<Value> {
         match self.info.kind {
-            Kind::Integer { .. } => input.trim().parse().ok().map(Value::Integer),
-            Kind::Number { .. } => input
+            Kind::Integer { min, max } => input
                 .trim()
-                .parse()
+                .parse::<i64>()
                 .ok()
-                .filter(|value: &f64| value.is_finite())
+                .filter(|n| within(*n, min, max, false))
+                .map(Value::Integer),
+            Kind::Number {
+                min,
+                max,
+                exclusive_min,
+            } => input
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|n| n.is_finite() && within(*n, min, max, exclusive_min))
                 .map(Value::Float),
             Kind::Text | Kind::Color => Some(Value::String(input.to_owned())),
             Kind::Paths | Kind::Palette => parse_list(input),
@@ -170,6 +179,21 @@ impl OptionInfo {
             _ => None,
         }
     }
+}
+
+fn within<T: Copy + PartialOrd>(
+    value: T,
+    min: Option<T>,
+    max: Option<T>,
+    exclusive_min: bool,
+) -> bool {
+    min.is_none_or(|min| {
+        if exclusive_min {
+            value > min
+        } else {
+            value >= min
+        }
+    }) && max.is_none_or(|max| value <= max)
 }
 
 pub(crate) fn same(left: Option<&Value>, right: Option<&Value>) -> bool {

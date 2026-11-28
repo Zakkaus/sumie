@@ -17,15 +17,21 @@ pub(crate) enum Key {
     Esc,
     Interrupt,
     Char(char),
+    Pasted(char),
 }
 
 #[derive(Default)]
 pub(crate) struct Decoder {
     bytes: Vec<u8>,
+    // None outside a paste, otherwise the number of bytes of the closing delimiter seen.
+    paste_end: Option<usize>,
 }
 
 impl Decoder {
     pub(crate) fn push(&mut self, byte: u8) -> Option<Key> {
+        if let Some(matched) = self.paste_end {
+            return self.paste_byte(byte, matched);
+        }
         if byte == 3 {
             self.bytes.clear();
             return Some(Key::Interrupt);
@@ -41,6 +47,32 @@ impl Decoder {
             (None, 0..=31) => None,
             (Some(27), _) => self.escape_byte(byte),
             _ => self.text_byte(byte),
+        }
+    }
+
+    fn paste_byte(&mut self, byte: u8, matched: usize) -> Option<Key> {
+        const END: &[u8] = b"\x1b[201~";
+        if byte == END[matched] {
+            if matched == 0 {
+                self.bytes.clear();
+            }
+            self.paste_end = (matched + 1 < END.len()).then_some(matched + 1);
+            return None;
+        }
+        self.paste_end = Some(usize::from(byte == 27));
+        match byte {
+            b'\r' | b'\n' | b'\t' => {
+                self.bytes.clear();
+                Some(Key::Pasted(' '))
+            }
+            0..=31 | 127 => {
+                self.bytes.clear();
+                None
+            }
+            _ => self.text_byte(byte).map(|key| match key {
+                Key::Char(c) => Key::Pasted(c),
+                other => other,
+            }),
         }
     }
 
@@ -84,6 +116,11 @@ impl Decoder {
             b"\x1b[3~" => Key::Delete,
             b"\x1b[5~" => Key::PageUp,
             b"\x1b[6~" => Key::PageDown,
+            b"\x1b[200~" => {
+                self.bytes.clear();
+                self.paste_end = Some(0);
+                return None;
+            }
             _ => {
                 self.bytes.clear();
                 return None;
@@ -138,7 +175,7 @@ impl Line {
             Key::Right => self.cursor = next(),
             Key::Home => self.cursor = 0,
             Key::End => self.cursor = self.text.len(),
-            Key::Char(ch) if !ch.is_control() => {
+            Key::Char(ch) | Key::Pasted(ch) if !ch.is_control() => {
                 self.text.insert(self.cursor, ch);
                 self.cursor += ch.len_utf8();
                 return true;

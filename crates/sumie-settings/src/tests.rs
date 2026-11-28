@@ -85,11 +85,18 @@ fn changes_write_immediately_to_the_defining_file() {
         fs::read_to_string(&main).unwrap(),
         "include = ['earlier.toml', 'later.toml'] # order\n\n[font]\nhinting = \"normal\"\n"
     );
-    assert!(
-        fs::read_to_string(&later)
-            .unwrap()
-            .contains("size = 15.0 # points")
+    assert_eq!(
+        fs::read_to_string(&later).unwrap(),
+        "# Keep this\n[font]\n# points\nfamily = 'Fixed'\n"
     );
+    assert_font_size(&main, 12.0);
+    assert_eq!(
+        fs::read_to_string(&earlier).unwrap(),
+        "[font]\nsize = 12.0\n"
+    );
+    press(&mut model, [Key::Up, Key::Up, Key::Char('r')]);
+    assert_font_size(&main, 15.0);
+    assert_eq!(fs::read_to_string(&earlier).unwrap(), "[font]\n");
     assert!(!model.key(Key::Char('q'), 2));
 }
 
@@ -143,17 +150,14 @@ fn typed_values_are_validated_and_foreign_saves_are_not_overwritten() {
     type_text(&mut model, "-1");
     press(&mut model, [Key::Enter]);
     assert!(matches!(model.mode, Mode::Edit(_)));
-    assert_eq!(
-        model.notice(),
-        Some("The settings file does not accept this value.")
-    );
+    assert_eq!(model.notice().as_deref(), Some("Expected: Number · > 0"));
     assert_font_size(&main, 16.0);
     fs::write(&main, "language = 'en'\n[font]\nsize = 18.0\n").unwrap();
     press(&mut model, [Key::Backspace, Key::Backspace]);
     type_text(&mut model, "20.5");
     press(&mut model, [Key::Enter]);
     assert_eq!(
-        model.notice(),
+        model.notice().as_deref(),
         Some("The setting changed on disk. Review it and try again.")
     );
     assert_font_size(&main, 18.0);
@@ -176,7 +180,7 @@ fn assert_font_size(main: &Path, points: f32) {
 }
 
 #[test]
-fn reset_to_automatic_removes_shadowed_overrides() {
+fn reset_leaves_lower_priority_overrides_untouched() {
     let dir = Scratch::new();
     let included = dir.file("fonts.toml", "[font]\nweight = 500\nfamily = 'Fixed'\n");
     let main = dir.file(
@@ -185,10 +189,14 @@ fn reset_to_automatic_removes_shadowed_overrides() {
     );
     let mut model = model(&main);
     press(&mut model, [Key::Char('2'), Key::PageDown, Key::Char('r')]);
-    assert_eq!(load(&main).unwrap().font.weight(), None);
+    assert_eq!(load(&main).unwrap().font.weight(), Some(500));
     assert_eq!(
         fs::read_to_string(included).unwrap(),
-        "[font]\nfamily = 'Fixed'\n"
+        "[font]\nweight = 500\nfamily = 'Fixed'\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&main).unwrap(),
+        "include = ['fonts.toml']\n[font]\n"
     );
 }
 
@@ -213,6 +221,40 @@ fn key_sequences_do_not_turn_into_text_or_accidental_quits() {
     );
     assert_eq!(decoder.escape_timeout(), Some(Key::Esc));
     assert_eq!(decoder.push(3), Some(Key::Interrupt));
+}
+
+#[test]
+fn bracketed_paste_is_text_only_and_never_submits() {
+    let dir = Scratch::new();
+    let main = dir.file("sumie.toml", "language = 'en'\n");
+    let mut model = model(&main);
+    let mut decoder = Decoder::default();
+    for chunk in [
+        b"\x1b[200~q\r2\x1b[201~2\r\x1b[20".as_slice(),
+        "0~甲\n乙\x1b[2".as_bytes(),
+        b"01~",
+    ] {
+        press(
+            &mut model,
+            chunk.iter().filter_map(|&byte| decoder.push(byte)),
+        );
+    }
+    assert_eq!(selected(&model), "font.family");
+    assert_eq!(fs::read_to_string(&main).unwrap(), "language = 'en'\n");
+    press(&mut model, [decoder.push(b'\r').unwrap()]);
+    assert_eq!(load(&main).unwrap().font.family(), "JetBrains Mono甲 乙");
+}
+
+#[test]
+fn invalid_number_reports_localized_inclusive_range() {
+    let dir = Scratch::new();
+    let main = dir.file("sumie.toml", "language = 'zh-TW'\n");
+    let mut model = model(&main);
+    press(&mut model, [Key::Char('2'), Key::PageDown, Key::Enter]);
+    type_text(&mut model, "99");
+    press(&mut model, [Key::Enter]);
+    assert_eq!(model.notice().as_deref(), Some("請輸入：整數 · 100–900"));
+    assert_eq!(load(&main).unwrap().font.weight(), None);
 }
 
 #[test]
