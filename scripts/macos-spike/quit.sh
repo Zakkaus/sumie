@@ -27,8 +27,8 @@ done
 # The reviewed patch is the fork's whole diff from upstream winit v0.30.13.
 upstream=e9809ef54b18499bb4f2cac945719ecc2a61061b
 git -C "$db" -c diff.noprefix=false diff --no-color --no-ext-diff "$upstream" "$rev" |
-    cmp -s - "$root/third_party/winit/0001-quit.patch" ||
-    { echo "quit: third_party/winit/0001-quit.patch is not the diff from v0.30.13 to $rev" >&2; exit 2; }
+    cmp -s - "$root/third_party/winit/0001-macos.patch" ||
+    { echo "quit: third_party/winit/0001-macos.patch is not the diff from v0.30.13 to $rev" >&2; exit 2; }
 fork="$fixture/vendor/winit-0.30.13"
 mkdir -p "$evidence"
 # Leave any pre-existing fork alone. Only this invocation owns the fresh extraction.

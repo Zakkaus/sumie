@@ -96,7 +96,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           lambda manifest: re.sub(r'(?m)^(winit = \{ git = "[^"]+", )rev = "[0-9a-f]{40}" \}$',
                                   r'\1branch = "sumie/0.30.13" }', manifest),
           "patch: [patch.crates-io] winit: pin a full rev, not a branch or tag")
-    quit_patch = "third_party/winit/0001-quit.patch"
+    quit_patch = "third_party/winit/0001-macos.patch"
     # `append` adds a blank line, then the hunk; its added line is the fifth.
     added = len((ROOT / quit_patch).read_text(encoding="utf-8").splitlines()) + 6
     probe("debug print in the winit fork patch", "structure", quit_patch,
