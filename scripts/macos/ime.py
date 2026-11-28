@@ -13,7 +13,9 @@ around them; it reports an injection once its batch was delivered. They prove th
 their recipient, not that a native composition was cancelled.
   commit     Preedit, empty preedit, commit: the PTY gets the commit's bytes once and nothing
              else; the overlay shows the preedit and its caret, then clears. A second commit
-             without a composition sends nothing.
+             without a composition, as the input method inserts punctuation, arrives too. After
+             a composition and focus loss, its late commit sends nothing, and the next commit
+             arrives.
   late       A composition in pane 1 is followed by a switch to pane 2; its late preedit and
              commit reach neither PTY nor pane 2's overlay. Pane 2 composes, then search opens:
              the late preedit stays out of the overlay until the cancel's `disabled`, after
@@ -33,6 +35,11 @@ Native cases need the selected input source to be Traditional or Simplified Chin
 with any other source the check exits 2 after the protocol cases: the native half was not
 checked. Input methods are on, and the real input method composes from posted keys; its
 preedits are reported by length.
+  direct     The comma key, before any composition, then n i and the comma key: the input
+             method inserts its comma without marked text, after the candidate in the second
+             case. The PTY gets each commit once: a comma, half- or full-width as the input
+             method's punctuation setting chooses (not the layout's key text), and before it
+             one 3-byte character.
   pinyin     n i preedits 1 and 2 bytes and sends nothing; Space commits one 3-byte character
              once, without a Return. n i Escape cancels: nothing arrives.
   takeover   Kitty flags 11: 1 is pressed and reported; n starts a composition, which sends 1's
@@ -61,11 +68,12 @@ from pasteboard import Board, framed  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 C, E, F, I, N, V, W = 0x08, 0x0E, 0x03, 0x22, 0x2D, 0x09, 0x0D
-DIGIT1, SPACE, ESCAPE = 0x12, 0x31, 0x35
+COMMA, DIGIT1, SPACE, ESCAPE = 0x2B, 0x12, 0x31, 0x35
 LEFT, RIGHT, DOWN, UP = 0x7B, 0x7C, 0x7D, 0x7E
 PINYIN = ("com.apple.inputmethod.TCIM.Pinyin", "com.apple.inputmethod.SCIM.ITABC")
 CONTENT = "sumie 墨 paste"
 BO, BA, PO, PU = "ㄅ", "把", "ㄆ", "葡"
+COMMAS = (",", "\uff0c")
 PRESS_1, RELEASE_1 = "1b5b343975", "1b5b34393b313a3375"
 # Erasing the display pushes the rows to history, where the command line before it would join
 # row 0's logical line; erase the history too.
@@ -205,7 +213,14 @@ def case_commit(ime):
     expect("commit: composing", ime.keys.recorded(out), "")
     ime.commit(BA)
     ime.commit(BA)
-    expect("commit: once, then not again without a composition", ime.keys.stop("commit"), utf8(BA))
+    expect("commit: once, then a commit without a composition", ime.keys.recorded(out), utf8(BA) * 2)
+    ime.preedit(BO)
+    ime.keys.focus(False)
+    ime.keys.focus(True)
+    ime.commit(BA)
+    ime.commit(PU)
+    expect("commit: not the late commit after focus loss, then the next", ime.keys.stop("commit"),
+           utf8(BA) * 2 + utf8(PU))
 
 
 def case_late(ime):
@@ -301,6 +316,34 @@ def case_command(ime):
     ime.expect_overlay("command: the composition after the chords", BO)
     ime.commit(BA)
     expect("command: the commit after the paste", ime.keys.stop("command"), pasted + utf8(BA))
+
+
+def native_direct(ime):
+    out = ime.keys.start("direct", "plain")
+    got = ""
+    for name, keys, count in (("the comma key", (COMMA,), 1), ("n i and the comma key", (N, I, COMMA), 2)):
+        since = time.monotonic()
+        for key in keys:
+            ime.keys.tap(key)
+        end = time.monotonic() + WAIT
+        while len(commits := ime.runner.matching("runner", "ime", "commit", since=since)) < count:
+            if time.monotonic() >= end:
+                raise Violation(f"ime: direct: {name} made {len(commits)} input-method commits instead of "
+                                f"{count}: the text the input method inserted was dropped")
+            time.sleep(0.02)
+        length = sum(int(fields[3]) for _, fields in commits)
+        new = ime.keys.await_recorded(out, len(got) + 2 * length)[len(got):]
+        try:
+            text = bytes.fromhex(new).decode()
+        except ValueError:
+            text = ""
+        if (len(new) != 2 * length or len(text) != count or text[-1] not in COMMAS
+                or any(len(char.encode()) != 3 for char in text[:-1])):
+            raise Violation(f"ime: direct: {name} recorded {new or 'nothing'} instead of the input method's "
+                            f"{count} commits of {length} bytes, once, ending in a comma")
+        print(f"ime: direct: {name}: {new}")
+        got += new
+    expect("direct: nothing more", ime.keys.stop("direct"), got)
 
 
 def native_pinyin(ime):
@@ -421,6 +464,8 @@ def native_cases(ime):
     ime.runner.send("ime on")
     # Commands run in order: the reply to the next one follows `ime on`.
     ime.source()
+    # First: no composition has run yet, so the commit has no owner.
+    native_direct(ime)
     native_pinyin(ime)
     native_takeover(ime)
     native_shortcuts(ime)
