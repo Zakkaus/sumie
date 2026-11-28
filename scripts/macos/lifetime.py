@@ -42,7 +42,9 @@ import tempfile
 import threading
 import time
 
-from cycles import CLEANUP, settled
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cycles import CLEANUP, settled  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 CONFIG = '[font]\nfamily = "Menlo"\n\n[cursor]\nblink = false\n\n[window]\nconfirm-close = {confirm}\n'
