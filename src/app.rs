@@ -337,7 +337,9 @@ impl Session {
         active.frame_dirty |= self.view.preedit_graphemes != mode;
         self.view.preedit_graphemes = mode;
         let cursor_hidden = window.cursor_hidden(active.id);
-        let dirty = !self.pane_pointer.layout_is_presented(tab)
+        let dirty = self.view.input_bell
+            || self.view.input_bell_presented
+            || !self.pane_pointer.layout_is_presented(tab)
             || tab
                 .layout
                 .panes
@@ -390,6 +392,7 @@ impl Session {
                 self.frame_log
                     .presented(self.view.repainted_panes().filter(|_| dirty));
                 self.panes_presented(gpu, window, banner.is_some())?;
+                self.view.input_bell_presented = std::mem::take(&mut self.view.input_bell);
                 gpu.log_present();
                 if suboptimal {
                     gpu.resize(self.view.device);

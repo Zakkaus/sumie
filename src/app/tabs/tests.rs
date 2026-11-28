@@ -182,6 +182,44 @@ fn paste_shortcut_restores_a_missing_recipient() {
     crate::tests::wait_for_line(pane, "paste");
 }
 
+#[test]
+fn rejected_paste_and_key_ring_the_input_bell() {
+    use sumie_pty::INPUT_LIMIT;
+
+    let mut window = TestWindow::default();
+    let mut session = session(&mut window, &sumie_config::Config::default());
+    let generation = session.active().text_recipient.unwrap();
+    let draws_flash = |view: &mut View| {
+        view.begin_frame([], [0; 3]);
+        view.end_frame();
+        view.frame(true, |_| None)
+            .fills
+            .iter()
+            .any(|fill| fill.color[3] != 0)
+    };
+    session.active_mut().pane.terminal.write(b"\x1b[?2004h");
+    let paste = Event::ClipboardText {
+        text: "x".repeat(INPUT_LIMIT - 1),
+        generation,
+    };
+    session.input(paste, &mut window, false, None).unwrap();
+    assert!(draws_flash(&mut session.view), "rejected paste");
+    session.view.input_bell = false;
+    let pty = &mut session.active_mut().pane.pty;
+    assert!(pty.input_fd().is_none());
+    pty.enqueue_input(&vec![b'x'; INPUT_LIMIT]).unwrap();
+
+    let key = Event::Key {
+        physical: PhysicalKey::Code(KeyCode::KeyA),
+        logical: LogicalKey::Character('a'),
+        utf8: Some("a".into()),
+        modifiers: KeyModifiers::default(),
+        action: KeyAction::Press,
+    };
+    session.input(key, &mut window, false, None).unwrap();
+    assert!(draws_flash(&mut session.view), "rejected key");
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn queued_ime_commit_reaches_the_original_pane() {

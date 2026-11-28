@@ -309,8 +309,11 @@ fn a_link_to_a_missing_file_stays_a_link() {
     // Two hops, the first relative to the link's own directory.
     symlink("../dotfiles/link.toml", &main).unwrap();
     symlink(dotfiles.join("sumie.toml"), dotfiles.join("link.toml")).unwrap();
+    let mut watch = Watched::new(&main);
 
     set(&main, "font.size", &Value::Float(16.0)).unwrap();
+    let expected = 16.0 * crate::POINT_TO_PX;
+    assert!(watch.reports(|config| (config.font.logical_px() - expected).abs() < f32::EPSILON));
     assert!(fs::symlink_metadata(&main).unwrap().is_symlink());
     assert!(
         fs::symlink_metadata(dotfiles.join("link.toml"))

@@ -232,6 +232,7 @@ impl Session {
             Effect::Tab(action) => return Ok(Some(tabs::Action::Key(action))),
             Effect::Pane(action) => return Ok(Some(tabs::Action::Pane(action))),
             Effect::Zoom(action) => self.zoom(action)?,
+            Effect::InputBell => self.view.input_bell = true,
             effect => apply_pane_effect(
                 pane,
                 &mut self.view,

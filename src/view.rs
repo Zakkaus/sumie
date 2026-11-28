@@ -64,6 +64,8 @@ pub(crate) struct View {
     pub(crate) preedit_graphemes: bool,
     /// The selected clause of a non-empty preedit, set with it; see `Event::ImePreedit`.
     pub(crate) preedit_cursor: Option<(usize, usize)>,
+    pub(crate) input_bell: bool,
+    pub(crate) input_bell_presented: bool,
     /// Formatted query and tab-separated count, without IME preedit.
     pub(crate) search_bar: Option<String>,
     /// Byte range in the formatted query. An empty range is the insertion point.
@@ -149,6 +151,8 @@ impl View {
             preedit_codepoints: Vec::new(),
             preedit_graphemes: false,
             preedit_cursor: None,
+            input_bell: false,
+            input_bell_presented: false,
             search_bar: None,
             search_selection: 0..0,
             search_highlights: Vec::new(),
@@ -385,6 +389,14 @@ impl View {
             pane.id = None;
             pane.images = None;
             pane.viewer = None;
+        }
+        if self.input_bell {
+            let mut color = self.palette.label;
+            color[3] = self.palette.overlay[3];
+            self.fills.push(Fill {
+                rect: pixel_rect(self.content_rect()),
+                color,
+            });
         }
         collect_dirty(&self.font, &mut self.atlas_dirty);
     }
