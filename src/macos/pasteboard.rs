@@ -24,7 +24,7 @@ use std::{
         fd::{AsFd as _, OwnedFd},
         unix::net::UnixStream,
     },
-    process::{self, Child, Command, Stdio},
+    process::{self, Child, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -183,7 +183,7 @@ impl Pasteboard {
         watches.take_pasteboard_ready()?;
         let mut pasted = Vec::new();
         if let Some(running) = &mut self.running {
-            let outcome = match running.progress(watches)? {
+            let outcome = match running.progress(watches, ExitWatch::try_reap)? {
                 Outcome::Pending if running.deadline.0 <= Instant::now() => {
                     Outcome::Failed(format!("no reply within {:?}", self.timeout))
                 }
@@ -350,7 +350,11 @@ impl Drop for Pasteboard {
 
 impl Running {
     /// Write what is left of the request and read the reply, without blocking.
-    fn progress(&mut self, watches: &mut Watches) -> Result<Outcome> {
+    fn progress(
+        &mut self,
+        watches: &mut Watches,
+        mut reap: impl FnMut(&ExitWatch, &mut Child) -> io::Result<Option<ExitStatus>>,
+    ) -> Result<Outcome> {
         let socket = self
             .helper
             .socket
@@ -371,13 +375,7 @@ impl Running {
         let mut frames = Vec::new();
         loop {
             match socket.read(&mut buffer) {
-                Ok(0) => {
-                    let reason = self.decoder.finish().err().map_or_else(
-                        || "the helper exited without a reply".to_owned(),
-                        |error| error.to_string(),
-                    );
-                    return Ok(Outcome::Failed(reason));
-                }
+                Ok(0) => break,
                 Ok(read) => {
                     if let Err(error) = self.decoder.feed(&buffer[..read], &mut frames) {
                         return Ok(Outcome::Failed(error.to_string()));
@@ -387,18 +385,24 @@ impl Running {
                     }
                 }
                 Err(error) if error.kind() == ErrorKind::Interrupted => (),
-                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    if self.helper.reaped {
+                        break;
+                    }
+                    self.helper.reaped = reap(&self.helper.exit, &mut self.helper.child)?.is_some();
+                    if !self.helper.reaped {
+                        return Ok(Outcome::Pending);
+                    }
+                    // A helper can write its reply between WouldBlock and the reap.
+                }
                 Err(error) => return Ok(Outcome::Failed(error.to_string())),
             }
         }
-        // An inherited copy of its end can hold off EOF, so its exit ends the request too.
-        if self.helper.exit.try_reap(&mut self.helper.child)?.is_some() {
-            self.helper.reaped = true;
-            return Ok(Outcome::Failed(
-                "the helper exited without a reply".to_owned(),
-            ));
-        }
-        Ok(Outcome::Pending)
+        let reason = self.decoder.finish().err().map_or_else(
+            || "the helper exited without a reply".to_owned(),
+            |error| error.to_string(),
+        );
+        Ok(Outcome::Failed(reason))
     }
 }
 

@@ -137,6 +137,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           append("#[test]\nfn test_probe() -> Result<(), &'static str> {\n"
                  '    Err("deliberate unit test failure")\n}\n'),
           "test test_probe ... FAILED")
+    probe("missing glyph logs the terminal code point", "test", "src/view.rs",
+          replace_once('tracing::warn!(reason, "could not draw terminal glyphs");',
+                       'tracing::warn!(reason = %error, "could not draw terminal glyphs");'),
+          "test view::tests::missing_glyph_logs_only_the_error_kind ... FAILED")
     probe("Super matches a shortcut", "test", "crates/sumie-core/src/shortcuts.rs",
           replace_once("            Platform::Linux if modifiers.super_key => return Ok(None),\n", ""),
           "test shortcuts::tests::super_never_matches_a_shortcut ... FAILED")

@@ -93,27 +93,39 @@ struct Line {
     shaped: sumie_font::ShapedRun,
 }
 
-/// Distinct missing code points whose errors are logged; terminal output can show many more.
-const MISSING_GLYPH_WARNINGS: usize = 32;
-
 #[derive(Default)]
 struct FontErrors {
     kinds: HashSet<Discriminant<FontError>>,
-    missing: HashSet<u32>,
 }
 
 impl FontErrors {
     fn warn(&mut self, error: &FontError) {
-        let first = match error {
-            // The first error for a code point lists the fonts that fallback rejected.
-            FontError::MissingGlyph { codepoint, .. } => {
-                self.missing.len() < MISSING_GLYPH_WARNINGS && self.missing.insert(*codepoint)
-            }
-            _ => self.kinds.insert(discriminant(error)),
-        };
-        if first {
-            tracing::warn!(reason = %error, "could not draw terminal glyphs");
+        if !self.kinds.insert(discriminant(error)) {
+            return;
         }
+        let reason = match error {
+            #[cfg(target_os = "macos")]
+            FontError::MissingFontUrl(_) => "MissingFontUrl",
+            FontError::FontconfigInit => "FontconfigInit",
+            #[cfg(target_os = "linux")]
+            FontError::Fontconfig(_) => "Fontconfig",
+            FontError::InvalidFamily => "InvalidFamily",
+            FontError::InvalidSize => "InvalidSize",
+            FontError::InvalidWeight => "InvalidWeight",
+            FontError::ReadFont { .. } => "ReadFont",
+            FontError::InvalidFont(_) => "InvalidFont",
+            FontError::MissingMetrics => "MissingMetrics",
+            FontError::MissingGlyph { .. } => "MissingGlyph",
+            FontError::InvalidWidths => "InvalidWidths",
+            FontError::RunTooLong => "RunTooLong",
+            FontError::Shape(_) => "Shape",
+            FontError::UnknownFace => "UnknownFace",
+            FontError::UnsupportedGlyph => "UnsupportedGlyph",
+            FontError::Outline(_) => "Outline",
+            FontError::HintedOutline(_) => "HintedOutline",
+            FontError::AtlasFull => "AtlasFull",
+        };
+        tracing::warn!(reason, "could not draw terminal glyphs");
     }
 }
 
