@@ -208,14 +208,14 @@ impl Images {
                 let packed = image.format != PixelFormat::Rgba;
                 // A recycled RGBA texture cannot take a packed image's expansion pass.
                 let usage = expand::texture_usage(packed);
-                let recycled = recycled.filter(|bound| bound.texture.usage().contains(usage));
+                let recycled = recycled.filter(|old| old.view.texture().usage().contains(usage));
                 let reused = recycled.is_some();
                 let bound = recycled.unwrap_or_else(|| {
                     self.pipeline
                         .get_or_insert_with(|| BoundPipeline::new(upload.device, self.format))
                         .bind_texture(upload.device, image.size, packed)
                 });
-                upload.write(&bound.texture, image, pixels, reused, &mut self.expander);
+                upload.write(&bound, image, pixels, reused, &mut self.expander);
                 bound
             },
         )
@@ -508,22 +508,21 @@ impl BoundPipeline {
             usage: expand::texture_usage(packed),
             view_formats: &[],
         });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sumie image texture bindings"),
             layout: &self.texture_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(
-                    &texture.create_view(&wgpu::TextureViewDescriptor::default()),
-                ),
+                resource: wgpu::BindingResource::TextureView(&view),
             }],
         });
-        BoundTexture { texture, bindings }
+        BoundTexture { view, bindings }
     }
 }
 
 struct BoundTexture {
-    texture: wgpu::Texture,
+    view: wgpu::TextureView,
     bindings: wgpu::BindGroup,
 }
 
