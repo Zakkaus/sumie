@@ -1854,6 +1854,7 @@ dependencies = [
  "sumie-config",
  "sumie-core",
  "sumie-font",
+ "sumie-locale",
  "sumie-macos",
  "sumie-pty",
  "sumie-render",

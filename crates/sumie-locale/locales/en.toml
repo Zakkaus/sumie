@@ -30,6 +30,8 @@
 "ui.unconfirmed" = "Could not confirm the save. Check the current value."
 "ui.no-terminal" = "Open settings from an interactive terminal."
 "ui.no-config-path" = "Could not find the settings directory."
+"import.no-source" = "No Ghostty configuration file found. Pass its path to the import command."
+"import.skipped" = "skipped"
 "kind.text" = "Text"
 "kind.integer" = "Whole number"
 "kind.number" = "Number"

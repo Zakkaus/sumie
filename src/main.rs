@@ -9,6 +9,8 @@ mod app;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod capture;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod config_import;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod frame_window;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod gpu;
@@ -96,7 +98,9 @@ fn run() -> Result<()> {
             {
                 Ok(write!(stdout, "{}", sumie_config::defaults_toml())?)
             }
-            _ => Err("usage: sumie config [schema | show --defaults]".into()),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            Some("import") => config_import::run(args),
+            _ => Err("usage: sumie config [schema | show --defaults | import ghostty]".into()),
         };
     }
 

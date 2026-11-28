@@ -68,6 +68,7 @@ pollster.workspace = true
 rustix = { workspace = true, features = ["time"] }
 sumie-core = { path = "crates/sumie-core" }
 sumie-font = { path = "crates/sumie-font" }
+sumie-locale = { path = "crates/sumie-locale" }
 sumie-pty = { path = "crates/sumie-pty" }
 sumie-render = { path = "crates/sumie-render" }
 sumie-settings = { path = "crates/sumie-settings" }
