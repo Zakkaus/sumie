@@ -577,6 +577,7 @@ impl Session {
         Ok(())
     }
 
+    // Retirement can lose final output that the PTY reader has not yet delivered.
     pub(super) fn close_exited(&mut self, window: &mut impl WindowOps) -> Result<bool> {
         for index in (0..self.tabs.as_slice().len()).rev() {
             for leaf in (0..self.tabs.as_slice()[index].panes.len()).rev() {

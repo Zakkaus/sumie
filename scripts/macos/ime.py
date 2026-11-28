@@ -14,10 +14,10 @@ their recipient, not that a native composition was cancelled.
   commit     Preedit, empty preedit, commit: the PTY gets the commit's bytes once and nothing
              else; the overlay shows the preedit and its caret, then clears. A second commit
              without a composition sends nothing.
-  late       A composition in pane 1 is followed by a switch to pane 2; its late preedit and
-             commit reach neither PTY nor pane 2's overlay. Pane 2 composes, then search opens:
-             the late preedit stays out of the overlay until the cancel's `disabled`, after
-             which search composes and commits. Pane 2's next composition commits there.
+  late       A composition in pane 1 is followed by a switch to pane 2; the queued commit
+             reaches pane 1, and the old preedit stays out of pane 2's overlay. Pane 2 composes,
+             then search opens: the late preedit stays out of the overlay until `disabled`,
+             after which search composes and commits. Pane 2's next composition commits there.
   batch      Cmd+F and a preedit in one batch, as when the key after the chord composes: the
              preedit belongs to search, and its commit reaches no PTY.
   kitty      Kitty flags 11: a is pressed, then a composition starts. a's release reaches the
@@ -219,8 +219,8 @@ def case_late(ime):
     # commit.
     ime.preedit(BO + PO)
     ime.commit(BA)
-    expect("late: a late preedit and commit after the switch", ime.keys.recorded(first)
-           + ime.keys.recorded(second), "")
+    expect("late: queued commit reaches the original pane",
+           ime.keys.await_recorded(first, len(utf8(BA))), utf8(BA))
     ime.expect_overlay("late: after the switch", "")
     ime.preedit(PO)
     ime.expect_overlay("late: pane 2's composition", PO)
@@ -234,12 +234,11 @@ def case_late(ime):
     ime.expect_overlay("late: search's composition after the cancel", BO)
     ime.commit(BA)
     ime.switch(lambda: ime.keys.tap(ESCAPE))
-    expect("late: nothing after a switch and after search opened", ime.keys.recorded(first)
-           + ime.keys.recorded(second), "")
+    expect("late: search sends nothing to the second pane", ime.keys.recorded(second), "")
     ime.preedit(PO)
     ime.commit(PU)
     expect("late: the second pane's own commit", ime.keys.stop("late-second"), utf8(PU))
-    expect("late: the first pane", ime.keys.stop("late-first"), "")
+    expect("late: only the queued commit reached the first pane", ime.keys.stop("late-first"), utf8(BA))
     # Close the second pane; the next case starts at the first pane's prompt.
     ime.switch_chord(W)
 

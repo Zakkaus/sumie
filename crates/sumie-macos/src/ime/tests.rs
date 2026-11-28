@@ -48,7 +48,7 @@ fn seen(inputs: Vec<Input>) -> Vec<Seen> {
             Input::Preedit {
                 text, generation, ..
             } => Seen::Preedit(text, generation),
-            Input::Commit { text, generation } => Seen::Commit(text, generation),
+            Input::Commit { text, recipient } => Seen::Commit(text, recipient),
         })
         .collect()
 }
@@ -62,7 +62,7 @@ fn feed(composition: &mut Composition, ime: Ime) -> Vec<Seen> {
 #[test]
 fn a_composition_keeps_its_owner_through_the_empty_preedit_and_commits_once() {
     let mut composition = Composition::default();
-    composition.set_generation(3);
+    composition.set_generation(3, 3);
     assert_eq!(
         feed(&mut composition, preedit("ㄅ")),
         [Seen::Preedit("ㄅ".into(), 3)]
@@ -82,20 +82,20 @@ fn a_composition_keeps_its_owner_through_the_empty_preedit_and_commits_once() {
 }
 
 #[test]
-fn a_new_generation_fences_the_old_composition_until_it_ends() {
+fn a_queued_commit_keeps_its_recipient_after_a_focus_change() {
     let mut composition = Composition::default();
     // Without a composition there is nothing to cancel.
-    assert!(!composition.set_generation(1));
+    assert!(!composition.set_generation(3, 1));
     feed(&mut composition, preedit("ㄅ"));
-    assert!(composition.set_generation(2));
-    // Its late events keep its generation, a non-empty preedit before the commit included.
+    assert!(composition.set_generation(4, 2));
+    // Stale preedits still carry the original generation, not the pane's text recipient.
     assert_eq!(
         feed(&mut composition, preedit("ㄅㄆ")),
-        [Seen::Preedit("ㄅㄆ".into(), 1)]
+        [Seen::Preedit("ㄅㄆ".into(), 3)]
     );
     assert_eq!(
         feed(&mut composition, empty()),
-        [Seen::Preedit(String::new(), 1)]
+        [Seen::Preedit(String::new(), 3)]
     );
     assert_eq!(
         feed(&mut composition, Ime::Commit("把".into())),
@@ -104,7 +104,7 @@ fn a_new_generation_fences_the_old_composition_until_it_ends() {
     // The next composition belongs to the new recipient.
     assert_eq!(
         feed(&mut composition, preedit("ㄆ")),
-        [Seen::Preedit("ㄆ".into(), 2)]
+        [Seen::Preedit("ㄆ".into(), 4)]
     );
     assert_eq!(
         feed(&mut composition, Ime::Commit("葡".into())),
@@ -115,11 +115,11 @@ fn a_new_generation_fences_the_old_composition_until_it_ends() {
 #[test]
 fn the_native_cancel_ends_the_fenced_composition() {
     let mut composition = Composition::default();
-    composition.set_generation(1);
+    composition.set_generation(1, 1);
     feed(&mut composition, preedit("ㄅ"));
-    assert!(composition.set_generation(2));
+    assert!(composition.set_generation(2, 2));
     // Another switch before the cancel arrived still finds it running.
-    assert!(composition.set_generation(3));
+    assert!(composition.set_generation(3, 3));
     assert_eq!(
         feed(&mut composition, preedit("ㄅㄆ")),
         [Seen::Preedit("ㄅㄆ".into(), 1)]
@@ -128,7 +128,7 @@ fn the_native_cancel_ends_the_fenced_composition() {
         feed(&mut composition, Ime::Disabled),
         [Seen::Preedit(String::new(), 1)]
     );
-    assert!(!composition.set_generation(4));
+    assert!(!composition.set_generation(4, 4));
     assert_eq!(feed(&mut composition, Ime::Commit("把".into())), []);
     assert_eq!(
         feed(&mut composition, preedit("ㄆ")),

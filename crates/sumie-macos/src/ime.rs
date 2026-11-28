@@ -1,17 +1,14 @@
 //! Input-method state between winit and the binary: which recipient owns a composition, and
 //! the key releases winit swallows while one runs.
 //!
-//! A composition belongs to the input generation that was current at its first non-empty
-//! preedit. Every event of it carries that generation until it ends, its preedits, the empty
-//! one and its one commit alike, so the session drops all of them once the recipient changed,
-//! in whatever order they arrive. It ends at its commit, when winit reports it disabled, at
-//! focus loss, or at its first event under another input source. A new generation does not
-//! end it: the window cancels it natively, and winit's `Disabled` for that cancel follows
-//! every event of it that winit delivered. A commit without an owner belongs to no running
-//! composition: it answers a cancelled one or repeats one that already committed, so it is
-//! stale and dropped. The window converts events in the order it
-//! delivers them, so a new generation applies from the event that caused it, and a
-//! composition the next key starts belongs to the new recipient.
+//! A composition keeps the generation and text recipient of its first non-empty preedit.
+//! Only preedits for the current generation reach the overlay. A commit already queued when
+//! focus changes goes to the original recipient. A composition ends at its commit, when winit
+//! reports it disabled, at focus loss, or at its first event under another input source.
+//! A generation change cancels it natively; winit's `Disabled` follows the events it already
+//! delivered. A commit without an owner answers a cancelled composition or repeats a commit.
+//! The window converts events in delivery order, so a new generation applies from the event
+//! that caused it, and a composition the next key starts belongs to the new recipient.
 //!
 //! winit forwards no key-up while the input method composes, so a press reported before the
 //! composition took over would never end. Its release is sent when the composition starts,
@@ -48,16 +45,16 @@ pub enum Input {
     },
     Commit {
         text: String,
-        generation: u64,
+        recipient: u64,
     },
 }
 
 #[derive(Default)]
 pub struct Composition {
     generation: u64,
-    /// The generation and input source of the running composition, from its first non-empty
-    /// preedit until it ends; a newer generation leaves it in place.
-    owner: Option<(u64, Option<String>)>,
+    recipient: u64,
+    /// Generation, text recipient, and input source of the running composition.
+    owner: Option<(u64, u64, Option<String>)>,
     /// Presses forwarded to the session whose release has not arrived.
     held: Vec<(PhysicalKey, Symbol)>,
     modifiers: KeyModifiers,
@@ -65,18 +62,19 @@ pub struct Composition {
 
 impl Composition {
     /// Start a new input generation. Returns whether a composition of an older one runs: the
-    /// window then cancels it natively, and its events keep their generation until it ends.
-    pub fn set_generation(&mut self, generation: u64) -> bool {
+    /// the window then cancels it natively, but already queued commits keep their recipient.
+    pub fn set_generation(&mut self, generation: u64, recipient: u64) -> bool {
+        self.recipient = recipient;
         self.generation = generation;
         self.owner
             .as_ref()
-            .is_some_and(|&(owner, _)| owner != generation)
+            .is_some_and(|&(owner, _, _)| owner != generation)
     }
 
     /// End the composition without a commit, as on focus loss: its overlay clears, and its
     /// late events have no owner.
     pub fn cancel(&mut self) -> Option<Input> {
-        let (generation, _) = self.owner.take()?;
+        let (generation, _, _) = self.owner.take()?;
         Some(Input::Preedit {
             text: String::new(),
             cursor: None,
@@ -107,13 +105,16 @@ impl Composition {
         if self
             .owner
             .as_ref()
-            .is_some_and(|(_, owner)| *owner != source)
+            .is_some_and(|(_, _, owner)| *owner != source)
         {
             out.extend(self.cancel());
         }
         match ime {
             Ime::Preedit { text, cursor } if !text.is_empty() => {
-                let generation = self.owner.get_or_insert((self.generation, source)).0;
+                let generation = self
+                    .owner
+                    .get_or_insert((self.generation, self.recipient, source))
+                    .0;
                 out.extend(self.release_held());
                 let cursor = cursor.filter(|&(start, end)| {
                     start <= end && text.is_char_boundary(start) && text.is_char_boundary(end)
@@ -125,7 +126,7 @@ impl Composition {
                 });
             }
             Ime::Preedit { .. } => {
-                if let Some((generation, _)) = self.owner {
+                if let Some((generation, _, _)) = self.owner {
                     out.push(Input::Preedit {
                         text: String::new(),
                         cursor: None,
@@ -134,8 +135,8 @@ impl Composition {
                 }
             }
             Ime::Commit(text) => {
-                if let Some((generation, _)) = self.owner.take() {
-                    out.push(Input::Commit { text, generation });
+                if let Some((_, recipient, _)) = self.owner.take() {
+                    out.push(Input::Commit { text, recipient });
                 } else {
                     // No composition is running: it was cancelled (natively at a recipient
                     // change or focus loss, or by another input source), or this repeats the

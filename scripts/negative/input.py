@@ -34,6 +34,10 @@ def input_controls():
     probe("a search key held into Command repeats with it", "test", "src/input.rs",
           replace_once("\n                    && !self.shortcuts.command_repeat(modifiers, action) =>", " =>"),
           "test input::tests::a_search_key_held_into_command_repeats_only_without_it_on_macos ... FAILED")
+    probe("paste without a recipient panics", "test", "src/app/pane_input.rs",
+          replace_once("window.read_clipboard(*pane.text_recipient.get_or_insert(routing.generation));",
+                       'window.read_clipboard(pane.text_recipient.expect("focused text recipient"));'),
+          "test app::tabs::tests::paste_shortcut_restores_a_missing_recipient ... FAILED")
     probe("close ignores a running foreground job", "test", "src/app/window_events.rs",
           replace_once("None => local.pty.has_foreground_job(),", "None => false,"),
           "test app::tabs::tests::window_close_uses_osc133_before_foreground_group ... FAILED")
@@ -41,6 +45,10 @@ def input_controls():
           replace_once("text.contains(['\\n', '\\r'])", "text.contains('\\0')"),
           "test app::tabs::tests::multiline_paste_waits_unless_bracketed ... FAILED")
     if sys.platform.startswith("linux"):
+        probe("old Wayland IME recipients never expire without done", "test", "crates/sumie-wayland/src/ime.rs",
+              replace_once("        if self.previous_recipients.len() == 4 {\n"
+                           "            self.previous_recipients.pop_front();\n        }\n", ""),
+              "test ime::tests::old_done_keeps_only_the_last_four_recipients ... FAILED")
         probe("Shift+PageUp leaves the history in place", "test", "src/input.rs",
               replace_once("return send_input(pane, routing, id, PaneCommand::ScrollPage { up });",
                            "return Ok(Effect::None);"),

@@ -176,9 +176,7 @@ impl Platform {
     /// carry the `recipient` that was enabled at their serial.
     /// Call outside the interval between `begin_frame` and the buffer commit.
     pub fn set_input_generation(&mut self, generation: u64, recipient: u64) {
-        let connection = Connection::from_backend(self.state.window.display.0.clone());
-        self.state
-            .set_input_generation(generation, recipient, &connection);
+        self.state.set_input_generation(generation, recipient);
     }
 
     /// Stage the latest title for the next committed frame.

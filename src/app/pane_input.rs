@@ -430,10 +430,10 @@ fn apply_pane_effect(
             pane.snapshot_dirty = true;
         }
         Effect::ReadClipboard => {
-            window.read_clipboard(pane.text_recipient.expect("focused text recipient"));
+            window.read_clipboard(*pane.text_recipient.get_or_insert(routing.generation));
         }
         Effect::ReadPrimary => {
-            window.read_primary(pane.text_recipient.expect("focused text recipient"));
+            window.read_primary(*pane.text_recipient.get_or_insert(routing.generation));
         }
         Effect::Preedit(text, cursor) if text != view.preedit || cursor != view.preedit_cursor => {
             view.preedit = text;

@@ -41,6 +41,7 @@ fn wheel_counts_whole_notches_and_keeps_the_remainder() {
 struct TestWindow {
     ready: Ready,
     clipboard: Vec<Option<Vec<u8>>>,
+    paste_request: Option<u64>,
 }
 
 impl FrameWindow for TestWindow {
@@ -92,7 +93,9 @@ impl WindowOps for TestWindow {
     fn set_cursor_rectangle(&mut self, _: LogicalRect) {}
     fn set_pointer_icon(&mut self, _: CursorIcon) {}
     fn set_input_generation(&mut self, _: u64, _: u64) {}
-    fn read_clipboard(&mut self, _: u64) {}
+    fn read_clipboard(&mut self, recipient: u64) {
+        self.paste_request = Some(recipient);
+    }
     fn read_primary(&mut self, _: u64) {}
     fn write_clipboard(&mut self, _: String, _: bool) {}
     fn write_terminal_clipboard(&mut self, bytes: Option<Vec<u8>>) {
@@ -132,6 +135,43 @@ fn wait_ready(fd: BorrowedFd<'_>) {
         .unwrap(),
         1
     );
+}
+
+#[test]
+fn paste_shortcut_restores_a_missing_recipient() {
+    let config = sumie_config::Config::default();
+    let mut window = TestWindow::default();
+    let mut session = session(&mut window, &config);
+    session.active_mut().text_recipient = None;
+    let macos = cfg!(target_os = "macos");
+    let event = Event::Key {
+        physical: PhysicalKey::Code(KeyCode::KeyV),
+        logical: LogicalKey::Character('v'),
+        utf8: None,
+        modifiers: KeyModifiers {
+            super_key: macos,
+            control: !macos,
+            shift: !macos,
+            ..KeyModifiers::default()
+        },
+        action: KeyAction::Press,
+    };
+    session.input(event, &mut window, false, None).unwrap();
+    session
+        .input(
+            Event::ClipboardText {
+                text: "paste".into(),
+                generation: window.paste_request.unwrap(),
+            },
+            &mut window,
+            false,
+            None,
+        )
+        .unwrap();
+    let pane = &mut session.active_mut().pane;
+    pane.command(PaneCommand::Text(b"\n")).unwrap();
+    assert!(pane.pty.flush_input().unwrap());
+    crate::tests::wait_for_line(pane, "paste");
 }
 
 #[cfg(target_os = "linux")]
