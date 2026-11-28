@@ -3,7 +3,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-import lifetime
+import cycles
 
 
 class CycleResources(unittest.TestCase):
@@ -19,22 +19,22 @@ class CycleResources(unittest.TestCase):
             nonlocal now
             now += delay
 
-        with (patch.object(lifetime, "COUNTS", tuple(values)),
-              patch.object(lifetime, "resources", resources),
-              patch.object(lifetime.time, "monotonic", lambda: now),
-              patch.object(lifetime.time, "sleep", sleep)):
-            return lifetime.settled(42, baseline, 0.0)
+        with (patch.object(cycles, "COUNTS", tuple(values)),
+              patch.object(cycles, "resources", resources),
+              patch.object(cycles.time, "monotonic", lambda: now),
+              patch.object(cycles.time, "sleep", sleep)):
+            return cycles.settled(42, baseline, 0.0)
 
     def test_lsof_counts_only_numeric_fds_and_rejects_failed_output(self):
         command = ["lsof", "-n", "-P", "-p", "42", "-Ff"]
         output = "p42\nfcwd\nftxt\nfmem\nf0\nf3\n"
-        with patch.object(lifetime.subprocess, "run", side_effect=[
+        with patch.object(cycles.subprocess, "run", side_effect=[
             subprocess.CompletedProcess(command, 1, output),
             subprocess.CompletedProcess(command, 0, output),
         ]) as run:
-            deadline = lifetime.time.monotonic() + 6
-            self.assertEqual(dict(lifetime.resources(42, {"fds"}, deadline)), {"fds": None})
-            self.assertEqual(dict(lifetime.resources(42, {"fds"}, deadline)), {"fds": {0, 3}})
+            deadline = cycles.time.monotonic() + 6
+            self.assertEqual(dict(cycles.resources(42, {"fds"}, deadline)), {"fds": None})
+            self.assertEqual(dict(cycles.resources(42, {"fds"}, deadline)), {"fds": {0, 3}})
         self.assertEqual(list(run.call_args.args[0]), command)
 
     def test_baseline_waits_for_each_metric_to_agree_not_its_minimum(self):
