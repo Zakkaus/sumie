@@ -137,6 +137,7 @@ fn wait_ready(fd: BorrowedFd<'_>) {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn paste_shortcut_restores_a_missing_recipient() {
     let config = sumie_config::Config::default();
@@ -256,6 +257,7 @@ fn confirmation_key(physical: KeyCode, logical: LogicalKey) -> Event {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn window_close_uses_osc133_before_foreground_group() {
     let config = sumie_config::Config::default();
@@ -368,6 +370,7 @@ fn tab_and_pane_close_wait_for_confirmation() {
     assert_eq!(session.tabs.as_slice()[index].panes.len(), 1);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn shell_exit_retires_busy_pane_without_confirmation() {
     let config = sumie_config::Config::default();
@@ -392,6 +395,7 @@ fn shell_exit_retires_busy_pane_without_confirmation() {
     assert!(session.confirmation.is_none());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn multiline_paste_waits_unless_bracketed() {
     let config = sumie_config::Config::default();
