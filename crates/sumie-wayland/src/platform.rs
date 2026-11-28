@@ -98,9 +98,11 @@ impl HasWindowHandle for WindowOwner {
         let ptr =
             NonNull::new(self.wl_surface().id().as_ptr().cast()).ok_or(HandleError::Unavailable)?;
         let raw = WaylandWindowHandle::new(ptr).into();
+        #[allow(unsafe_code)]
         // SAFETY: WindowOwner keeps the SCTK window and display alive for the borrow and
         // exposes neither proxy. wgpu keeps an Arc<WindowOwner> until its surface drops.
-        Ok(unsafe { WindowHandle::borrow_raw(raw) })
+        let handle = unsafe { WindowHandle::borrow_raw(raw) };
+        Ok(handle)
     }
 }
 
@@ -487,7 +489,10 @@ impl CompositorHandler for State {
         surface: &WlSurface,
         factor: i32,
     ) {
-        if self.scale.set_integer(surface, factor) {
+        if self
+            .scale
+            .set_integer(self.window.wl_surface(), surface, factor)
+        {
             self.emit_resize();
         }
     }

@@ -30,7 +30,11 @@ EDGES.update({
     "sumie-ui": BASE | {"sumie-font", "sumie-render"},
     "sumie": BASE | ADAPTERS | {"sumie-locale", "sumie-ui"},
 })
-UNSAFE_CRATES = {"sumie-vt", "sumie-font", "sumie-render", "sumie-wayland"}
+UNSAFE_CRATES = {"sumie-vt", "sumie-font", "sumie-render"}
+WAYLAND_DIR = Path("crates/sumie-wayland")
+WAYLAND_LIB = WAYLAND_DIR / "src/lib.rs"
+WAYLAND_HANDLE = WAYLAND_DIR / "src/platform.rs"
+RAW_WINDOW_BORROW = "unsafe { WindowHandle : : borrow_raw ( raw ) }".split()
 FORBIDDEN_NAMES = {"util", "common", "helper", "misc"}
 FILE_LIMIT = 600
 GATED_LINTS = {
@@ -137,17 +141,23 @@ def suppressed_lints(meta):
 def check_rust(path, source, safe):
     tokens = list(rust_tokens(source))
     header_end = 0
-    forbid = False
+    required_lint = "deny" if path == WAYLAND_LIB else "forbid"
+    has_unsafe_lint = False
     errors = []
     for start, end, inner, meta in attributes(tokens):
         if inner and start == header_end:
             header_end = end
-            if meta[:1] == ["forbid"] and ["unsafe_code"] in meta_args(meta):
-                forbid = True
+            if meta[:1] == [required_lint] and ["unsafe_code"] in meta_args(meta):
+                has_unsafe_lint = True
         for lint in suppressed_lints(meta):
             errors.append(f"lints: {path}: forbidden suppression of {lint}")
-    if safe and not forbid:
-        errors.append(f"unsafe: {path}: missing crate-level #![forbid(unsafe_code)]")
+    if safe and not has_unsafe_lint:
+        errors.append(f"unsafe: {path}: missing crate-level #![{required_lint}(unsafe_code)]")
+    if path.is_relative_to(WAYLAND_DIR):
+        uses = [i for i, token in enumerate(tokens) if token == "unsafe"]
+        if uses and not (path == WAYLAND_HANDLE and len(uses) == 1
+                         and tokens[uses[0]:uses[0] + len(RAW_WINDOW_BORROW)] == RAW_WINDOW_BORROW):
+            errors.append(f"unsafe: {path}: only the raw window handle borrow may use unsafe")
     names = set(path.with_suffix("").parts) | set(module_names(tokens))
     for name in sorted(names & FORBIDDEN_NAMES):
         errors.append(f"names: {path}: forbidden module name {name}")

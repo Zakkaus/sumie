@@ -131,3 +131,59 @@ fn kitty_frame_deletion_preserves_or_refreshes_the_displayed_revision() {
         assert_eq!(vt.pixels(&viewer), Some(expected.as_slice()));
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn kitty_file_transfers_keep_temporary_files_and_reject_links() {
+    use std::{fs, os::unix::fs::symlink, path::PathBuf};
+
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let dir = PathBuf::from(format!("/dev/shm/sumie-kitty-{}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let scratch = Scratch(dir);
+    let source = scratch.0.join("tty-graphics-protocol");
+    let link = scratch.0.join("symlink");
+    let hard_link = scratch.0.join("hardlink");
+    let pixels = [255, 0, 0];
+    fs::write(&source, pixels).unwrap();
+    symlink(&source, &link).unwrap();
+
+    let mut vt = terminal(512);
+    let mut query = |medium, path: &std::path::Path, reply| {
+        let payload = base64_path(path.as_os_str().as_encoded_bytes());
+        kitty(
+            &mut vt,
+            &format!("a=q,t={medium},i=7,f=24,s=1,v=1;{payload}"),
+            reply,
+        );
+    };
+    query('t', &source, "i=7;OK");
+    assert_eq!(fs::read(&source).unwrap(), pixels);
+    query('f', &link, "i=7;EINVAL: invalid data");
+    fs::hard_link(&source, &hard_link).unwrap();
+    query('f', &hard_link, "i=7;EINVAL: invalid data");
+}
+
+#[cfg(target_os = "linux")]
+fn base64_path(path: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(path.len().div_ceil(3) * 4);
+    for chunk in path.chunks(3) {
+        let bytes = [0, 1, 2].map(|i| u32::from(chunk.get(i).copied().unwrap_or(0)));
+        let word = bytes[0] << 16 | bytes[1] << 8 | bytes[2];
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            out.push(if i <= chunk.len() {
+                char::from(ALPHABET[(word >> shift) as usize & 63])
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}

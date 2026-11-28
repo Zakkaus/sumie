@@ -35,7 +35,7 @@ fn install_transport(source: &Path, kitty: &Path) {
         &kitty.join("graphics_image.zig"),
         "            else => @compileError(\"readFile only supports file and temporary_file\"),\n        }\n",
         "\n    }\n",
-        "\n        assert(self.data.items.len == 0);\n        self.data = try @import(\"sumie_file.zig\").read(io, alloc, path, medium == .temporary_file, t.offset, t.size);",
+        "\n        assert(self.data.items.len == 0);\n        self.data = try @import(\"sumie_file.zig\").read(io, alloc, path, t.offset, t.size);",
     );
 }
 

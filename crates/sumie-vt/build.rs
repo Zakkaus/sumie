@@ -14,7 +14,7 @@ const GHOSTTY_COMMIT: &str = "108cacb17ed8990840cd14abfce43d8ed8503ca1";
 const GHOSTTY_ARCHIVE_SHA256: &str =
     "2c276d3e62cb15fb38f0d7f621f199029d1d4df86538096c6bec2a107cad7159";
 // Bump when changing patches already applied to a cached extraction.
-const GHOSTTY_PATCH_LEVEL: u32 = 5;
+const GHOSTTY_PATCH_LEVEL: u32 = 6;
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");

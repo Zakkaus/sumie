@@ -72,9 +72,15 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("missing unsafe forbid", "structure", CORE,
           replace_once("#![forbid(unsafe_code)]", "#![deny(unsafe_code)]"),
           f"unsafe: {CORE}: missing crate-level #![forbid(unsafe_code)]")
-    for name, path in (("VT", VT), ("Wayland", WAYLAND)):
-        probe(f"{name} unsafe exemption", "structure", path, append(UNSAFE_READ),
-              "exempt", expected=0)
+    probe("VT unsafe exemption", "structure", VT, append(UNSAFE_READ), "exempt", expected=0)
+    for path in (WAYLAND, "crates/sumie-wayland/src/platform.rs"):
+        probe("Wayland unsafe outside the handle borrow", "structure", path, append(UNSAFE_READ),
+              f"unsafe: {path}: only the raw window handle borrow may use unsafe")
+    if sys.platform.startswith("linux"):
+        probe("cursor surface resizes the window", "test", "crates/sumie-wayland/src/scale.rs",
+              replace_once("if window != surface || self.viewport.is_some()",
+                           "let _ = window;\n        if self.viewport.is_some()"),
+              "test scale::tests::cursor_surface_scale_does_not_resize_the_window ... FAILED")
     probe("crate attributes after doc comment with BOM and CRLF", "structure", CORE,
           lambda source: ("\ufeff//! Core crate.\n#![doc(hidden)]\n" + source).replace("\n", "\r\n"),
           "unsafe: scanned", expected=0)
@@ -133,8 +139,7 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           append("#[must_use]\npub fn complexity_probe(flags: u16) -> u8 {\n"
                  "    let mut count = 0;\n" + branches + "    count\n}\n"),
           "cognitive complexity of (16/15)")
-    unsafe_path = WAYLAND if sys.platform.startswith("linux") else VT
-    probe("undocumented unsafe block", "clippy", unsafe_path, append(UNSAFE_READ),
+    probe("undocumented unsafe block", "clippy", VT, append(UNSAFE_READ),
           "unsafe block missing a safety comment")
     probe("unit test failure", "test", CORE,
           append("#[test]\nfn test_probe() -> Result<(), &'static str> {\n"
@@ -212,6 +217,10 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
           replace_once("sumie_set_thumbnail_rows(self.raw, rows)",
                        "sumie_set_thumbnail_rows(self.raw, rows.min(0))"),
           "test tests::kitty_thumbnails_size_and_advance_before_rendering ... FAILED")
+    if sys.platform.startswith("linux"):
+        probe("Kitty file transfer accepts hard links", "test", "crates/sumie-vt/src/image_file.zig",
+              replace_once(" or stat.nlink != 1", ""),
+              "test tests::kitty_budget::kitty_file_transfers_keep_temporary_files_and_reject_links ... FAILED")
     probe("missing title event", "test", "crates/sumie-vt/src/effects.rs",
           replace_once(".chain(self.title.take().map(Event::Title))",
                        ".chain(self.title.take().filter(|_| false).map(Event::Title))"),
