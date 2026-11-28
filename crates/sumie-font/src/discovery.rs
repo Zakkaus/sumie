@@ -301,12 +301,14 @@ fn fontconfig_weight(weight: u16) -> i32 {
 }
 
 const fn is_private_use(ch: char) -> bool {
-    matches!(ch, '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{10fffd}')
+    matches!(ch, '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{ffffd}' | '\u{100000}'..='\u{10fffd}')
 }
 
-#[cfg(target_os = "linux")]
 pub(crate) fn is_nerd_family(family: &str) -> bool {
-    family.contains("Nerd Font") || family.split_whitespace().any(|word| word == "NF")
+    family.contains("Nerd Font")
+        || family.ends_with(" NFM")
+        || family.ends_with(" NFP")
+        || family.split_whitespace().any(|word| word == "NF")
 }
 
 #[cfg(target_os = "macos")]
