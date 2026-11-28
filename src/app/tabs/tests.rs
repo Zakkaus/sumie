@@ -9,7 +9,9 @@ use sumie_render::SurfaceFrame;
 use super::*;
 use crate::{
     frame_window::FrameWindow,
-    platform::{CaretBounds, CursorIcon, ExitWatches, LogicalKey, LogicalRect, Ready},
+    login::Environment,
+    pane::LocalPane,
+    platform::{CaretBounds, CursorIcon, ExitWatches, LogicalKey, LogicalRect, PaneWatches, Ready},
 };
 
 #[test]
