@@ -140,12 +140,19 @@ edge_probe = {{ package = "{dep}", path = "../{dep}" }}
     probe("OSC 8 target does not reach the banner", "test", "src/view/paint.rs",
           replace_once("        let banner = hovered_link.target.or(banner);\n", ""),
           "test view::tests::osc8_target_is_drawn_in_the_banner_row ... FAILED")
+    probe("OSC 8 banner truncates before the host", "test", "src/view/overlays.rs",
+          replace_once("width_needed > columns", "width_needed > columns && false"),
+          "test view::tests::osc8_target_is_drawn_in_the_banner_row ... FAILED")
     probe("OSC title skips text cleaning", "test", "crates/sumie-vt/src/effects.rs",
           replace_once("Some(clean_title(bytes))", "Some(String::from_utf8_lossy(bytes).into_owned())"),
           "test effects::tests::osc2_strips_control_and_format_characters_from_titles ... FAILED")
-    probe("reduced motion still scrolls smoothly", "test", "src/app/scroll.rs",
-          replace_once("        if !smooth() {\n", "        if !smooth() && false {\n"),
-          "test app::scroll::tests::reduced_motion_routes_wheel_to_stepped_scrolling_and_stops_coasting ... FAILED")
+    if sys.platform.startswith("linux"):
+        probe("reduced motion still scrolls smoothly", "test", "src/app/scroll.rs",
+              replace_once("|| reduce_motion() {", "|| (reduce_motion() && false) {"),
+              "test app::scroll::tests::reduced_motion_wheel_scrolls_three_rows_immediately ... FAILED")
+        probe("reduced motion does not stop a running animation", "test", "src/app/scroll.rs",
+              replace_once("if animating && reduce_motion() {", "if animating && reduce_motion() && false {"),
+              "test app::scroll::tests::enabling_reduced_motion_stops_an_in_flight_scroll ... FAILED")
     if sys.platform == "darwin":
         probe("removed timer still reports", "test", "crates/sumie-macos/src/readiness.rs",
               replace_once("        self.ready.retain(|ready| *ready != key);\n"

@@ -145,7 +145,7 @@ impl PanePainter<'_> {
             .filter(|composed| composed.row != 0 || banner.is_none());
         let overlay = composed.map(|c| (c.row, c.column, c.cells));
         if let Some(message) = banner {
-            self.draw_banner(snapshot, message);
+            self.draw_banner(snapshot, message, hovered_link.target.is_some());
             if self.pane.images.is_some() {
                 self.pane
                     .default_backgrounds
