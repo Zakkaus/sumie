@@ -34,6 +34,8 @@
 "confirm.tab" = "Close tab? y · Enter/Esc/n · Programs running"
 "confirm.pane" = "Close pane? y · Enter/Esc/n · Program running"
 "confirm.paste" = "Paste lines? Enter/y · Esc/n · May run commands"
+"import.no-source" = "No Ghostty configuration file found. Pass its path to the import command."
+"import.skipped" = "skipped"
 "kind.text" = "Text"
 "kind.integer" = "Whole number"
 "kind.number" = "Number"

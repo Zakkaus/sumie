@@ -34,6 +34,8 @@
 "confirm.tab" = "關閉分頁？y · Enter/Esc/n · 程式仍在執行"
 "confirm.pane" = "關閉窗格？y · Enter/Esc/n · 程式仍在執行"
 "confirm.paste" = "貼上多行？Enter/y · Esc/n · 可能執行指令"
+"import.no-source" = "找不到 Ghostty 設定檔。請在匯入指令中指定檔案路徑。"
+"import.skipped" = "已略過"
 "kind.text" = "文字"
 "kind.integer" = "整數"
 "kind.number" = "數字"
