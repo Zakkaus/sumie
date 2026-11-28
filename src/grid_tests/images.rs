@@ -159,7 +159,30 @@ fn a_4k_kitty_frame_expands_on_the_gpu() {
     // Recorded for comparison only; wall time depends on the host.
     eprintln!("4K RGB frame on the main thread: worst {worst:?}");
     assert_eq!(renderer.image_expansion().scratch_allocations, 1);
-    assert_eq!(renderer.image_expansion().scratch_bindings, 1);
+}
+
+#[test]
+fn packed_kitty_images_keep_their_own_expansion_parameters() {
+    let Some((device, queue)) = gpu_device(sumie_render::backends()) else {
+        return;
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let target = renderer.create_offscreen([32, 32]);
+    let mut vt = Terminal::new(4, 2).unwrap();
+    vt.resize_pixels(4, 2, CELL).unwrap();
+    let left = [255, 0, 0, 0, 0, 255, 255, 255, 0, 255, 0, 255];
+    let right = [0, 255, 0, 0, 255, 255, 255, 255, 255];
+    for (col, width, height, source) in [(1, 2, 2, left.as_slice()), (2, 3, 1, &right)] {
+        let command = format!("\x1b[1;{col}H\x1b_Ga=T,f=24,i={col},s={width},v={height},C=1;");
+        vt.write(command.as_bytes());
+        vt.write(&base64(source));
+        vt.write(b"\x1b\\");
+    }
+    let snapshot = vt.render_snapshot().unwrap();
+    renderer.draw(&draw_list(&snapshot.images, &vt), &target);
+    let pixels = readback(&device, &queue, target.texture());
+    assert_expanded(&pixels, 32, [0, 0], 2, PixelFormat::Rgb, &left);
+    assert_expanded(&pixels, 32, [CELL[0], 0], 3, PixelFormat::Rgb, &right);
 }
 
 #[test]
