@@ -16,7 +16,7 @@ use objc2_core_foundation::{
     CFString, CFURL, CFURLPathStyle, Type, kCFTypeSetCallBacks,
 };
 use objc2_core_text::{
-    CTFont, CTFontDescriptor, CTFontSymbolicTraits, kCTFontCharacterSetAttribute,
+    CTFont, CTFontCollection, CTFontDescriptor, CTFontSymbolicTraits, kCTFontCharacterSetAttribute,
     kCTFontFamilyNameAttribute, kCTFontURLAttribute,
 };
 use skrifa::{
@@ -24,7 +24,7 @@ use skrifa::{
     raw::{TableProvider as _, tables::head::Flags},
 };
 
-use super::{Font, FontError, FontStyle, Match, Request, Style, is_private_use};
+use super::{Font, FontError, FontStyle, Match, Request, Style, is_nerd_family, is_private_use};
 use crate::Rejection;
 use file::FontFile;
 
@@ -54,7 +54,6 @@ pub(crate) struct Discovery {
     pub system_wide_delay: Duration,
 }
 
-/// Core Text state for one primary font: its cascade and the file and family caches.
 struct Matcher {
     primary: CFRetained<CTFont>,
     /// Whether the family was not found and [`primary::MISSING_FAMILY_SUBSTITUTE`] replaced it.
@@ -63,6 +62,7 @@ struct Matcher {
     files: HashMap<PathBuf, FontFile>,
     families: HashMap<String, Descriptors>,
     cascade: OnceCell<Descriptors>,
+    pua_fonts: OnceCell<Vec<(CFRetained<CTFont>, CFRetained<CFCharacterSet>)>>,
 }
 
 impl Discovery {
@@ -93,6 +93,10 @@ impl Discovery {
             return self.matcher.primary(request);
         };
         let mut rejected = Vec::new();
+        if is_private_use(ch) {
+            let matched = self.matcher.installed(ch, request, &mut rejected);
+            return matched.ok_or_else(|| missing_glyph(ch, rejected, false));
+        }
         if let Some(matched) = self
             .matcher
             .preferred(ch, request, &mut rejected)
@@ -166,7 +170,7 @@ impl Discovery {
                     #[cfg(test)]
                     thread::sleep(delay);
                     let mut rejected = Vec::new();
-                    let answer = matcher.system_wide(ch, request, &mut rejected);
+                    let answer = matcher.installed(ch, request, &mut rejected);
                     if replies
                         .send(((ch, request), answer.ok_or(rejected)))
                         .is_err()
@@ -230,11 +234,8 @@ impl SystemWide {
     }
 }
 
-/// Whether any installed font could draw `ch`. The system-wide step skips noncharacters and
-/// code points that Core Foundation knows to be unassigned, which no font covers, and private
-/// use, whose glyphs come only from the configured font or the cascade. A `char` is never a
-/// surrogate. Core Foundation has no data for planes 4 through 13, so a miss there still runs
-/// the step, and waits at most [`SYSTEM_WIDE_WAIT`].
+/// Whether to run the general Core Text query. Noncharacters, unassigned characters and
+/// private use skip it; Core Foundation has no assignment data for planes 4 through 13.
 fn drawable(ch: char) -> bool {
     let code = u32::from(ch);
     let noncharacter = (0xfdd0..=0xfdef).contains(&code) || code & 0xfffe == 0xfffe;
@@ -254,6 +255,7 @@ impl Matcher {
             files: HashMap::new(),
             families: HashMap::new(),
             cascade: OnceCell::new(),
+            pua_fonts: OnceCell::new(),
         }
     }
 
@@ -290,8 +292,7 @@ impl Matcher {
         rejected: &mut Vec<Rejection>,
     ) -> Option<Match> {
         self.cascade_list()?.iter().find_map(|descriptor| {
-            // SAFETY: the descriptor is retained and null selects the identity transform.
-            let font = unsafe { CTFont::with_font_descriptor(&descriptor, 0.0, ptr::null()) };
+            let font = descriptor_font(&descriptor);
             // SAFETY: font is retained; character_set returns an owned CFCharacterSet.
             unsafe { font.character_set() }
                 .is_long_character_member(u32::from(ch))
@@ -314,42 +315,17 @@ impl Matcher {
             .clone()
     }
 
-    /// Asks Core Text for every installed face that claims the character, for fonts that the
-    /// cascade omits or cannot load. Families earlier in the cascade, which follows the user's
-    /// language order, come first; families absent from it come last. Ties prefer the requested
-    /// italic and bold traits, then the PostScript name.
-    fn system_wide(
+    fn installed(
         &mut self,
         ch: char,
         request: Request,
         rejected: &mut Vec<Rejection>,
     ) -> Option<Match> {
-        let range = CFRange {
-            location: u32::from(ch).try_into().ok()?,
-            length: 1,
-        };
-        // SAFETY: the default allocator is valid and the range is one Unicode scalar value.
-        let characters = unsafe { CFCharacterSet::with_characters_in_range(None, range) }?;
-        // SAFETY: the set holds the exported, immutable character-set key, and the CFType
-        // callbacks retain it for the set's lifetime.
-        let mandatory = unsafe {
-            let mut keys =
-                [ptr::from_ref::<CFString>(kCTFontCharacterSetAttribute).cast::<c_void>()];
-            CFSet::new(None, keys.as_mut_ptr(), 1, &raw const kCFTypeSetCallBacks)
-        }?;
-        // SAFETY: the dictionary maps the documented character-set key to a CFCharacterSet,
-        // and the mandatory set names that key.
-        let descriptors = unsafe {
-            matching_descriptors(
-                &CFDictionary::<CFString, CFCharacterSet>::from_slices(
-                    &[kCTFontCharacterSetAttribute],
-                    &[&characters],
-                ),
-                Some(&mandatory),
-            )
-        }?;
-        let cascade: Vec<_> = self
-            .cascade_list()
+        let private = is_private_use(ch);
+        let descriptors = (!private).then(|| character_descriptors(ch)).flatten();
+        let pua_fonts = private.then(|| self.pua_fonts.get_or_init(installed_character_sets));
+        let cascade = descriptors.as_ref().and_then(|_| self.cascade_list());
+        let cascade: Vec<_> = cascade
             .iter()
             .flat_map(|list| list.iter())
             .map(|descriptor| {
@@ -363,25 +339,31 @@ impl Matcher {
         let bold = request.weight.unwrap_or(400) >= 600;
         let mut fonts: Vec<_> = descriptors
             .iter()
-            .map(|descriptor| {
-                // SAFETY: the descriptor is retained and null selects the identity transform.
-                // The font is retained for the family, trait and name queries.
-                let (font, family, traits, name) = unsafe {
-                    let font = CTFont::with_font_descriptor(&descriptor, 0.0, ptr::null());
+            .flat_map(|list| list.iter())
+            .map(|descriptor| descriptor_font(&descriptor))
+            .chain(
+                pua_fonts
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, set)| set.is_long_character_member(ch.into()))
+                    .map(|(font, _)| font.clone()),
+            )
+            .map(|font| {
+                // SAFETY: the font is retained throughout the name and trait queries.
+                let key = unsafe {
                     let family = font.family_name().to_string();
                     let traits = font.symbolic_traits();
-                    let name = font.post_script_name().to_string();
-                    (font, family, traits, name)
+                    (
+                        private && !is_nerd_family(&family),
+                        cascade
+                            .iter()
+                            .position(|cascaded| cascaded.as_deref() == Some(family.as_str()))
+                            .unwrap_or(usize::MAX),
+                        traits.contains(CTFontSymbolicTraits::TraitItalic) != italic,
+                        traits.contains(CTFontSymbolicTraits::TraitBold) != bold,
+                        font.post_script_name().to_string(),
+                    )
                 };
-                let key = (
-                    cascade
-                        .iter()
-                        .position(|cascaded| cascaded.as_deref() == Some(family.as_str()))
-                        .unwrap_or(usize::MAX),
-                    traits.contains(CTFontSymbolicTraits::TraitItalic) != italic,
-                    traits.contains(CTFontSymbolicTraits::TraitBold) != bold,
-                    name,
-                );
                 (key, font)
             })
             .collect();
@@ -426,6 +408,54 @@ fn missing_glyph(ch: char, rejected: Vec<Rejection>, pending: bool) -> FontError
 
 type Descriptors = Option<CFRetained<CFArray<CTFontDescriptor>>>;
 
+fn descriptor_font(descriptor: &CTFontDescriptor) -> CFRetained<CTFont> {
+    // SAFETY: the descriptor is retained and null selects the identity transform.
+    unsafe { CTFont::with_font_descriptor(descriptor, 0.0, ptr::null()) }
+}
+
+fn installed_character_sets() -> Vec<(CFRetained<CTFont>, CFRetained<CFCharacterSet>)> {
+    // SAFETY: no options are passed. The collection returns an array of CTFontDescriptors;
+    // each font is retained while Core Text copies its character set.
+    unsafe {
+        CTFontCollection::from_available_fonts(None)
+            .matching_font_descriptors()
+            .map(|list| CFRetained::cast_unchecked::<CFArray<CTFontDescriptor>>(list))
+            .iter()
+            .flat_map(|list| list.iter())
+            .map(|descriptor| {
+                let font = descriptor_font(&descriptor);
+                let characters = font.character_set();
+                (font, characters)
+            })
+            .collect()
+    }
+}
+
+fn character_descriptors(ch: char) -> Descriptors {
+    let range = CFRange {
+        location: u32::from(ch).try_into().ok()?,
+        length: 1,
+    };
+    // SAFETY: the default allocator is valid and the range is one Unicode scalar value.
+    let characters = unsafe { CFCharacterSet::with_characters_in_range(None, range) }?;
+    // SAFETY: the set holds the exported, immutable character-set key, and the CFType
+    // callbacks retain it for the set's lifetime.
+    let mandatory = unsafe {
+        let mut keys = [ptr::from_ref::<CFString>(kCTFontCharacterSetAttribute).cast::<c_void>()];
+        CFSet::new(None, keys.as_mut_ptr(), 1, &raw const kCFTypeSetCallBacks)
+    }?;
+    // SAFETY: the mandatory key is the character-set attribute and its value is a CFCharacterSet.
+    unsafe {
+        matching_descriptors(
+            &CFDictionary::<CFString, CFCharacterSet>::from_slices(
+                &[kCTFontCharacterSetAttribute],
+                &[&characters],
+            ),
+            Some(&mandatory),
+        )
+    }
+}
+
 fn matching_face(
     font: &CTFont,
     request: Request,
@@ -449,8 +479,7 @@ fn matching_face(
         .or_insert_with_key(|family| family_descriptors(family))
     {
         for descriptor in descriptors.iter() {
-            // SAFETY: the descriptor is retained and null selects the identity transform.
-            let font = unsafe { CTFont::with_font_descriptor(&descriptor, 0.0, ptr::null()) };
+            let font = descriptor_font(&descriptor);
             if let Ok(matched) = file_match(&font, files, request)
                 && matched.family == original.family
                 && let Some(rank) = rank(&matched, ch)
