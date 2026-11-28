@@ -88,7 +88,11 @@ blink = true
 
 `cursor.style` 可設為 `block`、`bar` 或 `underline`。終端機內的程式可用 DECSCUSR 覆寫形狀與閃爍設定，直到重設為止。視窗失焦時，可見的游標改為不閃爍的空心方框。
 
-在終端機執行 `sumie config` 可編輯設定。按 Tab 或 1–4 切換分類，按 ↑／↓ 選取項目，按 ←／→ 或 Enter 修改，按 `/` 搜尋。按 `r` 移除目前生效的設定值，改用優先順序較低的引入檔設定或內建預設值。變更會立即儲存。按 Esc 或 `q` 離開。
+在終端機執行 `sumie config` 可編輯設定。在 sumie 按 Ctrl+,（Linux）或 Cmd+,（macOS）可在新分頁開啟設定。按 Tab 或 1–5 切換分類，按 ↑／↓ 選取項目。點一下選取，再點一下修改；也可用滾輪捲動清單。
+
+在快捷鍵項目按 Enter 即可錄製，與其他動作衝突時會顯示該動作的名稱，不會覆寫。將 `settings-vim-keys` 設為 `false` 可停用 `h`、`j`、`k`、`l`。
+
+按 ←／→ 或 Enter 修改其他項目，按 `/` 搜尋。按 `r` 移除目前生效的設定值，改用優先順序較低的引入檔設定或內建預設值。變更會立即儲存。按 Esc 或 `q` 離開。
 
 `size` 以 96 DPI 下的點數為單位。執行 `sumie config show --defaults` 可查看所有選項與預設值。
 要啟用編輯器自動補全，請在設定目錄執行 `sumie config schema > sumie.schema.json`。

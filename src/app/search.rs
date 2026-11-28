@@ -500,8 +500,17 @@ mod tests {
         let mut search = Some(Bar::open());
         let mut routing = input::Routing::default();
         for (event, expected) in editing_steps() {
-            let mut route =
-                |event| input::route((0, 0), &mut pane, &mut routing, true, event, false).unwrap();
+            let mut route = |event| {
+                input::route(
+                    (0, 0),
+                    &mut pane,
+                    &mut routing,
+                    true,
+                    event,
+                    input::Scope::Single,
+                )
+                .unwrap()
+            };
             let effect = match route(event) {
                 input::Effect::ReadClipboard => route(Event::ClipboardText {
                     text: "a\rb\nc\r\nd\u{2028}e\u{2029}f\u{85}g\u{b}h\u{c}\u{1}i".into(),

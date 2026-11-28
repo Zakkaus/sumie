@@ -26,6 +26,11 @@ pub enum Problem {
         key: String,
         value: String,
     },
+    /// The shortcut cannot be parsed as a bindable chord.
+    Binding {
+        key: String,
+        value: String,
+    },
     /// `key` is not a settings key.
     UnknownKey {
         key: String,
@@ -58,7 +63,9 @@ impl Problem {
         match self {
             Self::Range { key, .. } => Some(key),
             Self::FontSize => Some("font.size"),
-            Self::Color { key, .. } | Self::UnknownKey { key } => Some(key),
+            Self::Color { key, .. } | Self::Binding { key, .. } | Self::UnknownKey { key } => {
+                Some(key)
+            }
             _ => None,
         }
     }
@@ -83,6 +90,7 @@ impl fmt::Display for Problem {
                 formatter,
                 "invalid value: string {value:?}, expected a color in #rrggbb notation"
             ),
+            Self::Binding { value, .. } => write!(formatter, "invalid shortcut chord {value:?}"),
             Self::UnknownKey { key } => unknown_key(formatter, key),
             Self::IncludeCycle { path } => {
                 write!(formatter, "include cycle through {}", path.display())
@@ -161,6 +169,14 @@ fn check(path: &str, value: &Spanned<DeValue<'_>>, problems: &mut Vec<(usize, Pr
             return;
         }
         _ if path.starts_with("colors.") => return check_color(path, value, problems),
+        _ if path.starts_with("keybinds.") => value.get_ref().as_str().and_then(|text| {
+            sumie_core::Chord::parse(text)
+                .is_none()
+                .then(|| Problem::Binding {
+                    key: path.to_owned(),
+                    value: text.to_owned(),
+                })
+        }),
         _ => None,
     };
     problems.extend(problem.map(|problem| (value.span().start, problem)));

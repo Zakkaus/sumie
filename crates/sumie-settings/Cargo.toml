@@ -9,6 +9,7 @@ license.workspace = true
 rustix.workspace = true
 signal-hook = { version = "0.4.6", default-features = false, features = ["iterator"] }
 sumie-config = { path = "../sumie-config" }
+sumie-core = { path = "../sumie-core" }
 sumie-locale = { path = "../sumie-locale" }
 unicode-segmentation = "1.13.3"
 unicode-width = { version = "0.2.3", default-features = false }

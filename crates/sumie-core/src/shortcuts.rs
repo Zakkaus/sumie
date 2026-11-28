@@ -9,16 +9,24 @@ use crate::{
     splits::{Axis, Direction},
 };
 
+mod bindings;
+mod chord;
+
+pub use bindings::{BINDINGS, Binding, binding_conflict};
+pub use chord::Chord;
+
 pub struct Shortcuts {
     platform: Platform,
     consumed: Vec<PhysicalKey>,
+    bindings: Vec<(Chord, Shortcut)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shortcut {
     Copy,
     Paste,
     Search,
+    Settings,
     Tab(TabAction),
     Pane(PaneAction),
     Zoom(FontZoom),
@@ -50,6 +58,7 @@ impl Shortcuts {
         Self {
             platform,
             consumed: Vec::new(),
+            bindings: Vec::new(),
         }
     }
 
@@ -101,15 +110,7 @@ impl Shortcuts {
                 .command_repeat(modifiers, action)
                 .then_some(Shortcut::Consume));
         }
-        let shortcut = match self.platform {
-            Platform::Linux if modifiers.super_key => return Ok(None),
-            Platform::Linux => linux_shortcut(physical, symbol, modifiers, has_splits),
-            Platform::MacOS if modifiers.super_key || command_key(physical) => Some(
-                command_shortcut(physical, symbol, modifiers, has_splits)
-                    .unwrap_or(Shortcut::Consume),
-            ),
-            Platform::MacOS => macos_shortcut(physical, modifiers, has_splits),
-        };
+        let shortcut = self.configured_shortcut(physical, symbol, modifiers, has_splits);
         let shortcut = match shortcut {
             Some(Shortcut::ScrollPage { up }) if primary_screen()? => Shortcut::ScrollPage { up },
             Some(Shortcut::ScrollPage { .. }) | None => return Ok(None),
@@ -117,6 +118,23 @@ impl Shortcuts {
         };
         self.consumed.push(physical);
         Ok(Some(shortcut))
+    }
+}
+
+fn default_shortcut(
+    platform: Platform,
+    physical: PhysicalKey,
+    symbol: Option<char>,
+    modifiers: KeyModifiers,
+    has_splits: bool,
+) -> Option<Shortcut> {
+    match platform {
+        Platform::Linux if modifiers.super_key => None,
+        Platform::Linux => linux_shortcut(physical, symbol, modifiers, has_splits),
+        Platform::MacOS if modifiers.super_key || command_key(physical) => Some(
+            command_shortcut(physical, symbol, modifiers, has_splits).unwrap_or(Shortcut::Consume),
+        ),
+        Platform::MacOS => macos_shortcut(physical, modifiers, has_splits),
     }
 }
 
@@ -184,6 +202,7 @@ fn command_shortcut(
         (digit @ '1'..='8', false) => {
             Shortcut::Tab(TabAction::Select(digit.to_digit(10)? as usize - 1))
         }
+        (',', false) => Shortcut::Settings,
         (letter, false) => letter_shortcut(letter)?,
         _ => return None,
     };
@@ -197,6 +216,7 @@ const fn command_position(physical: PhysicalKey) -> Option<char> {
         return None;
     };
     Some(match code {
+        K::Comma => ',',
         K::KeyC => 'c',
         K::KeyE => 'e',
         K::KeyF => 'f',
@@ -249,6 +269,9 @@ fn control_shortcut(physical: PhysicalKey, symbol: Option<char>, shift: bool) ->
     }
     if let Some(action) = tab_cycle_shortcut(physical, shift) {
         return Some(Shortcut::Tab(action));
+    }
+    if !shift && (physical == Code(K::Comma) || symbol == Some(',')) {
+        return Some(Shortcut::Settings);
     }
     if !shift {
         return None;
@@ -411,6 +434,7 @@ mod tests {
             Some(Shortcut::Copy) => "copy".into(),
             Some(Shortcut::Paste) => "paste".into(),
             Some(Shortcut::Search) => "search".into(),
+            Some(Shortcut::Settings) => "settings".into(),
             Some(Shortcut::Tab(action)) => format!("tab {action:?}"),
             Some(Shortcut::Pane(action)) => format!("pane {action:?}"),
             Some(Shortcut::Zoom(zoom)) => format!("zoom {zoom:?}"),

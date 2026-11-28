@@ -12,12 +12,14 @@ use signal_hook::{
 
 use crate::{
     input::{Decoder, Key},
-    model::Model,
+    model::{Mode, Model},
     screen::{Layout, Screen, frame},
 };
 
-const ENTER: &[u8] = b"\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[2J";
-const LEAVE: &[u8] = b"\x1b[?2004l\x1b[?1049l\x1b[?25h";
+const ENTER: &[u8] = b"\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[?1000h\x1b[?1006h\x1b[>0u\x1b[2J";
+const LEAVE: &[u8] = b"\x1b[<u\x1b[?1006l\x1b[?1000l\x1b[?2004l\x1b[?1049l\x1b[?25h";
+const RECORD: &[u8] = b"\x1b[=3u";
+const BROWSE: &[u8] = b"\x1b[=0u";
 // A lone Esc must be distinguishable from an arrow sequence split by SSH jitter.
 const ESC_TIMEOUT: Timespec = Timespec {
     tv_sec: 0,
@@ -127,6 +129,11 @@ fn event_loop(model: &mut Model, signals: &mut Signals) -> io::Result<u8> {
     loop {
         let (width, height) = size;
         if dirty {
+            let recording = matches!(model.mode, Mode::Record);
+            if recording != decoder.recording {
+                write(if recording { RECORD } else { BROWSE })?;
+                decoder.recording = recording;
+            }
             screen.render(model, width, height, &Layout::new(model, width, height));
             frame(&mut output, &screen);
             write(output.as_bytes())?;
@@ -178,8 +185,8 @@ fn event_loop(model: &mut Model, signals: &mut Signals) -> io::Result<u8> {
                 if key == Key::Interrupt {
                     return Ok(signal_status(SIGINT));
                 }
-                let page = Layout::new(model, size.0, size.1).page();
-                if !model.key(key, page) {
+                let layout = Layout::new(model, size.0, size.1);
+                if !layout.mouse(model, size.0, key) && !model.key(key, layout.page()) {
                     return Ok(0);
                 }
                 dirty = true;

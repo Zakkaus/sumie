@@ -4,7 +4,7 @@ use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::UnicodeWidthStr as _;
 
 use crate::{
-    input::Line,
+    input::{Key, Line},
     model::{Mode, Model},
 };
 
@@ -60,6 +60,38 @@ impl Layout {
     pub(crate) fn page(&self) -> usize {
         self.list.len().max(1)
     }
+
+    pub(crate) fn mouse(&self, model: &mut Model, width: usize, key: Key) -> bool {
+        let list_width = if self.side_by_side {
+            width / 2 - 2
+        } else {
+            width
+        };
+        match key {
+            Key::Click { column, row: 0 } if width != 0 => {
+                let (first, visible, tab_width) = tab_columns(model, width);
+                let offset = column / tab_width;
+                if offset < visible {
+                    model.click_tab(first + offset);
+                }
+            }
+            Key::Click { column, row } => {
+                if self.list.contains(&row) && column < list_width {
+                    let selected = model.first_row(self.page()) + row - self.list.start;
+                    if selected < model.visible().len() {
+                        model.click_option(selected);
+                    }
+                }
+            }
+            Key::Wheel { column, row, down } => {
+                if self.list.contains(&row) && column < list_width {
+                    model.wheel(down, self.page());
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
 }
 
 /// Human-readable rows in terminal cells. Output escapes are added only by the terminal adapter.
@@ -86,6 +118,7 @@ impl Screen {
         let (keys, prompt) = match &model.mode {
             Mode::Browse => ("ui.keys", ""),
             Mode::Search { .. } => ("ui.search-keys", model.locale.text("ui.search")),
+            Mode::Record => ("ui.record-keys", ""),
             Mode::Edit(_) => (
                 "ui.edit-keys",
                 model
@@ -103,11 +136,7 @@ impl Screen {
     }
 
     fn tabs(&mut self, model: &Model, width: usize) {
-        // Keep the active tab visible at every width. The digit stays before the label.
-        let count = model.tabs.len();
-        let visible = count.min((width / 6).max(1));
-        let first = model.tab.saturating_add(1).saturating_sub(visible);
-        let tab_width = width / visible;
+        let (first, visible, tab_width) = tab_columns(model, width);
         let row = &mut self.rows[0];
         for (index, tab) in model.tabs.iter().enumerate().skip(first).take(visible) {
             let label = model.locale.text(&tab.label);
@@ -131,7 +160,7 @@ impl Screen {
             width
         };
         let page = layout.page();
-        let first = model.selected / page * page;
+        let first = model.first_row(page);
         let visible = model.visible();
         if visible.is_empty() {
             if let Some(row) = layout.list.clone().next() {
@@ -190,6 +219,13 @@ impl Screen {
             slot(row, text, width - start, false);
         }
     }
+}
+
+fn tab_columns(model: &Model, width: usize) -> (usize, usize, usize) {
+    // Keep the active tab visible at every width. The digit stays before the label.
+    let visible = model.tabs.len().min((width / 6).max(1));
+    let first = model.tab.saturating_add(1).saturating_sub(visible);
+    (first, visible, width / visible)
 }
 
 fn prompt_row(row: &mut String, label: &str, line: &Line, width: usize) -> usize {

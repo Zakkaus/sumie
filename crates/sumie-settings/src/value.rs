@@ -1,7 +1,14 @@
 use std::borrow::Cow;
 
 use sumie_config::{Kind, SettingInfo, Value, format_list, parse_list};
+use sumie_core::{Chord, Platform};
 use sumie_locale::Locale;
+
+pub(crate) const PLATFORM: Platform = if cfg!(target_os = "macos") {
+    Platform::MacOS
+} else {
+    Platform::Linux
+};
 
 pub(crate) struct OptionInfo {
     pub(crate) info: SettingInfo,
@@ -22,7 +29,11 @@ impl OptionInfo {
             Vec::new()
         };
         let label = format!("setting.{}.label", info.path);
-        let help = format!("setting.{}.help", info.path);
+        let help = if matches!(info.kind, Kind::Binding(_)) {
+            "setting.keybinds.help".into()
+        } else {
+            format!("setting.{}.help", info.path)
+        };
         let default = info
             .default
             .as_ref()
@@ -59,6 +70,10 @@ impl OptionInfo {
                 locale.text(if *value { "ui.on" } else { "ui.off" }).into()
             }
             (Kind::Text | Kind::Color, Some(Value::String(text))) => text.as_str().into(),
+            (Kind::Binding(_), Some(Value::String(text))) => Chord::parse(text).map_or_else(
+                || locale.text("ui.invalid-value").into(),
+                |chord| chord.display(PLATFORM).into(),
+            ),
             (Kind::Integer { .. } | Kind::Number { .. }, Some(Value::Integer(value))) => {
                 value.to_string().into()
             }
@@ -88,6 +103,7 @@ impl OptionInfo {
             Kind::Color => locale.text("kind.color").into(),
             Kind::Palette => locale.text("kind.palette").into(),
             Kind::Paths => locale.text("kind.paths").into(),
+            Kind::Binding(_) => locale.text("kind.binding").into(),
             Kind::Integer { min, max } => bounds(locale.text("kind.integer"), *min, *max, false),
             Kind::Number {
                 min,
@@ -99,7 +115,7 @@ impl OptionInfo {
 
     pub(crate) fn edit_text(&self, value: Option<&Value>) -> Option<String> {
         match self.info.kind {
-            Kind::Bool | Kind::Choice(_) => None,
+            Kind::Bool | Kind::Choice(_) | Kind::Binding(_) => None,
             Kind::Paths | Kind::Palette => Some(value.map_or_else(|| "[]".into(), format_list)),
             _ => Some(match value {
                 Some(Value::Integer(value)) => value.to_string(),
@@ -130,7 +146,7 @@ impl OptionInfo {
                 .map(Value::Float),
             Kind::Text | Kind::Color => Some(Value::String(input.to_owned())),
             Kind::Paths | Kind::Palette => parse_list(input),
-            Kind::Bool | Kind::Choice(_) => None,
+            Kind::Bool | Kind::Choice(_) | Kind::Binding(_) => None,
         }
     }
 

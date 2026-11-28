@@ -96,11 +96,17 @@ Set `cursor.style` to `block`, `bar`, or `underline`. Terminal applications can
 override the shape and blink setting with DECSCUSR until they reset it. An
 unfocused window shows a steady outline for a visible cursor.
 
-Run `sumie config` in an existing terminal to edit settings. Use Tab or 1–4 to
-switch categories, ↑/↓ to select, ←/→ or Enter to edit, `/` to search, and `r`
-to remove the selected override and reveal the value from a lower-priority
-include or the built-in default. Changes are saved immediately. Press Esc or `q`
-to quit.
+Run `sumie config` in an existing terminal, or press Ctrl+, on Linux or Cmd+,
+on macOS to open settings in a new sumie tab. Use Tab or 1–5 to switch
+categories and ↑/↓ to select an option. Click a row to select it, click it
+again to edit, or use the wheel to scroll. Press Enter on a shortcut to
+record a key combination. The editor names conflicting actions without
+replacing their shortcuts. Set `settings-vim-keys = false` to disable the
+`h`, `j`, `k`, and `l` controls.
+
+Use ←/→ or Enter to edit other options, `/` to search, and `r` to remove
+the selected override and reveal the value from a lower-priority include or
+the built-in default. sumie saves each change immediately. Press Esc or `q` to quit.
 
 Run `sumie config show --defaults` for all options. To enable editor completion,
 run `sumie config schema > sumie.schema.json` from the config directory.

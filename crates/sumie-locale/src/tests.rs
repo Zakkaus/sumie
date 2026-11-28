@@ -44,10 +44,12 @@ fn english_settings_text_matches_schema() {
             Locale::En.text(&format!("setting.{}.label", info.path)),
             info.label
         );
-        assert_eq!(
-            Locale::En.text(&format!("setting.{}.help", info.path)),
-            info.description
-        );
+        let help = if matches!(info.kind, Kind::Binding(_)) {
+            "setting.keybinds.help".to_owned()
+        } else {
+            format!("setting.{}.help", info.path)
+        };
+        assert_eq!(Locale::En.text(&help), info.description);
         if let Kind::Choice(choices) = info.kind {
             for choice in choices {
                 assert_eq!(

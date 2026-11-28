@@ -146,7 +146,25 @@ fn restores_and_reports_signal_status() {
         assert_ne!(tcgetattr(&pty.slave).unwrap(), original);
         kill_process(Pid::from_child(&child.0), signal).unwrap();
         read_until(&pty.master, &mut output, LEAVE);
+        for mode in [b"\x1b[?1006l", b"\x1b[?1000l"] {
+            assert!(output.windows(mode.len()).any(|report| report == mode));
+        }
         assert_eq!(child.0.wait().unwrap().code(), Some(expected));
         assert_eq!(tcgetattr(&pty.slave).unwrap(), original);
     }
+}
+
+#[test]
+fn restores_keyboard_protocol_after_cancelling_recording() {
+    let pty = pty();
+    let mut child = spawn("signal", &pty.slave);
+    let mut output = Vec::new();
+    read_until(&pty.master, &mut output, ENTER);
+    rustix::io::write(&pty.master, b"5\r").unwrap();
+    read_until(&pty.master, &mut output, b"\x1b[=3u");
+    rustix::io::write(&pty.master, b"\x1b[27u").unwrap();
+    read_until(&pty.master, &mut output, b"\x1b[=0u");
+    rustix::io::write(&pty.master, b"q").unwrap();
+    read_until(&pty.master, &mut output, b"\x1b[<u");
+    assert!(child.0.wait().unwrap().success());
 }

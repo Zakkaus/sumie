@@ -2,7 +2,7 @@ use sumie_core::{
     KeyAction, KeyCode as K, Pane, PaneCommand, PaneEffect, PhysicalKey, Platform, Shortcuts,
 };
 
-use super::{Routing, release, route};
+use super::{Routing, Scope, release, route};
 use crate::{
     Error, Result,
     platform::{Event, LogicalKey, Modifiers},
@@ -89,7 +89,7 @@ fn losing_the_keyboard_releases_reported_keys_once_in_their_own_pane() {
         &mut routing,
         false,
         key(K::KeyA, 'a', Press),
-        false,
+        Scope::Single,
     )
     .unwrap();
     // Pane focus moves; the press keeps its owner.
@@ -101,7 +101,7 @@ fn losing_the_keyboard_releases_reported_keys_once_in_their_own_pane() {
         &mut routing,
         false,
         b(Press),
-        false,
+        Scope::Single,
     )
     .unwrap();
 
@@ -126,7 +126,7 @@ fn losing_the_keyboard_releases_reported_keys_once_in_their_own_pane() {
             &mut routing,
             false,
             event,
-            false,
+            Scope::Single,
         )
         .unwrap();
     }
@@ -138,7 +138,7 @@ fn losing_the_keyboard_releases_reported_keys_once_in_their_own_pane() {
         &mut routing,
         false,
         b(Press),
-        false,
+        Scope::Single,
     )
     .unwrap();
     assert_eq!(legacy.keys, [(K::KeyB, "press"), (K::KeyB, "press")]);
@@ -179,7 +179,8 @@ fn shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one() {
                 modifiers,
                 action,
             };
-            let effect = route((1, 0), &mut pane, &mut routing, false, event, false).unwrap();
+            let effect =
+                route((1, 0), &mut pane, &mut routing, false, event, Scope::Single).unwrap();
             let scrolled = page.is_some() && matches!(action, Press);
             assert_eq!(
                 effect == super::Effect::ViewportChanged,
@@ -213,7 +214,7 @@ fn shift_page_keys_scroll_the_primary_screen_and_reach_the_alternate_one() {
         &mut Routing::default(),
         false,
         event,
-        false,
+        Scope::Single,
     );
     assert!(matches!(effect.unwrap(), super::Effect::Tab(_)));
 }
@@ -266,7 +267,8 @@ fn a_search_key_held_into_command_repeats_only_without_it_on_macos() {
         .into_iter()
         .enumerate()
         {
-            let effect = route((1, 0), &mut pane, &mut routing, true, event, false).unwrap();
+            let effect =
+                route((1, 0), &mut pane, &mut routing, true, event, Scope::Single).unwrap();
             assert_eq!(effect, expected, "{platform:?} step {step}");
         }
         assert!(
@@ -284,7 +286,7 @@ fn only_shift_page_keys_ask_which_screen_is_active() {
     };
     let mut routing = Routing::default();
     let event = key(K::KeyA, 'a', KeyAction::Press);
-    route((1, 0), &mut pane, &mut routing, false, event, false).unwrap();
+    route((1, 0), &mut pane, &mut routing, false, event, Scope::Single).unwrap();
     assert_eq!(pane.keys, [(K::KeyA, "press")]);
     let event = Event::Key {
         physical: PhysicalKey::Code(K::PageUp),
@@ -296,7 +298,7 @@ fn only_shift_page_keys_ask_which_screen_is_active() {
         },
         action: KeyAction::Press,
     };
-    assert!(route((1, 0), &mut pane, &mut routing, false, event, false).is_err());
+    assert!(route((1, 0), &mut pane, &mut routing, false, event, Scope::Single).is_err());
 }
 
 #[test]
@@ -306,4 +308,101 @@ fn a_focus_report_is_one_pane_command() {
         super::report_focus(&mut pane, focused).unwrap();
     }
     assert_eq!(pane.focus, [false, true]);
+}
+
+#[test]
+fn settings_chord_opens_a_tab_unless_it_is_being_recorded() {
+    for platform in [Platform::Linux, Platform::MacOS] {
+        let mut pane = Recorder::default();
+        let mut routing = Routing {
+            shortcuts: Shortcuts::new(platform),
+            ..Routing::default()
+        };
+        let event = |action| Event::Key {
+            physical: PhysicalKey::Code(K::Comma),
+            logical: LogicalKey::Character(','),
+            utf8: None,
+            modifiers: Modifiers {
+                control: platform == Platform::Linux,
+                super_key: platform == Platform::MacOS,
+                ..Modifiers::default()
+            },
+            action,
+        };
+        assert_eq!(
+            route(
+                (1, 0),
+                &mut pane,
+                &mut routing,
+                false,
+                event(KeyAction::Press),
+                Scope::Single
+            )
+            .unwrap(),
+            super::Effect::Settings
+        );
+        route(
+            (1, 0),
+            &mut pane,
+            &mut routing,
+            false,
+            event(KeyAction::Release),
+            Scope::Recording,
+        )
+        .unwrap();
+        assert_eq!(pane.keys, [] as [(K, &str); 0]);
+        assert_eq!(
+            route(
+                (1, 0),
+                &mut pane,
+                &mut routing,
+                false,
+                event(KeyAction::Press),
+                Scope::Recording
+            )
+            .unwrap(),
+            super::Effect::None
+        );
+        assert_eq!(pane.keys, [(K::Comma, "press")]);
+    }
+}
+
+#[test]
+fn reloaded_binding_replaces_the_default_without_losing_a_held_release() {
+    let config = sumie_config::Config::from_json(br#"{"keybinds":{"copy":"Ctrl+Alt+X"}}"#).unwrap();
+    let mut pane = Recorder::default();
+    let mut routing = Routing {
+        shortcuts: Shortcuts::new(Platform::Linux),
+        ..Routing::default()
+    };
+    let press = |code, ch, shift, action| Event::Key {
+        physical: PhysicalKey::Code(code),
+        logical: LogicalKey::Character(ch),
+        utf8: None,
+        modifiers: Modifiers {
+            control: true,
+            shift,
+            alt: !shift,
+            ..Modifiers::default()
+        },
+        action,
+    };
+    let mut send = |routing: &mut Routing, event| {
+        route((1, 0), &mut pane, routing, false, event, Scope::Single).unwrap()
+    };
+    assert_eq!(
+        send(&mut routing, press(K::KeyC, 'C', true, KeyAction::Press)),
+        super::Effect::Copy
+    );
+    routing.set_bindings(&config.keybinds);
+    send(&mut routing, press(K::KeyC, 'C', true, KeyAction::Release));
+    assert_eq!(
+        send(&mut routing, press(K::KeyX, 'x', false, KeyAction::Press)),
+        super::Effect::Copy
+    );
+    assert_eq!(
+        send(&mut routing, press(K::KeyC, 'C', true, KeyAction::Press)),
+        super::Effect::None
+    );
+    assert_eq!(pane.keys, [(K::KeyC, "press")]);
 }

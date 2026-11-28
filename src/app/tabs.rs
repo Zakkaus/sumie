@@ -15,7 +15,7 @@ use sumie_core::{Pane, PaneAction, PaneCommand, Selection, TabAction, splits::Re
 use sumie_ui::TabHit;
 
 use super::notices::{Alerts, Serviced};
-use super::{LocalPane, PaneState, PaneTab, Result, Session, View, directory};
+use super::{Launch, LocalPane, PaneState, PaneTab, Result, Session, View, directory};
 use crate::login::Environment;
 use crate::platform::{PaneWatches, WindowOps};
 
@@ -24,6 +24,7 @@ pub(super) enum Action {
     Key(TabAction),
     Pane(PaneAction),
     Close(usize),
+    Settings,
 }
 
 #[derive(Default)]
@@ -119,15 +120,25 @@ impl PaneHost {
 
     pub(super) fn open(
         &self,
-        id: u64,
-        rect: Rect,
+        (id, rect): (u64, Rect),
         view: &View,
         config: &sumie_config::Config,
         cwd: &Path,
+        launch: Launch,
         watches: &mut impl PaneWatches,
     ) -> Result<PaneState> {
         let size = view.pane_size(rect);
-        let mut pane = LocalPane::login(&self.environment, size, view.cell, config, cwd)?;
+        let mut pane = match launch {
+            Launch::Shell => LocalPane::login(&self.environment, size, view.cell, config, cwd)?,
+            Launch::Settings => LocalPane::settings(
+                std::env::current_exe()?.as_os_str(),
+                &self.environment,
+                size,
+                view.cell,
+                config,
+                cwd,
+            )?,
+        };
         pane.terminal
             .set_image_dimension_limit(self.image_dimension_limit);
         if let Some(millis) = self.click_interval {
@@ -141,6 +152,7 @@ impl PaneHost {
         Ok(PaneState {
             id,
             rect,
+            launch,
             cell: view.cell,
             viewport_px: [size.width_px, size.height_px],
             exited: false,
@@ -364,11 +376,12 @@ impl Session {
         &mut self,
         window: &mut impl WindowOps,
         config: &sumie_config::Config,
+        launch: Launch,
     ) -> Result<()> {
         let count = self.tabs.as_slice().len();
         let resized = self.view.set_tab_count(count + 1);
         let prepared = resized.and_then(|resized| {
-            self.spawn_pane(self.view.content_rect(), config, window)
+            self.spawn_pane(self.view.content_rect(), config, launch, window)
                 .map(|pane| (pane, resized))
         });
         let (pane, resized) = match prepared {
@@ -398,7 +411,8 @@ impl Session {
         let index = self.tabs.active_index().unwrap();
         let old = self.active().id;
         match action {
-            Action::Key(TabAction::Open) => self.open_tab(window, config)?,
+            Action::Key(TabAction::Open) => self.open_tab(window, config, Launch::Shell)?,
+            Action::Settings => self.open_tab(window, config, Launch::Settings)?,
             Action::Close(i) => self.close_tab(i, window)?,
             Action::Key(TabAction::Close) => self.close_pane(index, old, window)?,
             Action::Pane(command) => self.pane_action(command, old, window, config)?,

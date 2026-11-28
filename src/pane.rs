@@ -34,6 +34,24 @@ impl LocalPane {
         Self::spawn(options, cell, config)
     }
 
+    pub(crate) fn settings(
+        program: &std::ffi::OsStr,
+        environment: &Environment,
+        size: Size,
+        cell: [u32; 2],
+        config: &sumie_config::Config,
+        cwd: &std::path::Path,
+    ) -> Result<Self> {
+        let args = ["config".into()];
+        let command = sumie_pty::Command::Argv {
+            program,
+            args: &args,
+        };
+        let mut options = SpawnOptions::new(command, environment.vars(), size);
+        options.cwd = Some(cwd);
+        Self::spawn(options, cell, config)
+    }
+
     pub(crate) fn spawn(
         options: SpawnOptions<'_>,
         cell: [u32; 2],

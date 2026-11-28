@@ -10,7 +10,7 @@ Edges in the last column go from the row's crate to the listed crates. They are 
 | --- | --- | --- | --- |
 | `sumie` (binary) | Composition, CLI parsing, platform traits, config-to-core option conversion, passing font atlases to the renderer | Business logic | All library crates |
 | `sumie-core` | Tabs, panes, selections, link and shortcut matching, commands, agent state, plain-data options | Platform code, config, GPU, FFI, unsafe code, blocking I/O | None |
-| `sumie-config` | Settings types, loading, validation, hot reload, writing TOML, JSON Schema generation | Manage windows or render | None |
+| `sumie-config` | Settings types, loading, validation, hot reload, writing TOML, JSON Schema generation | Manage windows or render | `sumie-core` (shortcut definitions and chord validation) |
 | `sumie-vt` | Safe libghostty-vt wrapper | Render, call platform code, match shortcuts | `sumie-core`, `sumie-config` |
 | `sumie-font` | Font discovery and fallback, shaping, rasterization, glyph atlas data | Issue GPU calls or read or change terminal state | `sumie-core`, `sumie-config` |
 | `sumie-render` | wgpu rendering from atlas data and draw lists | Discover fonts, depend on `sumie-font`, change terminal state, allocate GPU objects per frame, submit GPU work while holding a terminal lock | `sumie-core`, `sumie-config` |
@@ -20,7 +20,7 @@ Edges in the last column go from the row's crate to the listed crates. They are 
 | `sumie-pty` | Shared Unix PTY, child processes, reader threads | Touch window objects or render | `sumie-core`, `sumie-config` |
 | `sumie-ipc` (P3) | Socket protocol and client shared by the CLI and settings TUI | Make business decisions or render | `sumie-core`, `sumie-config` |
 | `sumie-locale` | Embedded message catalogs, locale selection, English fallback | Change config, read config files, or render | `sumie-config` |
-| `sumie-settings` | Settings TUI, raw terminal session, keyboard input, layout | Parse or write TOML itself or access GUI state directly | `sumie-config`, `sumie-locale` |
+| `sumie-settings` | Settings TUI, raw terminal session, keyboard and mouse input, layout | Parse or write TOML itself or access GUI state directly | `sumie-config`, `sumie-core`, `sumie-locale` |
 
 Two edges are deliberately closed:
 
@@ -34,6 +34,8 @@ Two edges are deliberately closed:
 `sumie-config::EditValues` supplies each visible value and the snapshot of the file that defines it, using the same include traversal as write-back conflict detection. The editor calls `sumie-config::save` synchronously on that snapshot, then rereads the settings. Reset removes only the winning assignment, exposing an earlier include or the built-in default. The GUI picks up writes through its existing hot reload; no IPC is involved. Typed-invalid values from parseable files can be edited subject to the same write validation. Files with syntax or include errors must be repaired before the writer can validate changes.
 
 The in-memory screen uses `unicode-width` and `unicode-segmentation` for cell widths and grapheme boundaries. Its text slots truncate before terminal output. The workspace test gate includes PTY cleanup checks. The settings negative controls check for termios restoration, English fallback, and immediate persistence.
+
+The core shortcut catalog supplies the editable actions and platform defaults. Configuration carries explicit overrides only. The TUI records a single chord and checks it against other overrides and active defaults, including aliases. While recording in a settings tab, Kitty keyboard event reporting lets the app route shortcut presses to the child instead of dispatching them. The terminal guard restores keyboard reporting and SGR mouse modes before leaving the alternate screen.
 
 ## Tabbed Linux window
 

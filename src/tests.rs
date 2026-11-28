@@ -32,7 +32,7 @@ fn local_pane_executes_committed_input_without_preedit() {
             cursor: None,
             generation: 0,
         },
-        false,
+        input::Scope::Single,
     )
     .unwrap();
     pane.command(PaneCommand::Text(b"echo hi")).unwrap();
@@ -111,7 +111,7 @@ fn matched_shortcuts_never_reach_the_pty() {
                         KeyAction::Release
                     },
                 },
-                false,
+                input::Scope::Single,
             )
             .unwrap();
             match (physical, pressed, repeat) {
@@ -145,7 +145,7 @@ fn search_event(
         routing,
         searching,
         event,
-        false,
+        input::Scope::Single,
     )
     .unwrap()
 }
@@ -431,6 +431,28 @@ fn switching_tabs_finishes_a_reported_drag() {
     pane.command(PaneCommand::Text(b"\n")).unwrap();
     assert!(pane.pty.flush_input().unwrap());
     wait_for_line(&mut pane, "RELEASED");
+    close(pane);
+}
+
+#[test]
+fn settings_child_receives_config_argument() {
+    let environment = crate::login::Environment::new(std::env::vars_os()).unwrap();
+    let size = Size {
+        cols: 40,
+        rows: 10,
+        width_px: 480,
+        height_px: 240,
+    };
+    let mut pane = LocalPane::settings(
+        OsStr::new("/bin/echo"),
+        &environment,
+        size,
+        [12, 24],
+        &sumie_config::Config::default(),
+        std::path::Path::new("/"),
+    )
+    .unwrap();
+    wait_for_line(&mut pane, "config");
     close(pane);
 }
 
