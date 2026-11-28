@@ -76,6 +76,47 @@ fn grid_on_selected_backend() {
     snapshot(backends(), artifact_dir.as_deref());
 }
 
+fn assert_diagnostic_banner(renderer: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue) {
+    use crate::view::{FontSettings, View};
+
+    const DEVICE: [u32; 2] = [320, 120];
+    let config = sumie_config::Config::default();
+    let font = FontSettings::from_config(config.font).unwrap();
+    let mut view = View::new(120, DEVICE, DEVICE, font, &config.colors, [0; 2]).unwrap();
+    let size = view.size();
+    let mut terminal = sumie_vt::Terminal::new(size.cols, size.rows).unwrap();
+    terminal
+        .set_colors([255; 3], [0; 3], None, &[[0; 3]; 16])
+        .unwrap();
+    let snapshot = terminal.render_snapshot().unwrap();
+    let target = renderer.create_offscreen(DEVICE);
+    let row_bytes = (u32::from(size.cols) * view.cell[0] * 4) as usize;
+    for diagnostic in [Some("Invalid TOML"), None] {
+        view.build(&snapshot, None, &[], diagnostic, true);
+        renderer.upload_atlas(&view.atlas());
+        renderer.draw_frame(&view.frame(true, |_| None), &target);
+        let pixels = readback(device, queue, target.texture());
+        let mut row = pixels
+            .as_chunks::<{ (DEVICE[0] * 4) as usize }>()
+            .0
+            .iter()
+            .take(view.cell[1] as usize)
+            .flat_map(|line| line[..row_bytes].as_chunks::<4>().0);
+        if diagnostic.is_some() {
+            assert!(
+                row.clone().any(|pixel| *pixel == [255; 4]),
+                "missing diagnostic background"
+            );
+            assert!(row.any(|pixel| pixel[0] < 255), "missing diagnostic text");
+        } else {
+            assert!(
+                row.all(|pixel| *pixel == [0, 0, 0, 255]),
+                "diagnostic stayed visible"
+            );
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn grid_on_gl() {
@@ -123,6 +164,7 @@ fn snapshot(backends: wgpu::Backends, artifact_dir: Option<&Path>) {
     };
 
     let mut renderer = Renderer::new(&device, &queue);
+    assert_diagnostic_banner(&mut renderer, &device, &queue);
     let target = renderer.create_offscreen([WIDTH, HEIGHT]);
     upload_atlas(&mut renderer);
     for (setting, grays) in [
