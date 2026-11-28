@@ -43,7 +43,7 @@ pub fn user_config_path() -> Option<PathBuf> {
 /// # Errors
 /// Returns the path of an unreadable file or the first problem in the first invalid file.
 pub fn load(path: &Path) -> Result<Config, Error> {
-    load_visited(path, &mut |_| {})
+    load_first_error(path, &mut |_| {})
 }
 
 /// Load like [`load`], but report every problem in the first invalid file, in file order.
@@ -54,7 +54,21 @@ pub fn check(path: &Path) -> Result<Config, Vec<Error>> {
     check_visited(path, &mut |_| {})
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn load_visited(path: &Path, visit: &mut impl FnMut(&Path)) -> Result<Config, Error> {
+    load_first_error(path, &mut |path| {
+        visit(path);
+        // The native watcher cannot canonicalize a dangling link to find its target's parent.
+        if let Ok(link) = fs::read_link(path)
+            && let Ok(false) = path.try_exists()
+            && let Ok(target) = crate::write::absent(&path.with_file_name(link))
+        {
+            visit(&target);
+        }
+    })
+}
+
+fn load_first_error(path: &Path, visit: &mut impl FnMut(&Path)) -> Result<Config, Error> {
     check_visited(path, visit)
         .map_err(|errors| errors.into_iter().next().expect("errors are never empty"))
 }

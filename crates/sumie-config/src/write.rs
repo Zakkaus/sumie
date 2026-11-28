@@ -88,7 +88,7 @@ const MAX_LINKS: usize = 40;
 
 /// Where a missing file will be created. A link to a missing target is followed, so saving
 /// creates the target and the link stays a link.
-fn absent(path: &Path) -> io::Result<PathBuf> {
+pub(super) fn absent(path: &Path) -> io::Result<PathBuf> {
     let mut path = path.to_owned();
     for _ in 0..MAX_LINKS {
         let target = match fs::read_link(&path) {

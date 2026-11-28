@@ -13,6 +13,7 @@ use crate::{
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub(crate) enum Effect {
     None,
+    InputBell,
     Preedit(String, Option<(usize, usize)>),
     ReadClipboard,
     ReadPrimary,
@@ -294,6 +295,7 @@ fn send_input(
         } => Some((physical, unshifted)),
         _ => None,
     };
+    let user_input = matches!(command, PaneCommand::Key { .. } | PaneCommand::Paste(_));
     let effect = send(pane, command)?;
     if let Some((physical, unshifted)) = press {
         routing.terminal_presses.push(HeldKey {
@@ -301,14 +303,17 @@ fn send_input(
             unshifted,
             pane: id,
             generation: routing.generation,
-            reported: matches!(effect, PaneEffect::ReportedPress { .. }),
+            reported: matches!(effect, Some(PaneEffect::ReportedPress { .. })),
         });
     }
     match effect {
-        PaneEffect::ViewportChanged
-        | PaneEffect::ReportedPress {
-            viewport_changed: true,
-        } => Ok(Effect::ViewportChanged),
+        None if user_input => Ok(Effect::InputBell),
+        Some(
+            PaneEffect::ViewportChanged
+            | PaneEffect::ReportedPress {
+                viewport_changed: true,
+            },
+        ) => Ok(Effect::ViewportChanged),
         _ => Ok(Effect::None),
     }
 }
@@ -401,7 +406,7 @@ fn send_pointer(pane: &mut LocalPane, searching: bool, event: MouseEvent) -> Res
     if searching {
         return pane.search_pointer(event);
     }
-    send(pane, PaneCommand::Mouse(event))
+    Ok(send(pane, PaneCommand::Mouse(event))?.unwrap_or(PaneEffect::None))
 }
 
 /// End a reported press in the pane that received it.
@@ -428,13 +433,16 @@ pub(crate) fn report_focus(pane: &mut impl Pane<Error = Error>, focused: bool) -
     send(pane, PaneCommand::Focus(focused)).map(drop)
 }
 
-fn send(pane: &mut impl Pane<Error = Error>, command: PaneCommand<'_>) -> Result<PaneEffect> {
+fn send(
+    pane: &mut impl Pane<Error = Error>,
+    command: PaneCommand<'_>,
+) -> Result<Option<PaneEffect>> {
     let paste_len = match &command {
         PaneCommand::Paste(text) => Some(text.len()),
         _ => None,
     };
     match pane.command(command) {
-        Ok(effect) => Ok(effect),
+        Ok(effect) => Ok(Some(effect)),
         Err(error)
             if error
                 .downcast_ref::<std::io::Error>()
@@ -444,7 +452,7 @@ fn send(pane: &mut impl Pane<Error = Error>, command: PaneCommand<'_>) -> Result
                 paste_bytes = paste_len,
                 "terminal input queue is full; dropped input"
             );
-            Ok(PaneEffect::None)
+            Ok(None)
         }
         Err(error) => Err(error),
     }

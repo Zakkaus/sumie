@@ -288,7 +288,9 @@ impl Session {
         self.frame_retry = None;
         let tab = self.tabs.active().unwrap();
         let cursor_hidden = window.cursor_hidden(tab.focused().id);
-        let dirty = !self.pane_pointer.layout_is_presented(tab)
+        let dirty = self.view.input_bell
+            || self.view.input_bell_presented
+            || !self.pane_pointer.layout_is_presented(tab)
             || tab
                 .layout
                 .panes
@@ -342,6 +344,7 @@ impl Session {
                 self.frame_log
                     .presented(self.view.repainted_panes().filter(|_| dirty));
                 self.panes_presented(gpu, window, banner.is_some())?;
+                self.view.input_bell_presented = std::mem::take(&mut self.view.input_bell);
                 self.cursor_hidden = cursor_hidden;
                 gpu.log_present();
                 if suboptimal {
